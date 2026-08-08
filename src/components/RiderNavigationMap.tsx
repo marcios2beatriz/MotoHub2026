@@ -1,3 +1,4 @@
+finally no RiderNavigationMap.tsx">
 "use client";
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -1119,7 +1120,7 @@ export default function RiderNavigationMap({
     lastFetchedRouteKeyRef.current = '';
 
     setOptimizationMessage("⚡ Menor percurso recalculado com 2-Opt!");
-    speakInstruction("Menor percurso calculado com sucesso.");
+    speakInstruction("Menor percurso calculated com sucesso.");
     setTimeout(() => setOptimizationMessage(null), 4000);
   };
 
@@ -1389,7 +1390,7 @@ export default function RiderNavigationMap({
           setSearchResults(suggestions);
         } catch (err) {
           console.warn('Erro no Autocomplete:', err);
-        } fontally {
+        } finally {
           setIsSearching(false);
         }
       }, 300);
