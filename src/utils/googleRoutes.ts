@@ -28,6 +28,14 @@ export interface RouteResult {
   waypointOrder?: number[];
 }
 
+// Cache em memória com TTL de 5 minutos
+const routeCache = new Map<string, { data: RouteResult; timestamp: number }>();
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+export function clearRouteCache() {
+  routeCache.clear();
+}
+
 export function decodePolyline(encoded: string): [number, number][] {
   const points: [number, number][] = [];
   let index = 0;
@@ -74,7 +82,7 @@ function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number)
   return R * c;
 }
 
-// Algoritmo de Otimização 2-Opt para TSP (Garante o menor percurso acumulado sem cruzamentos)
+// Algoritmo de Otimização 2-Opt para TSP (Garante o menor percurso acumulado)
 function runTwoOptOptimization<T extends { lat: number; lng: number }>(
   origin: { lat: number; lng: number },
   initialTour: T[]
@@ -102,7 +110,6 @@ function runTwoOptOptimization<T extends { lat: number; lng: number }>(
 
     for (let i = 0; i < tour.length - 1; i++) {
       for (let k = i + 1; k < tour.length; k++) {
-        // Inverte o trecho entre i e k
         const newTour = [
           ...tour.slice(0, i),
           ...tour.slice(i, k + 1).reverse(),
@@ -110,7 +117,7 @@ function runTwoOptOptimization<T extends { lat: number; lng: number }>(
         ];
 
         const newDist = calculateTotalDist(newTour);
-        if (newDist < bestDist - 1) { // 1 metro de melhoria mínima
+        if (newDist < bestDist - 1) {
           bestDist = newDist;
           tour = newTour;
           improved = true;
@@ -122,14 +129,13 @@ function runTwoOptOptimization<T extends { lat: number; lng: number }>(
   return tour;
 }
 
-// Algoritmo para Reordenar TODOS os pontos (do mais perto ao mais longe, otimizando o MENOR PERCURSO)
+// Algoritmo para Reordenar TODOS os pontos
 export function optimizeAllPointsSequence<T extends { lat: number; lng: number }>(
   origin: { lat: number; lng: number },
   allPoints: T[]
 ): T[] {
   if (allPoints.length <= 1) return [...allPoints];
 
-  // 1. Vizinho mais próximo inicial
   const unvisited = [...allPoints];
   const ordered: T[] = [];
   let currentLoc = origin;
@@ -153,7 +159,6 @@ export function optimizeAllPointsSequence<T extends { lat: number; lng: number }
     }
   }
 
-  // 2. Refinamento 2-Opt para garantir a rota de menor distância
   return runTwoOptOptimization(origin, ordered);
 }
 
@@ -166,7 +171,6 @@ export function optimizeDeliverySequence(
 
   const optimizedWaypoints = optimizeAllPointsSequence(origin, waypoints);
   
-  // Mapeia os índices originais
   const resultIndices: number[] = [];
   optimizedWaypoints.forEach(optWp => {
     const originalIdx = waypoints.findIndex(w => w.lat === optWp.lat && w.lng === optWp.lng);
@@ -187,7 +191,7 @@ export async function computeRoute({
 }: RouteRequestParams): Promise<RouteResult> {
   const apiKey = getGoogleMapsApiKey();
 
-  // ETAPA 1: Google Directions Service via JS SDK (analisa todas as opções e seleciona a rota de Menor Percurso)
+  // ETAPA 1: Google Directions Service via JS SDK
   try {
     await loadGoogleMapsSDK();
 
@@ -205,7 +209,7 @@ export async function computeRoute({
         destination: new (window as any).google.maps.LatLng(destination.lat, destination.lng),
         waypoints: formattedWaypoints,
         optimizeWaypoints: optimizeWaypoints && waypoints.length > 0,
-        provideRouteAlternatives: true, // Força a retornar rotas alternativas para escolher a de MENOR PERCURSO
+        provideRouteAlternatives: true,
         travelMode: mode
       };
 
@@ -219,7 +223,6 @@ export async function computeRoute({
         });
       });
 
-      // Avalia todas as rotas candidatas e seleciona a de MENOR DISTÂNCIA (Menor Percurso)
       let shortestRoute = result.routes[0];
       let minTotalDistance = Infinity;
 
@@ -303,7 +306,7 @@ export async function computeRoute({
           location: { latLng: { latitude: w.lat, longitude: w.lng } }
         })),
         travelMode: travelMode,
-        routingPreference: 'SHORTEST_PATH', // Prioriza estritamente o MENOR PERCURSO na API Routes V2
+        routingPreference: 'SHORTEST_PATH',
         polylineQuality: 'HIGH_QUALITY',
         polylineEncoding: 'ENCODED_POLYLINE'
       };
@@ -363,7 +366,7 @@ export async function computeRoute({
   
   return {
     distanceMeters: Math.round(fallbackDist),
-    durationSeconds: Math.round((fallbackDist / 1000) * 120), // est. ~30km/h
+    durationSeconds: Math.round((fallbackDist / 1000) * 120),
     coordinates: lineCoords,
     travelModeUsed: 'STRAIGHT_LINE_2OPT_FALLBACK',
     isFallback: true,
@@ -371,4 +374,18 @@ export async function computeRoute({
     etaTimeString: new Date(Date.now() + Math.round((fallbackDist / 1000) * 120) * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
     waypointOrder: optimizedOrder
   };
+}
+
+export async function computeRouteCached(params: RouteRequestParams): Promise<RouteResult> {
+  const cacheKey = `${params.origin.lat.toFixed(4)},${params.origin.lng.toFixed(4)}->${params.destination.lat.toFixed(4)},${params.destination.lng.toFixed(4)}_${params.waypoints?.length || 0}`;
+  const now = Date.now();
+  
+  const cached = routeCache.get(cacheKey);
+  if (cached && (now - cached.timestamp < CACHE_TTL_MS)) {
+    return cached.data;
+  }
+
+  const result = await computeRoute(params);
+  routeCache.set(cacheKey, { data: result, timestamp: now });
+  return result;
 }

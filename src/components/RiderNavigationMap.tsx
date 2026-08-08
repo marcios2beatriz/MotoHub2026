@@ -40,7 +40,7 @@ import {
 import L from 'leaflet';
 import { gpsTracker, GpsState, isPointOffRoute, calculateDistanceMeters, getShortestAngleDiff } from '../utils/gpsTracker';
 import { searchFreeTextAddress, geocodeByPlaceId, fetchAutocompleteSuggestions, parseAddressQuery, AutocompleteSuggestion } from '../utils/geocoding';
-import { computeRoute, RouteResult, optimizeAllPointsSequence } from '../utils/googleRoutes';
+import { computeRouteCached, RouteResult, optimizeAllPointsSequence } from '../utils/googleRoutes';
 import { db, RouteHistoryItem } from '../utils/db';
 
 interface RiderNavigationMapProps {
@@ -158,6 +158,7 @@ export default function RiderNavigationMap({
   const searchTimeoutRef = useRef<any>(null);
   const autoRecenterTimerRef = useRef<any>(null);
   const lastArrivedStopIdRef = useRef<string>('');
+  const prefetchedNextLegKeyRef = useRef<string>('');
 
   const [rotationAngle, setRotationAngle] = useState<number>(0);
   const lastMapRotationRef = useRef<number>(0);
@@ -305,7 +306,6 @@ export default function RiderNavigationMap({
   isNavigatingRef.current = isNavigating;
 
   const [isOffRouteDetected, setIsOffRouteDetected] = useState(false);
-
   const [initialRouteDistance, setInitialRouteDistance] = useState<number | null>(null);
 
   const [destCoords, setDestCoords] = useState<{ lat: number; lng: number } | null>(() => {
@@ -905,7 +905,7 @@ export default function RiderNavigationMap({
     });
   }, [waypoints]);
 
-  // ETAPA 1: Cálculo e exibição da rota PERNA-A-PERNA (somente até o próximo ponto imediato)
+  // ETAPA 1 e Prefetch: Cálculo e exibição da rota PERNA-A-PERNA com pré-fetch da próxima perna
   useEffect(() => {
     const map = mapRef.current;
 
@@ -928,13 +928,31 @@ export default function RiderNavigationMap({
 
     if (!map || !activePos || !destCoords) return;
 
-    // Determinar o próximo alvo imediato
     const currentTarget = waypoints.length > 0
       ? { lat: waypoints[0].lat, lng: waypoints[0].lng, name: waypoints[0].name }
       : { lat: destCoords.lat, lng: destCoords.lng, name: activeDestination?.name };
 
     const routeKey = `${activePos.lat.toFixed(4)},${activePos.lng.toFixed(4)}->${currentTarget.lat.toFixed(4)},${currentTarget.lng.toFixed(4)}`;
-    
+
+    // PRÉ-FETCH: Se houver mais de uma parada na fila e estiver a <= 500m da atual, pré-calcula no cache
+    const distToCurrent = Math.round(calculateDistanceMeters(activePos.lat, activePos.lng, currentTarget.lat, currentTarget.lng));
+    if (distToCurrent <= 500 && waypoints.length > 0) {
+      const nextNextTarget = waypoints.length > 1
+        ? { lat: waypoints[1].lat, lng: waypoints[1].lng }
+        : { lat: destCoords.lat, lng: destCoords.lng };
+
+      const nextKey = `${currentTarget.lat.toFixed(4)},${currentTarget.lng.toFixed(4)}->${nextNextTarget.lat.toFixed(4)},${nextNextTarget.lng.toFixed(4)}`;
+      if (prefetchedNextLegKeyRef.current !== nextKey) {
+        prefetchedNextLegKeyRef.current = nextKey;
+        computeRouteCached({
+          origin: { lat: currentTarget.lat, lng: currentTarget.lng },
+          destination: { lat: nextNextTarget.lat, lng: nextNextTarget.lng },
+          travelMode: 'TWO_WHEELER',
+          optimizeWaypoints: false
+        }).catch(() => {});
+      }
+    }
+
     if (lastFetchedRouteKeyRef.current === routeKey && !isOffRouteDetected && routeCoordinates.length > 0) {
       return;
     }
@@ -977,7 +995,7 @@ export default function RiderNavigationMap({
       setLoadingRoute(true);
       setRouteErrorAlert(null);
       try {
-        const result = await computeRoute({
+        const result = await computeRouteCached({
           origin: {
             lat: activePos.lat,
             lng: activePos.lng,
@@ -987,7 +1005,7 @@ export default function RiderNavigationMap({
             lat: currentTarget.lat,
             lng: currentTarget.lng
           },
-          waypoints: [], // Perna-a-perna: apenas o próximo destino direto sem waypoints na API
+          waypoints: [],
           travelMode: 'TWO_WHEELER',
           optimizeWaypoints: false
         });
@@ -1371,7 +1389,7 @@ export default function RiderNavigationMap({
           setSearchResults(suggestions);
         } catch (err) {
           console.warn('Erro no Autocomplete:', err);
-        } finally {
+        } fontally {
           setIsSearching(false);
         }
       }, 300);
