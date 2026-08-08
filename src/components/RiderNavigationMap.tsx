@@ -479,9 +479,6 @@ export default function RiderNavigationMap({
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    // e.preventDefault() removido para evitar avisos 'passive event listener' no console.
-    // A classe Tailwind 'touch-none' no contêiner já lida com o bloqueio da rolagem nativa.
-
     if (e.touches.length === 2 && touchStartAngleRef.current !== null) {
       const currentAngle = getTouchAngle(e.touches[0], e.touches[1]);
       const delta = currentAngle - touchStartAngleRef.current;
@@ -908,6 +905,7 @@ export default function RiderNavigationMap({
     });
   }, [waypoints]);
 
+  // ETAPA 1: Cálculo e exibição da rota PERNA-A-PERNA (somente até o próximo ponto imediato)
   useEffect(() => {
     const map = mapRef.current;
 
@@ -930,8 +928,12 @@ export default function RiderNavigationMap({
 
     if (!map || !activePos || !destCoords) return;
 
-    const coordsList: { lat: number; lng: number }[] = [activePos, ...waypoints, destCoords];
-    const routeKey = coordsList.map(c => `${c.lat.toFixed(4)},${c.lng.toFixed(4)}`).join(';');
+    // Determinar o próximo alvo imediato
+    const currentTarget = waypoints.length > 0
+      ? { lat: waypoints[0].lat, lng: waypoints[0].lng, name: waypoints[0].name }
+      : { lat: destCoords.lat, lng: destCoords.lng, name: activeDestination?.name };
+
+    const routeKey = `${activePos.lat.toFixed(4)},${activePos.lng.toFixed(4)}->${currentTarget.lat.toFixed(4)},${currentTarget.lng.toFixed(4)}`;
     
     if (lastFetchedRouteKeyRef.current === routeKey && !isOffRouteDetected && routeCoordinates.length > 0) {
       return;
@@ -982,12 +984,12 @@ export default function RiderNavigationMap({
             heading: activePos.speedKmh >= 2 ? activePos.heading : undefined
           },
           destination: {
-            lat: destCoords.lat,
-            lng: destCoords.lng
+            lat: currentTarget.lat,
+            lng: currentTarget.lng
           },
-          waypoints: waypoints.map(w => ({ lat: w.lat, lng: w.lng, name: w.name })),
+          waypoints: [], // Perna-a-perna: apenas o próximo destino direto sem waypoints na API
           travelMode: 'TWO_WHEELER',
-          optimizeWaypoints: true
+          optimizeWaypoints: false
         });
 
         setRouteCoordinates(result.coordinates);
@@ -1009,10 +1011,10 @@ export default function RiderNavigationMap({
             date: db.getLocalDateString(now),
             time: now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
             originName: 'Minha Posição Atual',
-            destinationName: activeDestination.name,
+            destinationName: currentTarget.name || activeDestination.name,
             destinationAddress: activeDestination.addressText,
-            destinationLat: destCoords.lat,
-            destinationLng: destCoords.lng,
+            destinationLat: currentTarget.lat,
+            destinationLng: currentTarget.lng,
             waypointsCount: waypoints.length,
             distanceMeters: result.distanceMeters,
             durationSeconds: result.durationSeconds,
@@ -1369,7 +1371,7 @@ export default function RiderNavigationMap({
           setSearchResults(suggestions);
         } catch (err) {
           console.warn('Erro no Autocomplete:', err);
-        } finally {
+        } fontally {
           setIsSearching(false);
         }
       }, 300);
@@ -1435,7 +1437,7 @@ export default function RiderNavigationMap({
             <div className="flex items-center gap-1">
               <span className="bg-emerald-950/80 text-emerald-300 text-[8px] font-black uppercase px-1.5 py-0.2 rounded-full tracking-wider flex items-center gap-0.5">
                 <Bike className="h-2.5 w-2.5 text-emerald-400" />
-                Google GPS (Menor Percurso)
+                Google GPS (Perna a Perna)
               </span>
               {waypoints.length > 0 && (
                 <span className="bg-purple-900/90 text-purple-200 text-[8px] font-black uppercase px-1.5 py-0.2 rounded-full flex items-center gap-0.5">
@@ -1917,11 +1919,11 @@ export default function RiderNavigationMap({
           style={{ 
             transform: `rotate(${rotationAngle}deg)`, 
             transformOrigin: 'center center',
-            width: '400%', // Aumentado de 350% para 400% para cobrir as bordas ao rotacionar
-            height: '400%', // Aumentado de 350% para 400%
+            width: '400%',
+            height: '400%',
             position: 'absolute',
-            top: '-150%', // Ajustado de -125% para -150% para manter centralizado
-            left: '-150%', // Ajustado de -125% para -150%
+            top: '-150%',
+            left: '-150%',
             transition: touchStartAngleRef.current ? 'none' : 'transform 0.3s ease-out'
           }}
         >
