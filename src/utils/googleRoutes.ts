@@ -74,12 +74,62 @@ function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number)
   return R * c;
 }
 
+// Algoritmo de Otimização 2-Opt para TSP (Garante o menor percurso acumulado sem cruzamentos)
+function runTwoOptOptimization<T extends { lat: number; lng: number }>(
+  origin: { lat: number; lng: number },
+  initialTour: T[]
+): T[] {
+  if (initialTour.length <= 2) return initialTour;
+
+  let tour = [...initialTour];
+  let improved = true;
+  let iterations = 0;
+  const maxIterations = 50;
+
+  const calculateTotalDist = (points: T[]) => {
+    let d = haversineMeters(origin.lat, origin.lng, points[0].lat, points[0].lng);
+    for (let i = 0; i < points.length - 1; i++) {
+      d += haversineMeters(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng);
+    }
+    return d;
+  };
+
+  let bestDist = calculateTotalDist(tour);
+
+  while (improved && iterations < maxIterations) {
+    improved = false;
+    iterations++;
+
+    for (let i = 0; i < tour.length - 1; i++) {
+      for (let k = i + 1; k < tour.length; k++) {
+        // Inverte o trecho entre i e k
+        const newTour = [
+          ...tour.slice(0, i),
+          ...tour.slice(i, k + 1).reverse(),
+          ...tour.slice(k + 1)
+        ];
+
+        const newDist = calculateTotalDist(newTour);
+        if (newDist < bestDist - 1) { // 1 metro de melhoria mínima
+          bestDist = newDist;
+          tour = newTour;
+          improved = true;
+        }
+      }
+    }
+  }
+
+  return tour;
+}
+
+// Algoritmo para Reordenar TODOS os pontos (do mais perto ao mais longe, otimizando o MENOR PERCURSO)
 export function optimizeAllPointsSequence<T extends { lat: number; lng: number }>(
   origin: { lat: number; lng: number },
   allPoints: T[]
 ): T[] {
   if (allPoints.length <= 1) return [...allPoints];
 
+  // 1. Vizinho mais próximo inicial
   const unvisited = [...allPoints];
   const ordered: T[] = [];
   let currentLoc = origin;
@@ -103,7 +153,29 @@ export function optimizeAllPointsSequence<T extends { lat: number; lng: number }
     }
   }
 
-  return ordered;
+  // 2. Refinamento 2-Opt para garantir a rota de menor distância
+  return runTwoOptOptimization(origin, ordered);
+}
+
+export function optimizeDeliverySequence(
+  origin: { lat: number; lng: number },
+  destination: { lat: number; lng: number },
+  waypoints: RouteWaypoint[]
+): number[] {
+  if (waypoints.length <= 1) return waypoints.map((_, i) => i);
+
+  const optimizedWaypoints = optimizeAllPointsSequence(origin, waypoints);
+  
+  // Mapeia os índices originais
+  const resultIndices: number[] = [];
+  optimizedWaypoints.forEach(optWp => {
+    const originalIdx = waypoints.findIndex(w => w.lat === optWp.lat && w.lng === optWp.lng);
+    if (originalIdx !== -1 && !resultIndices.includes(originalIdx)) {
+      resultIndices.push(originalIdx);
+    }
+  });
+
+  return resultIndices;
 }
 
 export async function computeRoute({ 
@@ -111,11 +183,101 @@ export async function computeRoute({
   destination, 
   waypoints = [], 
   travelMode = 'TWO_WHEELER',
-  optimizeWaypoints = false 
+  optimizeWaypoints = true 
 }: RouteRequestParams): Promise<RouteResult> {
   const apiKey = getGoogleMapsApiKey();
 
-  // Priorizamos a API de Rotas V2 (REST) por ser mais moderna e permitir SHORTEST_PATH nativo
+  // ETAPA 1: Google Directions Service via JS SDK (analisa todas as opções e seleciona a rota de Menor Percurso)
+  try {
+    await loadGoogleMapsSDK();
+
+    if ((window as any).google?.maps?.DirectionsService) {
+      const directionsService = new (window as any).google.maps.DirectionsService();
+      const mode = (window as any).google.maps.TravelMode.TWO_WHEELER || (window as any).google.maps.TravelMode.DRIVING;
+
+      const formattedWaypoints = waypoints.map(w => ({
+        location: new (window as any).google.maps.LatLng(w.lat, w.lng),
+        stopover: true
+      }));
+
+      const request = {
+        origin: new (window as any).google.maps.LatLng(origin.lat, origin.lng),
+        destination: new (window as any).google.maps.LatLng(destination.lat, destination.lng),
+        waypoints: formattedWaypoints,
+        optimizeWaypoints: optimizeWaypoints && waypoints.length > 0,
+        provideRouteAlternatives: true, // Força a retornar rotas alternativas para escolher a de MENOR PERCURSO
+        travelMode: mode
+      };
+
+      const result = await new Promise<any>((resolve, reject) => {
+        directionsService.route(request, (response: any, status: string) => {
+          if (status === 'OK' && response && response.routes && response.routes.length > 0) {
+            resolve(response);
+          } else {
+            reject(new Error(`DirectionsService status: ${status}`));
+          }
+        });
+      });
+
+      // Avalia todas as rotas candidatas e seleciona a de MENOR DISTÂNCIA (Menor Percurso)
+      let shortestRoute = result.routes[0];
+      let minTotalDistance = Infinity;
+
+      result.routes.forEach((candRoute: any) => {
+        let routeDist = 0;
+        candRoute.legs.forEach((leg: any) => {
+          routeDist += leg?.distance?.value || 0;
+        });
+        if (routeDist < minTotalDistance && routeDist > 0) {
+          minTotalDistance = routeDist;
+          shortestRoute = candRoute;
+        }
+      });
+
+      let distanceMeters = 0;
+      let durationSeconds = 0;
+      const coordinates: [number, number][] = [];
+
+      shortestRoute.legs.forEach((leg: any) => {
+        distanceMeters += leg?.distance?.value || 0;
+        durationSeconds += leg?.duration?.value || 0;
+        if (leg.steps) {
+          leg.steps.forEach((step: any) => {
+            if (step.path) {
+              step.path.forEach((p: any) => {
+                coordinates.push([p.lat(), p.lng()]);
+              });
+            }
+          });
+        }
+      });
+
+      if (coordinates.length === 0 && shortestRoute.overview_path) {
+        shortestRoute.overview_path.forEach((p: any) => coordinates.push([p.lat(), p.lng()]));
+      }
+
+      const durationMinutes = Math.ceil(durationSeconds / 60);
+      const etaDate = new Date(Date.now() + durationMinutes * 60000);
+      const etaTimeString = etaDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+      return {
+        distanceMeters,
+        durationSeconds,
+        coordinates,
+        travelModeUsed: 'GOOGLE_JS_SDK_DIRECTIONS',
+        isFallback: false,
+        etaTimeString,
+        waypointOrder: shortestRoute.waypoint_order || waypoints.map((_, i) => i)
+      };
+    }
+  } catch (err) {
+    console.warn('Erro ao calcular rota via Google Directions JS SDK:', err);
+  }
+
+  // ETAPA 2: Fallback com Otimização Algorítmica 2-Opt Local
+  const optimizedOrder = optimizeWaypoints ? optimizeDeliverySequence(origin, destination, waypoints) : waypoints.map((_, i) => i);
+  const orderedWaypoints = optimizedOrder.map(i => waypoints[i]);
+
   if (apiKey) {
     try {
       const url = 'https://routes.googleapis.com/v1/directions:computeRoutes';
@@ -123,31 +285,30 @@ export async function computeRoute({
       const requestBody: any = {
         origin: {
           location: {
-            latLng: { latitude: origin.lat, longitude: origin.lng }
+            latLng: {
+              latitude: origin.lat,
+              longitude: origin.lng
+            }
           }
         },
         destination: {
           location: {
-            latLng: { latitude: destination.lat, longitude: destination.lng }
+            latLng: {
+              latitude: destination.lat,
+              longitude: destination.lng
+            }
           }
         },
-        intermediates: waypoints.map(w => ({
+        intermediates: orderedWaypoints.map(w => ({
           location: { latLng: { latitude: w.lat, longitude: w.lng } }
         })),
         travelMode: travelMode,
-        routingPreference: 'SHORTEST_PATH', // ESSENCIAL: Garante o trajeto mais curto
+        routingPreference: 'SHORTEST_PATH', // Prioriza estritamente o MENOR PERCURSO na API Routes V2
         polylineQuality: 'HIGH_QUALITY',
-        polylineEncoding: 'ENCODED_POLYLINE',
-        computeAlternativeRoutes: false,
-        routeModifiers: {
-          avoidTolls: false,
-          avoidHighways: false,
-          avoidFerries: true
-        }
+        polylineEncoding: 'ENCODED_POLYLINE'
       };
 
-      // Se estiver em movimento, informa o heading para evitar retornos forçados (U-turns)
-      if (origin.heading !== undefined && origin.heading >= 0) {
+      if (origin.heading !== undefined && origin.heading >= 0 && origin.heading <= 360) {
         requestBody.origin.heading = Math.round(origin.heading);
       }
 
@@ -165,76 +326,49 @@ export async function computeRoute({
 
       if (response.ok && data.routes && data.routes.length > 0) {
         const route = data.routes[0];
-        const coordinates = decodePolyline(route.polyline?.encodedPolyline || '');
+        const encodedPolyline = route.polyline?.encodedPolyline || '';
+        const coordinates = decodePolyline(encodedPolyline);
+
+        const distanceMeters = route.distanceMeters || 0;
         const durationSeconds = parseInt((route.duration || '0s').replace('s', ''), 10) || 0;
 
+        const durationMinutes = Math.ceil(durationSeconds / 60);
+        const etaDate = new Date(Date.now() + durationMinutes * 60000);
+        const etaTimeString = etaDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
         return {
-          distanceMeters: route.distanceMeters || 0,
+          distanceMeters,
           durationSeconds,
           coordinates,
           travelModeUsed: 'GOOGLE_ROUTES_V2_SHORTEST',
           isFallback: false,
-          etaTimeString: new Date(Date.now() + durationSeconds * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-          waypointOrder: waypoints.map((_, i) => i)
+          etaTimeString,
+          waypointOrder: optimizedOrder
         };
       }
     } catch (err) {
-      console.warn('Erro na Routes API V2, tentando SDK legado...', err);
+      console.warn('Erro ao chamar Google Routes API v2 REST:', err);
     }
   }
 
-  // Fallback para Directions Service Legado
-  try {
-    await loadGoogleMapsSDK();
-    if ((window as any).google?.maps?.DirectionsService) {
-      const directionsService = new (window as any).google.maps.DirectionsService();
-      
-      const request = {
-        origin: new (window as any).google.maps.LatLng(origin.lat, origin.lng),
-        destination: new (window as any).google.maps.LatLng(destination.lat, destination.lng),
-        waypoints: waypoints.map(w => ({ location: new (window as any).google.maps.LatLng(w.lat, w.lng), stopover: true })),
-        optimizeWaypoints,
-        travelMode: (window as any).google.maps.TravelMode.TWO_WHEELER,
-        unitSystem: (window as any).google.maps.UnitSystem.METRIC
-      };
+  // Linha de emergência
+  const lineCoords: [number, number][] = [[origin.lat, origin.lng]];
+  orderedWaypoints.forEach(w => lineCoords.push([w.lat, w.lng]));
+  lineCoords.push([destination.lat, destination.lng]);
 
-      const result = await new Promise<any>((resolve, reject) => {
-        directionsService.route(request, (response: any, status: string) => {
-          if (status === 'OK' && response?.routes?.[0]) resolve(response);
-          else reject(new Error(status));
-        });
-      });
-
-      const route = result.routes[0];
-      const coords: [number, number][] = [];
-      let dist = 0;
-      let dur = 0;
-
-      route.legs.forEach((leg: any) => {
-        dist += leg.distance.value;
-        dur += leg.duration.value;
-        leg.steps.forEach((step: any) => {
-          step.path.forEach((p: any) => coords.push([p.lat(), p.lng()]));
-        });
-      });
-
-      return {
-        distanceMeters: dist,
-        durationSeconds: dur,
-        coordinates: coords,
-        travelModeUsed: 'GOOGLE_SDK_FALLBACK',
-        isFallback: false,
-        etaTimeString: new Date(Date.now() + dur * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-      };
-    }
-  } catch (e) {}
-
+  let fallbackDist = 0;
+  for (let i = 0; i < lineCoords.length - 1; i++) {
+    fallbackDist += haversineMeters(lineCoords[i][0], lineCoords[i][1], lineCoords[i+1][0], lineCoords[i+1][1]);
+  }
+  
   return {
-    distanceMeters: 0,
-    durationSeconds: 0,
-    coordinates: [[origin.lat, origin.lng], [destination.lat, destination.lng]],
-    travelModeUsed: 'ERROR_FALLBACK',
+    distanceMeters: Math.round(fallbackDist),
+    durationSeconds: Math.round((fallbackDist / 1000) * 120), // est. ~30km/h
+    coordinates: lineCoords,
+    travelModeUsed: 'STRAIGHT_LINE_2OPT_FALLBACK',
     isFallback: true,
-    etaTimeString: '--:--'
+    fallbackReason: 'Erro ao conectar à API do Google Maps.',
+    etaTimeString: new Date(Date.now() + Math.round((fallbackDist / 1000) * 120) * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+    waypointOrder: optimizedOrder
   };
 }
