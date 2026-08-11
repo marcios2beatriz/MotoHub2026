@@ -826,98 +826,115 @@ export const db = {
   },
 
   // ── Controle de presença obrigatória por corrida ───────────────────────
-  // Estrutura salva: Record<deliveryId, { accumulatedMs: number, lastSeenAt: string | null }>
-  // accumulatedMs = total de ms com o app em foreground
-  // lastSeenAt    = ISO timestamp do momento em que o app voltou ao foreground (null = background)
+  //
+  // Estrutura por corrida:
+  //   accumulatedMs      – ms totais em que o app esteve em foreground
+  //   foregroundSince    – ISO timestamp de quando o app entrou em foreground
+  //                        (null = app está em background agora)
+  //   absenceStartedAt   – ISO timestamp de quando o app saiu para background
+  //                        (null = app está em foreground agora)
+  //
+  // Regras:
+  //   • Precisa acumular PRESENCE_REQUIRED_MS (30 min) em foreground → corrida liberada
+  //   • Se a ausência CONTÍNUA atual ultrapassar ABSENCE_TOLERANCE_MS (10 min)
+  //     E ainda não cumpriu os 30 min → corrida perdida
 
-  PRESENCE_REQUIRED_MS: 30 * 60 * 1000,    // 30 min de presença obrigatória
-  ABSENCE_TOLERANCE_MS: 10 * 60 * 1000,    // 10 min de ausência tolerada
+  PRESENCE_REQUIRED_MS: 30 * 60 * 1000,   // 30 min
+  ABSENCE_TOLERANCE_MS: 10 * 60 * 1000,   // 10 min de ausência contínua
 
-  getDeliveryPresenceMap(): Record<string, { accumulatedMs: number; lastSeenAt: string | null; absenceMs: number }> {
+  getDeliveryPresenceMap(): Record<string, {
+    accumulatedMs: number;
+    foregroundSince: string | null;
+    absenceStartedAt: string | null;
+  }> {
     const raw = localStorage.getItem(KEYS.DELIVERY_PRESENCE);
     return raw ? JSON.parse(raw) : {};
   },
 
-  setDeliveryPresenceMap(map: Record<string, { accumulatedMs: number; lastSeenAt: string | null; absenceMs: number }>) {
+  setDeliveryPresenceMap(map: Record<string, {
+    accumulatedMs: number;
+    foregroundSince: string | null;
+    absenceStartedAt: string | null;
+  }>) {
     localStorage.setItem(KEYS.DELIVERY_PRESENCE, JSON.stringify(map));
   },
 
-  // Inicia o rastreio de presença para uma corrida (chamado ao lançar)
+  // Chamado ao lançar uma corrida — começa com o app em foreground
   startDeliveryPresence(deliveryId: string) {
     const map = this.getDeliveryPresenceMap();
     if (!map[deliveryId]) {
       map[deliveryId] = {
         accumulatedMs: 0,
-        lastSeenAt: new Date().toISOString(), // começa em foreground
-        absenceMs: 0
+        foregroundSince: new Date().toISOString(),
+        absenceStartedAt: null,
       };
       this.setDeliveryPresenceMap(map);
     }
   },
 
-  // Chamado quando o app vai para background — congela o acúmulo de presença e inicia acúmulo de ausência
+  // Chamado quando o app vai para background (visibilitychange → hidden)
   pauseAllPresence() {
     const now = Date.now();
+    const nowISO = new Date(now).toISOString();
     const map = this.getDeliveryPresenceMap();
     let changed = false;
     Object.keys(map).forEach(id => {
-      const entry = map[id];
-      if (entry.lastSeenAt) {
-        // Acumula o tempo de presença desde a última vez que estava em foreground
-        entry.accumulatedMs += now - new Date(entry.lastSeenAt).getTime();
-        entry.lastSeenAt = null; // marca como background
+      const e = map[id];
+      if (e.foregroundSince !== null) {
+        // Acumula o tempo de foreground desde a última vez que entrou
+        e.accumulatedMs += now - new Date(e.foregroundSince).getTime();
+        e.foregroundSince = null;
+        e.absenceStartedAt = nowISO; // inicia contagem de ausência
         changed = true;
       }
     });
     if (changed) this.setDeliveryPresenceMap(map);
   },
 
-  // Chamado quando o app volta ao foreground — marca o timestamp de retorno
+  // Chamado quando o app volta ao foreground (visibilitychange → visible)
   resumeAllPresence() {
-    const now = new Date().toISOString();
+    const nowISO = new Date().toISOString();
     const map = this.getDeliveryPresenceMap();
     let changed = false;
     Object.keys(map).forEach(id => {
-      if (map[id].lastSeenAt === null) {
-        map[id].lastSeenAt = now;
+      const e = map[id];
+      if (e.foregroundSince === null) {
+        e.foregroundSince = nowISO;   // volta a acumular presença
+        e.absenceStartedAt = null;    // zera a ausência contínua
         changed = true;
       }
     });
     if (changed) this.setDeliveryPresenceMap(map);
   },
 
-  // Retorna o tempo de presença acumulado em ms para uma corrida (incluindo o tempo atual em foreground)
+  // Presença acumulada em ms (inclui o tempo atual em foreground se aplicável)
   getPresenceMs(deliveryId: string): number {
     const map = this.getDeliveryPresenceMap();
-    const entry = map[deliveryId];
-    if (!entry) return 0;
-    let total = entry.accumulatedMs;
-    if (entry.lastSeenAt) {
-      total += Date.now() - new Date(entry.lastSeenAt).getTime();
+    const e = map[deliveryId];
+    if (!e) return 0;
+    let total = e.accumulatedMs;
+    if (e.foregroundSince !== null) {
+      total += Date.now() - new Date(e.foregroundSince).getTime();
     }
     return total;
   },
 
-  // Retorna o tempo de ausência acumulado em ms para uma corrida
-  getAbsenceMs(deliveryId: string): number {
+  // Ausência CONTÍNUA atual em ms (0 se o app está em foreground)
+  getCurrentAbsenceMs(deliveryId: string): number {
     const map = this.getDeliveryPresenceMap();
-    return map[deliveryId]?.absenceMs || 0;
+    const e = map[deliveryId];
+    if (!e || !e.absenceStartedAt) return 0;
+    return Date.now() - new Date(e.absenceStartedAt).getTime();
   },
 
-  // Acumula tempo de ausência para todas as corridas em background (chamado periodicamente enquanto em background)
-  tickAbsence(elapsedMs: number) {
+  // True se o app está em background para esta corrida
+  isInBackground(deliveryId: string): boolean {
     const map = this.getDeliveryPresenceMap();
-    let changed = false;
-    Object.keys(map).forEach(id => {
-      if (map[id].lastSeenAt === null) {
-        map[id].absenceMs = (map[id].absenceMs || 0) + elapsedMs;
-        changed = true;
-      }
-    });
-    if (changed) this.setDeliveryPresenceMap(map);
+    const e = map[deliveryId];
+    return !!e && e.foregroundSince === null;
   },
 
-  // Remove o rastreio de uma corrida (quando ela é resolvida ou restaurada)
+  // Remove o rastreio de uma corrida (cumpriu ou foi perdida)
   removeDeliveryPresence(deliveryId: string) {
     const map = this.getDeliveryPresenceMap();
     delete map[deliveryId];

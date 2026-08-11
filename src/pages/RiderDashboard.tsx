@@ -125,26 +125,22 @@ export default function RiderDashboard() {
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
-        // App foi para background
-        bgEnterTimeRef.current = Date.now();
         db.pauseAllPresence();
+        bgEnterTimeRef.current = Date.now();
       } else {
-        // App voltou ao foreground
-        if (bgEnterTimeRef.current !== null) {
-          const absenceElapsed = Date.now() - bgEnterTimeRef.current;
-          db.tickAbsence(absenceElapsed);
-          bgEnterTimeRef.current = null;
-        }
+        bgEnterTimeRef.current = null;
         db.resumeAllPresence();
+        // Ao voltar ao foreground: verifica imediatamente se alguma corrida foi perdida
+        checkPresenceViolations();
         setPresenceTick(t => t + 1);
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, []);
+  }, []);  // checkPresenceViolations definido abaixo via ref para evitar dependência circular
 
-  // Verificador periódico: a cada 30s verifica se alguma corrida ultrapassou a tolerância de ausência
+  // Verificador periódico: a cada 15s atualiza o timer visual e verifica violações
   const checkPresenceViolations = useCallback(() => {
     if (!user) return;
     const todayStr = db.getLocalDateString();
@@ -152,22 +148,23 @@ export default function RiderDashboard() {
     let changed = false;
 
     const updated = allDeliveries.map(d => {
-      // Só aplica às corridas pending/active do rider atual, lançadas hoje
       const isMinhas = d.riderId === user.id;
       const isHoje = db.isSameDayString(d.date, todayStr);
       const isAtiva = d.status === 'pending' || d.status === 'active';
       if (!isMinhas || !isHoje || !isAtiva) return d;
 
       const presenceMs = db.getPresenceMs(d.id);
-      const absenceMs = db.getAbsenceMs(d.id);
 
-      // Se já cumpriu os 30 min de presença → libera, remove rastreio
+      // Se já cumpriu os 30 min → libera, remove rastreio
       if (presenceMs >= db.PRESENCE_REQUIRED_MS) {
         db.removeDeliveryPresence(d.id);
         return d;
       }
 
-      // Se a ausência acumulada ultrapassou a tolerância → perde a corrida
+      // Ausência contínua atual (só existe se app está em background)
+      const absenceMs = db.getCurrentAbsenceMs(d.id);
+
+      // Se ausência contínua > tolerância → corrida perdida
       if (absenceMs > db.ABSENCE_TOLERANCE_MS) {
         changed = true;
         db.removeDeliveryPresence(d.id);
@@ -177,7 +174,7 @@ export default function RiderDashboard() {
           status: 'lost' as const,
           lostAt: nowISO,
           lostReason: 'absence_limit',
-          updatedAt: nowISO
+          updatedAt: nowISO,
         };
       }
 
@@ -191,15 +188,16 @@ export default function RiderDashboard() {
         id: 'presence_lost_' + Date.now(),
         title: '⚠️ Corrida Perdida',
         message: 'Você ficou ausente do app por mais de 10 minutos. A corrida foi perdida.',
-        sender: 'Sistema'
+        sender: 'Sistema',
       });
     }
 
-    setPresenceTick(t => t + 1); // força re-render do timer visual
+    setPresenceTick(t => t + 1);
   }, [user]);
 
+  // Roda a cada 15s para atualizar o timer visual
   useEffect(() => {
-    const interval = setInterval(checkPresenceViolations, 30_000);
+    const interval = setInterval(checkPresenceViolations, 15_000);
     return () => clearInterval(interval);
   }, [checkPresenceViolations]);
 
@@ -1204,16 +1202,21 @@ export default function RiderDashboard() {
                     const notesCount = delivery.notes ? delivery.notes.split('\n').filter(l => l.trim()).length : 0;
 
                     // ── Timer de presença obrigatória ──
-                    const presenceMs = db.getPresenceMs(delivery.id);
-                    const absenceMs = db.getAbsenceMs(delivery.id);
-                    const presenceRequired = db.PRESENCE_REQUIRED_MS;
-                    const absenceTolerance = db.ABSENCE_TOLERANCE_MS;
-                    const presenceTracked = presenceMs > 0 || absenceMs > 0;
-                    const presenceDone = presenceMs >= presenceRequired;
-                    const presenceMinLeft = presenceDone ? 0 : Math.ceil((presenceRequired - presenceMs) / 60000);
-                    const absenceMinLeft = Math.ceil((absenceTolerance - absenceMs) / 60000);
-                    const absenceWarning = absenceMs > 0 && absenceMs < absenceTolerance;
-                    const presencePercent = Math.min(100, Math.round((presenceMs / presenceRequired) * 100));
+                    const presenceMs    = db.getPresenceMs(delivery.id);
+                    const absenceMs     = db.getCurrentAbsenceMs(delivery.id);  // ausência CONTÍNUA atual
+                    const inBackground  = db.isInBackground(delivery.id);
+                    const presenceTracked = presenceMs > 0 || inBackground;
+                    const presenceDone  = presenceMs >= db.PRESENCE_REQUIRED_MS;
+
+                    // Minutos restantes de presença
+                    const presenceMinLeft = presenceDone ? 0 : Math.ceil((db.PRESENCE_REQUIRED_MS - presenceMs) / 60000);
+                    // Progresso da presença (0-100)
+                    const presencePercent = Math.min(100, Math.round((presenceMs / db.PRESENCE_REQUIRED_MS) * 100));
+
+                    // Ausência: minutos restantes de tolerância
+                    const absenceMinLeft  = Math.max(0, Math.ceil((db.ABSENCE_TOLERANCE_MS - absenceMs) / 60000));
+                    // Progresso da ausência: 0% = acabou de sair, 100% = tolerância esgotada
+                    const absencePercent  = Math.min(100, Math.round((absenceMs / db.ABSENCE_TOLERANCE_MS) * 100));
 
                     return (
                       <div key={delivery.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1248,38 +1251,47 @@ export default function RiderDashboard() {
                           {/* ── Timer de presença ── */}
                           {(delivery.status === 'pending' || delivery.status === 'active') && presenceTracked && !presenceDone && (
                             <div className={`rounded-lg px-2.5 py-2 mt-1 space-y-1.5 border ${
-                              absenceWarning
+                              inBackground
                                 ? 'bg-red-50 border-red-200'
                                 : 'bg-amber-50 border-amber-200'
                             }`}>
-                              {/* Linha de título */}
                               <div className="flex items-center justify-between gap-2">
                                 <div className="flex items-center gap-1.5">
-                                  <Timer className={`h-3.5 w-3.5 flex-shrink-0 ${absenceWarning ? 'text-red-500 animate-pulse' : 'text-amber-600'}`} />
-                                  <span className={`text-[11px] font-bold ${absenceWarning ? 'text-red-700' : 'text-amber-800'}`}>
-                                    {absenceWarning
+                                  <Timer className={`h-3.5 w-3.5 flex-shrink-0 ${inBackground ? 'text-red-500 animate-pulse' : 'text-amber-600'}`} />
+                                  <span className={`text-[11px] font-bold ${inBackground ? 'text-red-700' : 'text-amber-800'}`}>
+                                    {inBackground
                                       ? `⚠️ Fora do app — ${absenceMinLeft} min restante(s) de tolerância`
-                                      : `Presença obrigatória: ${presenceMinLeft} min restante(s)`
+                                      : `Presença: faltam ${presenceMinLeft} min`
                                     }
                                   </span>
                                 </div>
-                                <span className={`text-[10px] font-black ${absenceWarning ? 'text-red-600' : 'text-amber-700'}`}>
-                                  {presencePercent}%
+                                <span className={`text-[10px] font-black tabular-nums ${inBackground ? 'text-red-600' : 'text-amber-700'}`}>
+                                  {inBackground ? `${absencePercent}%` : `${presencePercent}%`}
                                 </span>
                               </div>
 
                               {/* Barra de progresso */}
                               <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
-                                <div
-                                  className={`h-full rounded-full transition-all duration-1000 ${
-                                    absenceWarning ? 'bg-red-500' : 'bg-amber-500'
-                                  }`}
-                                  style={{ width: `${presencePercent}%` }}
-                                />
+                                {inBackground ? (
+                                  // Barra de ausência: cresce de 0 → 100% conforme o tempo passa
+                                  <div
+                                    className="h-full rounded-full bg-red-500 transition-all duration-1000"
+                                    style={{ width: `${absencePercent}%` }}
+                                  />
+                                ) : (
+                                  // Barra de presença: cresce de 0 → 100% conforme cumpre os 30 min
+                                  <div
+                                    className="h-full rounded-full bg-amber-500 transition-all duration-1000"
+                                    style={{ width: `${presencePercent}%` }}
+                                  />
+                                )}
                               </div>
 
                               <p className="text-[10px] text-slate-500 leading-snug">
-                                Mantenha o app aberto. Se sair por mais de 10 min antes de completar 30 min, a corrida será perdida.
+                                {inBackground
+                                  ? 'Volte ao app antes que o tempo de tolerância acabe para não perder a corrida.'
+                                  : 'Mantenha o app aberto. Se sair por mais de 10 min antes de completar 30 min, a corrida será perdida.'
+                                }
                               </p>
                             </div>
                           )}
