@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, Schedule, Delivery, Notification, Establishment, QueueEntry, RouteHistoryItem } from '../utils/db';
 import { 
@@ -28,7 +28,9 @@ import {
   AlertTriangle,
   RotateCw,
   Bike,
-  Ban
+  Ban,
+  Timer,
+  EyeOff
 } from 'lucide-react';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
 import CustomerChatModal from '../components/CustomerChatModal';
@@ -100,6 +102,10 @@ export default function RiderDashboard() {
 
   const [deliveryStatusFilter, setDeliveryStatusFilter] = useState<'all' | 'pending' | 'active' | 'rejected' | 'cancelled'>('all');
 
+  // ── Presença obrigatória: tick para re-render do timer visual ──────────
+  const [presenceTick, setPresenceTick] = useState(0);
+  const bgEnterTimeRef = useRef<number | null>(null);
+
   const resolveEst = (id: string): Establishment | undefined => {
     return db.resolveEstablishment(id);
   };
@@ -113,6 +119,89 @@ export default function RiderDashboard() {
   }, []);
 
   const activePos = gpsState.currentLocation;
+
+  // ── Sistema de presença obrigatória ────────────────────────────────────
+  // Detecta background/foreground e acumula tempo de presença por corrida
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        // App foi para background
+        bgEnterTimeRef.current = Date.now();
+        db.pauseAllPresence();
+      } else {
+        // App voltou ao foreground
+        if (bgEnterTimeRef.current !== null) {
+          const absenceElapsed = Date.now() - bgEnterTimeRef.current;
+          db.tickAbsence(absenceElapsed);
+          bgEnterTimeRef.current = null;
+        }
+        db.resumeAllPresence();
+        setPresenceTick(t => t + 1);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  // Verificador periódico: a cada 30s verifica se alguma corrida ultrapassou a tolerância de ausência
+  const checkPresenceViolations = useCallback(() => {
+    if (!user) return;
+    const todayStr = db.getLocalDateString();
+    const allDeliveries = db.getDeliveries();
+    let changed = false;
+
+    const updated = allDeliveries.map(d => {
+      // Só aplica às corridas pending/active do rider atual, lançadas hoje
+      const isMinhas = d.riderId === user.id;
+      const isHoje = db.isSameDayString(d.date, todayStr);
+      const isAtiva = d.status === 'pending' || d.status === 'active';
+      if (!isMinhas || !isHoje || !isAtiva) return d;
+
+      const presenceMs = db.getPresenceMs(d.id);
+      const absenceMs = db.getAbsenceMs(d.id);
+
+      // Se já cumpriu os 30 min de presença → libera, remove rastreio
+      if (presenceMs >= db.PRESENCE_REQUIRED_MS) {
+        db.removeDeliveryPresence(d.id);
+        return d;
+      }
+
+      // Se a ausência acumulada ultrapassou a tolerância → perde a corrida
+      if (absenceMs > db.ABSENCE_TOLERANCE_MS) {
+        changed = true;
+        db.removeDeliveryPresence(d.id);
+        const nowISO = new Date().toISOString();
+        return {
+          ...d,
+          status: 'lost' as const,
+          lostAt: nowISO,
+          lostReason: 'absence_limit',
+          updatedAt: nowISO
+        };
+      }
+
+      return d;
+    });
+
+    if (changed) {
+      db.setDeliveries(updated);
+      loadData();
+      setActiveToast({
+        id: 'presence_lost_' + Date.now(),
+        title: '⚠️ Corrida Perdida',
+        message: 'Você ficou ausente do app por mais de 10 minutos. A corrida foi perdida.',
+        sender: 'Sistema'
+      });
+    }
+
+    setPresenceTick(t => t + 1); // força re-render do timer visual
+  }, [user]);
+
+  useEffect(() => {
+    const interval = setInterval(checkPresenceViolations, 30_000);
+    return () => clearInterval(interval);
+  }, [checkPresenceViolations]);
 
   useEffect(() => {
     const handleBeforeInstall = (e: Event) => {
@@ -262,11 +351,13 @@ export default function RiderDashboard() {
       (db.isSameDayString(q.date, todayStr) || (q.joinedAt && db.isSameDayString(q.joinedAt, todayStr)))
     );
 
+    // Distância máxima para saída automática: 100m
+    const MAX_AUTO_LEAVE_DIST = 100;
     myWaitingEntries.forEach(entry => {
       const estCoords = estCoordsMap[entry.establishmentId];
       if (estCoords) {
         const dist = Math.round(calculateDistanceMeters(activePos.lat, activePos.lng, estCoords.lat, estCoords.lng));
-        if (dist > 100) {
+        if (dist > MAX_AUTO_LEAVE_DIST) {
           handleLeaveQueue(entry.establishmentId);
           const est = db.resolveEstablishment(entry.establishmentId);
           setActiveToast({
@@ -383,6 +474,38 @@ export default function RiderDashboard() {
   const handleLogout = async () => {
     if (user) {
       await db.clearRiderLocation(user.id);
+
+      // Penalidade de logout: corridas 'pending' do dia viram 'lost'
+      const nowISO = new Date().toISOString();
+      const allDeliveries = db.getDeliveries();
+      const todayStr = db.getLocalDateString();
+      const hasPending = allDeliveries.some(
+        d => d.riderId === user.id &&
+             db.isSameDayString(d.date, todayStr) &&
+             d.status === 'pending'
+      );
+
+      if (hasPending) {
+        const updated = allDeliveries.map(d => {
+          if (
+            d.riderId === user.id &&
+            db.isSameDayString(d.date, todayStr) &&
+            d.status === 'pending'
+          ) {
+            return {
+              ...d,
+              status: 'lost' as const,
+              lostAt: nowISO,
+              lostReason: 'logout',
+              updatedAt: nowISO
+            };
+          }
+          return d;
+        });
+        db.setDeliveries(updated);
+      }
+
+      db.clearRiderSession();
     }
     db.setCurrentUser(null);
     navigate('/login');
@@ -512,6 +635,67 @@ export default function RiderDashboard() {
 
     if (!user) return;
 
+    // ── Verificação de número de pedido duplicado ─────────────────────────
+    const orderNumberInput = launchForm.orderNumber.trim();
+    if (orderNumberInput) {
+      const allDeliveries = db.getDeliveries();
+      const duplicate = allDeliveries.find(d => {
+        if (!d.orderNumber) return false;
+        // Ignora a própria corrida sendo editada
+        if (editingDelivery && d.id === editingDelivery.id) return false;
+        // Compara apenas corridas do mesmo dia e mesmo estabelecimento
+        const sameDay = db.isSameDayString(d.date, todayStr);
+        const sameEst = db.isSameEstablishment(d.establishmentId, launchForm.establishmentId);
+        const sameNumber = d.orderNumber.trim().toLowerCase() === orderNumberInput.toLowerCase();
+        return sameDay && sameEst && sameNumber;
+      });
+
+      if (duplicate) {
+        const statusLabel: Record<string, string> = {
+          pending: 'Pendente',
+          active: 'Aprovada',
+          rejected: 'Rejeitada',
+          cancelled: 'Cancelada',
+          lost: 'Perdida',
+        };
+        const label = statusLabel[duplicate.status] || duplicate.status;
+        alert(`❌ Número de pedido duplicado!\n\nJá existe uma corrida com o número "#${orderNumberInput}" hoje neste estabelecimento.\nStatus: ${label}\n\nVerifique com o administrador se necessário.`);
+        return;
+      }
+    }
+
+    // ── Verificação de sessão mínima ──────────────────────────────────────
+    const sessionCheck = db.checkSessionRequirement();
+    if (!sessionCheck.allowed) {
+      alert(`⚠️ Corrida perdida!\n\n${sessionCheck.reason}\n\nEsta corrida não foi registrada. Entre em contato com o administrador.`);
+      // Lança a corrida como 'lost' direto
+      const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && db.isSameDayString(s.date, todayStr));
+      const allDeliveries = db.getDeliveries();
+      const nowStr = new Date().toISOString();
+      const lostDelivery: Delivery = {
+        id: 'd_' + Date.now(),
+        riderId: user.id,
+        establishmentId: launchForm.establishmentId,
+        date: todayStr,
+        time: new Date().toTimeString().slice(0, 5),
+        value: val,
+        status: 'lost',
+        scheduleId: activeSchedule?.id,
+        orderNumber: launchForm.orderNumber.trim() || undefined,
+        notes: launchForm.notes.trim() || undefined,
+        updatedAt: nowStr,
+        lostAt: nowStr,
+        lostReason: 'session_limit'
+      };
+      db.setDeliveries([...allDeliveries, lostDelivery]);
+      db.incrementSessionDeliveryCount();
+      setShowLaunchModal(false);
+      setEditingDelivery(null);
+      setLaunchForm({ establishmentId: '', value: '', orderNumber: '', notes: '' });
+      loadData();
+      return;
+    }
+
     const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && db.isSameDayString(s.date, todayStr));
     const allDeliveries = db.getDeliveries();
     const nowStr = new Date().toISOString();
@@ -550,6 +734,9 @@ export default function RiderDashboard() {
       };
 
       db.setDeliveries([...allDeliveries, newDelivery]);
+
+      // Inicia o rastreio de presença obrigatória para esta corrida
+      db.startDeliveryPresence(newDelivery.id);
 
       db.markRiderDelivering(user.id, launchForm.establishmentId);
 
@@ -1016,6 +1203,18 @@ export default function RiderDashboard() {
                     const hasNotes = Boolean(delivery.notes && delivery.notes.trim());
                     const notesCount = delivery.notes ? delivery.notes.split('\n').filter(l => l.trim()).length : 0;
 
+                    // ── Timer de presença obrigatória ──
+                    const presenceMs = db.getPresenceMs(delivery.id);
+                    const absenceMs = db.getAbsenceMs(delivery.id);
+                    const presenceRequired = db.PRESENCE_REQUIRED_MS;
+                    const absenceTolerance = db.ABSENCE_TOLERANCE_MS;
+                    const presenceTracked = presenceMs > 0 || absenceMs > 0;
+                    const presenceDone = presenceMs >= presenceRequired;
+                    const presenceMinLeft = presenceDone ? 0 : Math.ceil((presenceRequired - presenceMs) / 60000);
+                    const absenceMinLeft = Math.ceil((absenceTolerance - absenceMs) / 60000);
+                    const absenceWarning = absenceMs > 0 && absenceMs < absenceTolerance;
+                    const presencePercent = Math.min(100, Math.round((presenceMs / presenceRequired) * 100));
+
                     return (
                       <div key={delivery.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                         <div className="min-w-0 space-y-1.5 flex-1">
@@ -1045,6 +1244,53 @@ export default function RiderDashboard() {
                             <Clock className="h-3.5 w-3.5 text-slate-400" />
                             <span>Horário: {delivery.time}</span>
                           </p>
+
+                          {/* ── Timer de presença ── */}
+                          {(delivery.status === 'pending' || delivery.status === 'active') && presenceTracked && !presenceDone && (
+                            <div className={`rounded-lg px-2.5 py-2 mt-1 space-y-1.5 border ${
+                              absenceWarning
+                                ? 'bg-red-50 border-red-200'
+                                : 'bg-amber-50 border-amber-200'
+                            }`}>
+                              {/* Linha de título */}
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-1.5">
+                                  <Timer className={`h-3.5 w-3.5 flex-shrink-0 ${absenceWarning ? 'text-red-500 animate-pulse' : 'text-amber-600'}`} />
+                                  <span className={`text-[11px] font-bold ${absenceWarning ? 'text-red-700' : 'text-amber-800'}`}>
+                                    {absenceWarning
+                                      ? `⚠️ Fora do app — ${absenceMinLeft} min restante(s) de tolerância`
+                                      : `Presença obrigatória: ${presenceMinLeft} min restante(s)`
+                                    }
+                                  </span>
+                                </div>
+                                <span className={`text-[10px] font-black ${absenceWarning ? 'text-red-600' : 'text-amber-700'}`}>
+                                  {presencePercent}%
+                                </span>
+                              </div>
+
+                              {/* Barra de progresso */}
+                              <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full transition-all duration-1000 ${
+                                    absenceWarning ? 'bg-red-500' : 'bg-amber-500'
+                                  }`}
+                                  style={{ width: `${presencePercent}%` }}
+                                />
+                              </div>
+
+                              <p className="text-[10px] text-slate-500 leading-snug">
+                                Mantenha o app aberto. Se sair por mais de 10 min antes de completar 30 min, a corrida será perdida.
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Presença cumprida */}
+                          {(delivery.status === 'pending' || delivery.status === 'active') && presenceDone && (
+                            <div className="flex items-center gap-1.5 mt-1">
+                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 flex-shrink-0" />
+                              <span className="text-[11px] text-emerald-700 font-semibold">Presença obrigatória cumprida ✓</span>
+                            </div>
+                          )}
                         </div>
 
                         <div className="flex items-center gap-2 flex-wrap justify-between sm:justify-end flex-shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100">

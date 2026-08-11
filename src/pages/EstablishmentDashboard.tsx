@@ -24,7 +24,8 @@ import {
   Crown,
   UserPlus,
   LocateFixed,
-  AlertTriangle
+  AlertTriangle,
+  RotateCw
 } from 'lucide-react';
 import L from 'leaflet';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
@@ -336,6 +337,17 @@ export default function EstablishmentDashboard() {
       notes: del.notes || ''
     });
     setShowDeliveryModal(true);
+  };
+
+  const handleRestoreDelivery = (id: string) => {
+    const allDeliveries = db.getDeliveries();
+    const updated = allDeliveries.map(d =>
+      d.id === id && d.status === 'lost'
+        ? { ...d, status: 'pending' as const, lostAt: undefined, lostReason: undefined, updatedAt: new Date().toISOString() }
+        : d
+    );
+    db.setDeliveries(updated);
+    loadData();
   };
 
   const handleSaveDelivery = (e: React.FormEvent) => {
@@ -823,9 +835,11 @@ export default function EstablishmentDashboard() {
                           <p className="font-extrabold text-slate-800 text-sm truncate">{rider?.name || 'Motoboy'}</p>
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                             del.status === 'active' ? 'bg-emerald-100 text-emerald-800' :
-                            del.status === 'pending' ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-800'
+                            del.status === 'pending' ? 'bg-amber-100 text-amber-800' :
+                            del.status === 'lost' ? 'bg-orange-100 text-orange-800 border border-orange-300' :
+                            'bg-red-100 text-red-800'
                           }`}>
-                            {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : 'Rejeitada'}
+                            {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : del.status === 'lost' ? '⚠️ Ocultada' : 'Rejeitada'}
                           </span>
                         </div>
                         <p className="text-slate-400">Horário: {del.time}</p>
@@ -870,6 +884,17 @@ export default function EstablishmentDashboard() {
                         >
                           <Edit2 className="h-4 w-4" />
                         </button>
+
+                        {del.status === 'lost' && (
+                          <button
+                            onClick={() => handleRestoreDelivery(del.id)}
+                            className="px-2.5 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors"
+                            title="Restaurar corrida para o motoboy"
+                          >
+                            <RotateCw className="h-3.5 w-3.5" />
+                            <span>Restaurar</span>
+                          </button>
+                        )}
 
                         <span className={`font-black text-sm ml-1 ${del.status === 'active' ? 'text-emerald-600' : 'text-slate-400 line-through'}`}>
                           R$ {Number(del.value).toFixed(2)}

@@ -285,6 +285,7 @@ export default function RiderNavigationMap({
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<AutocompleteSuggestion[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [isListeningVoice, setIsListeningVoice] = useState(false);
 
   const [isPinAdjustmentMode, setIsPinAdjustmentMode] = useState(false);
@@ -1371,6 +1372,26 @@ export default function RiderNavigationMap({
     setIsPinAdjustmentMode(false);
   };
 
+  // Preenche o campo com o nome da rua + espaço e foca para digitar o número — igual ao Google Maps
+  const handleAddNumber = (res: AutocompleteSuggestion) => {
+    // Monta o prefixo: nome da rua sem número (ex: "Rua Vereador Alberto Agra, ")
+    const streetBase = res.title.replace(/,?\s*\d+\s*$/, '').trim();
+    const newQuery = streetBase + ', ';
+    setSearchQuery(newQuery);
+    setSearchResults([]);
+    setIsSearchFocused(true);
+    // Dispara nova busca com o texto atual para manter contexto
+    handleSearchInput(newQuery);
+    // Foca o input e posiciona cursor no final
+    setTimeout(() => {
+      if (searchInputRef.current) {
+        searchInputRef.current.focus();
+        const len = newQuery.length;
+        searchInputRef.current.setSelectionRange(len, len);
+      }
+    }, 50);
+  };
+
   const handleSearchInput = async (value: string) => {
     setSearchQuery(value);
     setNotFoundAlert(null);
@@ -1760,172 +1781,201 @@ export default function RiderNavigationMap({
         </div>
       )}
 
-      <div className="bg-slate-900 border-b border-slate-800 px-2 py-1.5 z-[100] relative flex-shrink-0 space-y-1">
-        <div className="flex items-center gap-1.5">
-          <form onSubmit={(e) => handleExecuteDirectSearch(e, false)} className="relative flex-1 flex items-center">
-            <input
-              type="text"
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="words"
-              spellCheck={false}
-              data-lpignore="true"
-              placeholder="Pesquise aqui..."
-              value={searchQuery}
-              onFocus={() => setIsSearchFocused(true)}
-              onChange={(e) => handleSearchInput(e.target.value)}
-              className="w-full text-white placeholder-slate-400 text-xs pl-7 pr-12 py-1.5 rounded-lg border bg-slate-800 border-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
-            />
-            <Search className="h-3.5 w-3.5 text-slate-400 absolute left-2 pointer-events-none" />
-
+        {/* ── Barra de busca estilo Google Maps ── */}
+        <div className="bg-white border-b border-gray-200 px-3 py-2 z-[100] relative flex-shrink-0">
+          <div className="flex items-center gap-2">
+            {/* Botão voltar */}
             <button
               type="button"
-              onClick={handleStartVoiceRecognition}
-              className={`absolute right-6 p-0.5 rounded transition-colors ${
-                isListeningVoice ? 'bg-red-600 text-white animate-pulse' : 'text-slate-400 hover:text-white'
-              }`}
-              title="Pesquisa por Voz"
+              onClick={() => { setIsSearchFocused(false); setSearchQuery(''); setSearchResults([]); }}
+              className="p-1.5 rounded-full text-gray-500 hover:bg-gray-100 transition-colors flex-shrink-0"
             >
-              {isListeningVoice ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+              <ArrowUp className="h-5 w-5 rotate-[-90deg]" />
             </button>
 
-            {searchQuery && (
+            {/* Campo de texto */}
+            <form onSubmit={(e) => handleExecuteDirectSearch(e, false)} className="relative flex-1">
+              <input
+                type="text"
+                ref={searchInputRef}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="words"
+                spellCheck={false}
+                data-lpignore="true"
+                placeholder="Pesquise um endereço..."
+                value={searchQuery}
+                onFocus={() => setIsSearchFocused(true)}
+                onChange={(e) => handleSearchInput(e.target.value)}
+                className="w-full text-[15px] text-gray-900 placeholder-gray-400 bg-transparent border-none outline-none font-normal leading-tight"
+                style={{ fontFamily: 'inherit' }}
+              />
+            </form>
+
+            {/* Limpar / Voz */}
+            {searchQuery ? (
               <button
                 type="button"
                 onClick={() => { setSearchQuery(''); setSearchResults([]); }}
-                className="text-slate-400 hover:text-white absolute right-1 p-0.5"
+                className="p-1.5 rounded-full text-gray-400 hover:bg-gray-100 transition-colors flex-shrink-0"
               >
-                <X className="h-3.5 w-3.5" />
+                <X className="h-5 w-5" />
               </button>
-            )}
-          </form>
-        </div>
-
-        {isSearching && searchResults.length === 0 && (
-          <div className="absolute left-2 right-2 top-full mt-0.5 bg-slate-900 border border-slate-700 rounded-lg p-2 z-[110] shadow-2xl flex items-center justify-center gap-1.5 text-xs text-blue-400 font-bold">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            <span>Buscando endereço...</span>
-          </div>
-        )}
-
-        {isSearchFocused && searchResults.length === 0 && (
-          <div className="absolute left-0 right-0 top-full mt-1 bg-slate-900 rounded-2xl border border-slate-800 shadow-2xl z-[120] overflow-hidden max-h-[70vh] overflow-y-auto p-3 space-y-3 font-sans border-t-2 border-t-blue-500">
-            <div className="flex items-center space-x-2 overflow-x-auto pb-2 scrollbar-none border-b border-slate-800">
+            ) : (
               <button
                 type="button"
-                onClick={() => setShowRouteHistoryModal(true)}
-                className="flex items-center space-x-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full px-3 py-1.5 text-xs text-slate-200 font-medium whitespace-nowrap flex-shrink-0"
+                onClick={handleStartVoiceRecognition}
+                className={`p-1.5 rounded-full transition-colors flex-shrink-0 ${
+                  isListeningVoice ? 'bg-red-100 text-red-500 animate-pulse' : 'text-gray-400 hover:bg-gray-100'
+                }`}
+                title="Pesquisa por Voz"
               >
-                <div className="w-5 h-5 rounded-full bg-indigo-600/20 text-indigo-400 flex items-center justify-center">
-                  <History className="h-3 w-3" />
-                </div>
-                <span>Histórico de Rotas</span>
+                {isListeningVoice ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
               </button>
-            </div>
+            )}
+          </div>
 
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-xs text-slate-400 px-1 py-1 font-semibold">
-                <span className="text-slate-200 font-bold text-sm">Recentes</span>
-                <Info className="h-3.5 w-3.5 text-slate-500" />
+          {/* Loading */}
+          {isSearching && (
+            <div className="absolute left-0 right-0 bottom-0 h-0.5 bg-blue-100 overflow-hidden">
+              <div className="h-full w-1/3 bg-blue-500 animate-[slide_1s_linear_infinite]" 
+                style={{ animation: 'loading-bar 1.2s ease-in-out infinite' }} />
+            </div>
+          )}
+
+          {/* ── Dropdown: sem query (recentes + histórico) ── */}
+          {isSearchFocused && searchResults.length === 0 && !isSearching && (
+            <div className="absolute left-0 right-0 top-full bg-white shadow-xl z-[120] overflow-hidden max-h-[75vh] overflow-y-auto border-t border-gray-100">
+              {/* Acesso rápido */}
+              <div className="px-4 py-2 border-b border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setShowRouteHistoryModal(true)}
+                  className="flex items-center gap-3 w-full py-2 text-left"
+                >
+                  <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
+                    <History className="h-5 w-5 text-gray-500" />
+                  </div>
+                  <span className="text-[14px] text-gray-700 font-medium">Histórico de Rotas</span>
+                </button>
               </div>
 
-              {recentSearches.length === 0 ? (
-                <p className="text-xs text-slate-500 px-1 py-2">Nenhum endereço pesquisado recentemente.</p>
-              ) : (
-                <div className="divide-y divide-slate-800/80">
+              {/* Recentes */}
+              {recentSearches.length > 0 && (
+                <div>
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider px-4 pt-3 pb-1">Recentes</p>
                   {recentSearches.map((item) => (
                     <div
                       key={item.id}
                       onClick={() => handleSelectRecentItem(item, false)}
-                      className="py-2.5 px-1 hover:bg-slate-800/80 rounded-xl cursor-pointer transition-colors flex items-center justify-between group"
+                      className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 active:bg-gray-100 cursor-pointer border-b border-gray-50 last:border-0"
                     >
-                      <div className="flex items-center space-x-3 min-w-0 flex-1">
-                        <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 text-slate-300 flex items-center justify-center flex-shrink-0 group-hover:bg-blue-600 group-hover:text-white group-hover:border-blue-500 transition-colors">
-                          <Clock className="h-4 w-4" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-bold text-slate-100 truncate leading-snug">{item.title}</p>
-                          <p className="text-[10px] text-slate-400 truncate leading-tight mt-0.5">{item.subtitle || item.fullAddress}</p>
-                        </div>
+                      <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
+                        <Clock className="h-5 w-5 text-gray-500" />
                       </div>
-
-                      <div className="flex items-center space-x-1 flex-shrink-0 pl-2">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSelectRecentItem(item, true);
-                          }}
-                          className="p-1.5 text-purple-400 hover:bg-purple-950/50 rounded-lg text-[10px] font-bold flex items-center gap-0.5"
-                          title="Adicionar como Parada"
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                        </button>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[14px] font-medium text-gray-900 truncate">{item.title}</p>
+                        <p className="text-[12px] text-gray-500 truncate mt-0.5">{item.subtitle || item.fullAddress}</p>
                       </div>
                     </div>
                   ))}
                 </div>
               )}
+
+              {recentSearches.length === 0 && (
+                <p className="text-[13px] text-gray-400 px-4 py-6 text-center">Nenhuma pesquisa recente</p>
+              )}
             </div>
+          )}
 
-            <div className="pt-2 border-t border-slate-800 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setIsSearchFocused(false)}
-                className="text-xs text-slate-400 hover:text-white px-3 py-1 font-semibold"
-              >
-                Fechar
-              </button>
-            </div>
-          </div>
-        )}
+          {/* ── Dropdown: resultados de autocomplete estilo Google Maps ── */}
+          {searchResults.length > 0 && (
+            <div className="absolute left-0 right-0 top-full bg-white shadow-xl z-[130] overflow-hidden max-h-[75vh] overflow-y-auto border-t border-gray-100">
+              {searchResults.map((res, idx) => {
+                // Highlight da parte digitada no título
+                const query = searchQuery.trim();
+                const titleLower = res.title.toLowerCase();
+                const queryLower = query.toLowerCase();
+                const matchIdx = titleLower.indexOf(queryLower);
 
-        {searchResults.length > 0 && (
-          <div className="absolute left-2 right-2 top-full mt-0.5 bg-slate-900 rounded-xl border border-slate-700 shadow-2xl z-[130] overflow-hidden divide-y divide-slate-800 max-h-56 overflow-y-auto">
-            {searchResults.map((res) => (
-              <div 
-                key={res.id} 
-                className="p-2.5 hover:bg-blue-950/80 transition-colors cursor-pointer flex items-center justify-between group"
-              >
-                <div 
-                  onClick={() => handleSelectSearchResult(res, false)}
-                  className="flex items-center space-x-2.5 min-w-0 flex-1 pr-1.5"
-                >
-                  <div className="w-7 h-7 rounded-full bg-slate-800 text-emerald-400 flex items-center justify-center flex-shrink-0">
-                    <MapPin className="h-3.5 w-3.5" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-xs font-bold text-white truncate">{res.title}</p>
-                    <p className="text-[10px] text-slate-400 truncate">{res.subtitle}</p>
-                  </div>
-                </div>
+                let titleNode: React.ReactNode;
+                if (matchIdx >= 0 && query.length > 0) {
+                  titleNode = (
+                    <>
+                      {res.title.slice(0, matchIdx)}
+                      <span className="font-bold text-gray-900">{res.title.slice(matchIdx, matchIdx + query.length)}</span>
+                      {res.title.slice(matchIdx + query.length)}
+                    </>
+                  );
+                } else {
+                  titleNode = res.title;
+                }
 
-                <div className="flex items-center space-x-1 flex-shrink-0">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleSelectSearchResult(res, true);
-                    }}
-                    className="text-[9px] bg-purple-600/30 hover:bg-purple-600 text-purple-200 font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5"
-                  >
-                    <Plus className="h-2.5 w-2.5" />
-                    <span>Parada</span>
-                  </button>
+                // Distância estimada (se disponível nas coords)
+                const distLabel: string | null = (() => {
+                  if (res.lat != null && res.lng != null && activePos) {
+                    const d = calculateDistanceMeters(activePos.lat, activePos.lng, res.lat, res.lng);
+                    if (d >= 1000) return `${(d / 1000).toFixed(1).replace('.', ',')} km`;
+                    return `${Math.round(d)} m`;
+                  }
+                  return null;
+                })();
 
-                  <button
-                    type="button"
+                return (
+                  <div
+                    key={res.id}
+                    className={`flex items-start gap-3 px-4 py-3 hover:bg-gray-50 active:bg-gray-100 cursor-pointer ${idx > 0 ? 'border-t border-gray-100' : ''}`}
                     onClick={() => handleSelectSearchResult(res, false)}
-                    className="text-[9px] bg-blue-600 text-white font-bold px-2 py-0.5 rounded hover:bg-blue-700"
                   >
-                    Ir
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+                    {/* Ícone + distância (estilo exato Google Maps) */}
+                    <div className="flex flex-col items-center gap-0.5 flex-shrink-0 w-10 pt-0.5">
+                      <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center">
+                        <MapPin className="h-5 w-5 text-gray-500" />
+                      </div>
+                      {distLabel && (
+                        <span className="text-[10px] text-gray-400 font-medium leading-tight">{distLabel}</span>
+                      )}
+                    </div>
+
+                    {/* Textos */}
+                    <div className="min-w-0 flex-1 py-0.5">
+                      <p className="text-[14px] text-gray-700 leading-snug">{titleNode}</p>
+                      <p className="text-[12px] text-gray-500 truncate mt-0.5">{res.subtitle || res.fullAddress}</p>
+
+                      <div className="mt-2 flex items-center gap-2 flex-wrap">
+                        {/* Botão "+ Adicionar número" — preenche o campo para digitar o número */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleAddNumber(res);
+                          }}
+                          className="inline-flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 active:bg-blue-200 text-blue-600 text-[12px] font-medium px-3 py-1 rounded-full transition-colors"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          Adicionar número
+                        </button>
+
+                        {/* Botão "Adicionar como parada" — adiciona à lista de paradas da rota */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSelectSearchResult(res, true);
+                          }}
+                          className="inline-flex items-center gap-1.5 bg-purple-50 hover:bg-purple-100 active:bg-purple-200 text-purple-600 text-[12px] font-medium px-3 py-1 rounded-full transition-colors"
+                        >
+                          <Flag className="h-3.5 w-3.5" />
+                          Adicionar parada
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
       <div 
         onTouchStart={handleTouchStart}

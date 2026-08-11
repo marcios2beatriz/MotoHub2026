@@ -63,13 +63,15 @@ export interface Delivery {
   date: string; // YYYY-MM-DD
   time: string; // HH:MM
   value: number;
-  status: 'pending' | 'active' | 'rejected' | 'cancelled';
+  status: 'pending' | 'active' | 'rejected' | 'cancelled' | 'lost';
   scheduleId?: string;
   orderNumber?: string;
   notes?: string; // Chat/Observações com o estabelecimento
   customerChat?: string; // Chat com o cliente final
   updatedAt?: string;
   paid?: boolean;
+  lostAt?: string;    // ISO timestamp de quando foi perdida
+  lostReason?: string; // motivo: 'logout' | 'session_limit'
 }
 
 export interface Notification {
@@ -167,7 +169,10 @@ const KEYS = {
   RIDER_QUEUE: 'delivery_system_rider_queue',
   ROUTE_HISTORY: 'delivery_system_route_history',
   MISSING_COLUMNS: 'delivery_system_missing_columns',
-  MISSING_TABLES: 'delivery_system_missing_tables'
+  MISSING_TABLES: 'delivery_system_missing_tables',
+  SESSION_LOGIN_TIME: 'delivery_system_session_login_time',
+  SESSION_DELIVERY_COUNT: 'delivery_system_session_delivery_count',
+  DELIVERY_PRESENCE: 'delivery_system_delivery_presence',
 };
 
 const getMissingColumnsCache = (): Record<string, string[]> => {
@@ -761,6 +766,162 @@ export const db = {
     } else {
       localStorage.removeItem(KEYS.CURRENT_USER);
     }
+  },
+
+  // ── Controle de sessão do motoboy ──────────────────────────────────────
+  // Registra o momento do login para contagem de tempo mínimo de sessão
+  startRiderSession() {
+    localStorage.setItem(KEYS.SESSION_LOGIN_TIME, new Date().toISOString());
+    localStorage.setItem(KEYS.SESSION_DELIVERY_COUNT, '0');
+  },
+
+  // Retorna quantas horas o motoboy está logado nesta sessão
+  getRiderSessionHours(): number {
+    const loginTimeStr = localStorage.getItem(KEYS.SESSION_LOGIN_TIME);
+    if (!loginTimeStr) return 0;
+    const loginTime = new Date(loginTimeStr).getTime();
+    return (Date.now() - loginTime) / (1000 * 60 * 60);
+  },
+
+  // Retorna quantas corridas foram lançadas nesta sessão
+  getSessionDeliveryCount(): number {
+    return parseInt(localStorage.getItem(KEYS.SESSION_DELIVERY_COUNT) || '0', 10);
+  },
+
+  // Incrementa contador de corridas da sessão
+  incrementSessionDeliveryCount() {
+    const current = this.getSessionDeliveryCount();
+    localStorage.setItem(KEYS.SESSION_DELIVERY_COUNT, String(current + 1));
+  },
+
+  // Limpa dados de sessão (chamado no logout)
+  clearRiderSession() {
+    localStorage.removeItem(KEYS.SESSION_LOGIN_TIME);
+    localStorage.removeItem(KEYS.SESSION_DELIVERY_COUNT);
+  },
+
+  // Verifica se o motoboy cumpriu o requisito de sessão para a corrida N
+  // Regra: a cada 2 corridas, exige 2h de sessão
+  // Corridas 1 e 2 são livres; a 3ª e 4ª exigem 2h; a 5ª e 6ª exigem 4h; etc.
+  checkSessionRequirement(): { allowed: boolean; reason?: string; sessionHours: number; deliveryCount: number } {
+    const sessionHours = this.getRiderSessionHours();
+    const deliveryCount = this.getSessionDeliveryCount(); // corridas já lançadas nesta sessão
+    // A cada bloco de 2 corridas, exige +2h
+    // Bloco 0 (corridas 1-2): 0h mínimas
+    // Bloco 1 (corridas 3-4): 2h mínimas
+    // Bloco 2 (corridas 5-6): 4h mínimas ...
+    const block = Math.floor(deliveryCount / 2);
+    const requiredHours = block * 2;
+
+    if (sessionHours < requiredHours) {
+      const remainingMinutes = Math.ceil((requiredHours - sessionHours) * 60);
+      return {
+        allowed: false,
+        reason: `Você precisa ficar logado por mais ${remainingMinutes} minuto(s) para lançar esta corrida. Mantenha o sistema aberto.`,
+        sessionHours,
+        deliveryCount
+      };
+    }
+    return { allowed: true, sessionHours, deliveryCount };
+  },
+
+  // ── Controle de presença obrigatória por corrida ───────────────────────
+  // Estrutura salva: Record<deliveryId, { accumulatedMs: number, lastSeenAt: string | null }>
+  // accumulatedMs = total de ms com o app em foreground
+  // lastSeenAt    = ISO timestamp do momento em que o app voltou ao foreground (null = background)
+
+  PRESENCE_REQUIRED_MS: 30 * 60 * 1000,    // 30 min de presença obrigatória
+  ABSENCE_TOLERANCE_MS: 10 * 60 * 1000,    // 10 min de ausência tolerada
+
+  getDeliveryPresenceMap(): Record<string, { accumulatedMs: number; lastSeenAt: string | null; absenceMs: number }> {
+    const raw = localStorage.getItem(KEYS.DELIVERY_PRESENCE);
+    return raw ? JSON.parse(raw) : {};
+  },
+
+  setDeliveryPresenceMap(map: Record<string, { accumulatedMs: number; lastSeenAt: string | null; absenceMs: number }>) {
+    localStorage.setItem(KEYS.DELIVERY_PRESENCE, JSON.stringify(map));
+  },
+
+  // Inicia o rastreio de presença para uma corrida (chamado ao lançar)
+  startDeliveryPresence(deliveryId: string) {
+    const map = this.getDeliveryPresenceMap();
+    if (!map[deliveryId]) {
+      map[deliveryId] = {
+        accumulatedMs: 0,
+        lastSeenAt: new Date().toISOString(), // começa em foreground
+        absenceMs: 0
+      };
+      this.setDeliveryPresenceMap(map);
+    }
+  },
+
+  // Chamado quando o app vai para background — congela o acúmulo de presença e inicia acúmulo de ausência
+  pauseAllPresence() {
+    const now = Date.now();
+    const map = this.getDeliveryPresenceMap();
+    let changed = false;
+    Object.keys(map).forEach(id => {
+      const entry = map[id];
+      if (entry.lastSeenAt) {
+        // Acumula o tempo de presença desde a última vez que estava em foreground
+        entry.accumulatedMs += now - new Date(entry.lastSeenAt).getTime();
+        entry.lastSeenAt = null; // marca como background
+        changed = true;
+      }
+    });
+    if (changed) this.setDeliveryPresenceMap(map);
+  },
+
+  // Chamado quando o app volta ao foreground — marca o timestamp de retorno
+  resumeAllPresence() {
+    const now = new Date().toISOString();
+    const map = this.getDeliveryPresenceMap();
+    let changed = false;
+    Object.keys(map).forEach(id => {
+      if (map[id].lastSeenAt === null) {
+        map[id].lastSeenAt = now;
+        changed = true;
+      }
+    });
+    if (changed) this.setDeliveryPresenceMap(map);
+  },
+
+  // Retorna o tempo de presença acumulado em ms para uma corrida (incluindo o tempo atual em foreground)
+  getPresenceMs(deliveryId: string): number {
+    const map = this.getDeliveryPresenceMap();
+    const entry = map[deliveryId];
+    if (!entry) return 0;
+    let total = entry.accumulatedMs;
+    if (entry.lastSeenAt) {
+      total += Date.now() - new Date(entry.lastSeenAt).getTime();
+    }
+    return total;
+  },
+
+  // Retorna o tempo de ausência acumulado em ms para uma corrida
+  getAbsenceMs(deliveryId: string): number {
+    const map = this.getDeliveryPresenceMap();
+    return map[deliveryId]?.absenceMs || 0;
+  },
+
+  // Acumula tempo de ausência para todas as corridas em background (chamado periodicamente enquanto em background)
+  tickAbsence(elapsedMs: number) {
+    const map = this.getDeliveryPresenceMap();
+    let changed = false;
+    Object.keys(map).forEach(id => {
+      if (map[id].lastSeenAt === null) {
+        map[id].absenceMs = (map[id].absenceMs || 0) + elapsedMs;
+        changed = true;
+      }
+    });
+    if (changed) this.setDeliveryPresenceMap(map);
+  },
+
+  // Remove o rastreio de uma corrida (quando ela é resolvida ou restaurada)
+  removeDeliveryPresence(deliveryId: string) {
+    const map = this.getDeliveryPresenceMap();
+    delete map[deliveryId];
+    this.setDeliveryPresenceMap(map);
   },
 
   getLocalDateString(date: Date = new Date()): string {
