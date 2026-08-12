@@ -41,8 +41,6 @@ export default function Login() {
       } else if (user.role === 'establishment') {
         navigate('/establishment', { replace: true });
       } else {
-        // Inicia contagem de sessão para controle de penalidade
-        db.startRiderSession();
         navigate('/rider', { replace: true });
       }
     } else {

@@ -105,7 +105,6 @@ export default function RiderDashboard() {
   // ── Presença obrigatória: tick para re-render do timer visual ──────────
   const [presenceTick, setPresenceTick] = useState(0);
   const bgEnterTimeRef = useRef<number | null>(null);
-  const checkPresenceViolationsRef = useRef<() => void>(() => {});
 
   const resolveEst = (id: string): Establishment | undefined => {
     return db.resolveEstablishment(id);
@@ -124,10 +123,6 @@ export default function RiderDashboard() {
   // ── Sistema de presença obrigatória ────────────────────────────────────
   // Detecta background/foreground e acumula tempo de presença por corrida
   useEffect(() => {
-    // Na carga inicial: garante que todas as corridas rastreadas estejam
-    // em modo foreground (corrige estado preso de sessões anteriores)
-    db.resumeAllPresence();
-
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
         db.pauseAllPresence();
@@ -136,16 +131,14 @@ export default function RiderDashboard() {
         bgEnterTimeRef.current = null;
         db.resumeAllPresence();
         // Ao voltar ao foreground: verifica imediatamente se alguma corrida foi perdida
-        checkPresenceViolationsRef.current();
+        checkPresenceViolations();
         setPresenceTick(t => t + 1);
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, []);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);  // checkPresenceViolations definido abaixo via ref para evitar dependência circular
 
   // Verificador periódico: a cada 15s atualiza o timer visual e verifica violações
   const checkPresenceViolations = useCallback(() => {
@@ -202,16 +195,11 @@ export default function RiderDashboard() {
     setPresenceTick(t => t + 1);
   }, [user]);
 
-  // Mantém o ref sempre atualizado com a versão mais recente do callback
-  useEffect(() => {
-    checkPresenceViolationsRef.current = checkPresenceViolations;
-  }, [checkPresenceViolations]);
-
   // Roda a cada 15s para atualizar o timer visual
   useEffect(() => {
-    const interval = setInterval(() => checkPresenceViolationsRef.current(), 15_000);
+    const interval = setInterval(checkPresenceViolations, 15_000);
     return () => clearInterval(interval);
-  }, []);
+  }, [checkPresenceViolations]);
 
   useEffect(() => {
     const handleBeforeInstall = (e: Event) => {
