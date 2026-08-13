@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
-import { X, CalendarDays, Check, AlertTriangle, Users, Search } from 'lucide-react';
+import { X, CalendarDays, Check, AlertTriangle, Search, Info } from 'lucide-react';
 import { User, Establishment } from '../utils/db';
 
 interface WeeklyScheduleModalProps {
@@ -36,6 +36,19 @@ interface WeeklyScheduleModalProps {
   getShiftLabel: (shift: string) => string;
   selectedRiderIds: string[];
   setSelectedRiderIds: React.Dispatch<React.SetStateAction<string[]>>;
+}
+
+// Utilitário para formatar datas locais de YYYY-MM-DD
+function parseLocalDate(dateStr: string): Date {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function formatLocalDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 export default function WeeklyScheduleModal({
@@ -97,6 +110,33 @@ export default function WeeklyScheduleModal({
     });
   };
 
+  // Ajusta a data selecionada para a segunda-feira correspondente
+  const handleDateChange = (val: string) => {
+    if (!val) return;
+    const selected = parseLocalDate(val);
+    const day = selected.getDay(); // 0 = Domingo, 1 = Segunda...
+    const diff = day === 0 ? -6 : 1 - day; // dias até a segunda-feira
+    selected.setDate(selected.getDate() + diff);
+    const mondayStr = formatLocalDate(selected);
+
+    setWeeklyForm(prev => ({ ...prev, weekStart: mondayStr }));
+  };
+
+  // Cálculo da data de término (Domingo)
+  let weekEndDateStr = '';
+  let mondayDisplay = '';
+  let sundayDisplay = '';
+
+  if (weeklyForm.weekStart) {
+    const monday = parseLocalDate(weeklyForm.weekStart);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+
+    weekEndDateStr = formatLocalDate(sunday);
+    mondayDisplay = monday.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    sundayDisplay = sunday.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  }
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-xl max-h-[90vh] overflow-y-auto">
@@ -107,7 +147,7 @@ export default function WeeklyScheduleModal({
               Escala Semanal Automática
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              {weeklyStep === 'form' ? 'Configure a escala para um ou múltiplos motoboys' : 'Revise os dias antes de confirmar'}
+              {weeklyStep === 'form' ? 'Configure a escala por período de semana' : 'Revise os dias antes de confirmar'}
             </p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
@@ -181,7 +221,7 @@ export default function WeeklyScheduleModal({
                 required
                 value={weeklyForm.establishmentId}
                 onChange={(e) => setWeeklyForm({ ...weeklyForm, establishmentId: e.target.value })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 font-medium"
               >
                 <option value="">Selecione um Estabelecimento</option>
                 {establishments.filter(e => e.active).map(e => (
@@ -190,14 +230,43 @@ export default function WeeklyScheduleModal({
               </select>
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Semana (início na segunda-feira)</label>
-              <input
-                type="date"
-                value={weeklyForm.weekStart}
-                onChange={(e) => setWeeklyForm({ ...weeklyForm, weekStart: e.target.value })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500"
-              />
+            {/* SELEÇÃO DE PERÍODO DA SEMANA */}
+            <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl space-y-2">
+              <label className="block text-xs font-bold text-slate-700 uppercase flex items-center gap-1.5">
+                <CalendarDays className="h-4 w-4 text-emerald-600" />
+                <span>Período da Semana (Início e Término)</span>
+              </label>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <span className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data Início (Segunda)</span>
+                  <input
+                    type="date"
+                    required
+                    value={weeklyForm.weekStart}
+                    onChange={(e) => handleDateChange(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-bold"
+                  />
+                </div>
+
+                <div>
+                  <span className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data Término (Domingo)</span>
+                  <input
+                    type="date"
+                    readOnly
+                    disabled
+                    value={weekEndDateStr}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs bg-slate-100 font-bold text-slate-600 cursor-not-allowed"
+                  />
+                </div>
+              </div>
+
+              {weeklyForm.weekStart && (
+                <div className="flex items-center space-x-1.5 text-[11px] text-emerald-800 font-bold bg-emerald-100/80 px-2.5 py-1.5 rounded-lg">
+                  <Info className="h-3.5 w-3.5 text-emerald-600 flex-shrink-0" />
+                  <span>Semana selecionada: {mondayDisplay} até {sundayDisplay}</span>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-3 gap-2">
@@ -270,7 +339,7 @@ export default function WeeklyScheduleModal({
                     return;
                   }
                   if (!weeklyForm.establishmentId || !weeklyForm.weekStart) {
-                    alert('Preencha o estabelecimento e a semana de início.');
+                    alert('Preencha o estabelecimento e a data de início da semana.');
                     return;
                   }
                   if (!Object.values(weeklyForm.days).some(Boolean)) {
@@ -290,7 +359,7 @@ export default function WeeklyScheduleModal({
 
         {weeklyStep === 'preview' && (
           <div className="space-y-4">
-            <div className="bg-slate-50 p-3 rounded-xl text-sm space-y-1 border border-slate-200">
+            <div className="bg-slate-50 p-3.5 rounded-xl text-xs space-y-1.5 border border-slate-200">
               <p>
                 <span className="font-bold text-slate-600">Motoboy(s):</span>{' '}
                 <span className="font-extrabold text-indigo-700">
@@ -298,51 +367,57 @@ export default function WeeklyScheduleModal({
                 </span>
               </p>
               <p><span className="font-semibold text-slate-600">Estabelecimento:</span> {establishments.find(e => e.id === weeklyForm.establishmentId)?.name}</p>
+              <p><span className="font-semibold text-slate-600">Período:</span> <strong className="text-emerald-700">{mondayDisplay} até {sundayDisplay}</strong></p>
               <p><span className="font-semibold text-slate-600">Turno:</span> {getShiftLabel(weeklyForm.shift)} ({weeklyForm.startTime} - {weeklyForm.endTime})</p>
             </div>
 
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Dias gerados — desmarque se necessário</label>
               <div className="space-y-2">
-                {weeklyPreview.map((day) => (
-                  <div
-                    key={day.date}
-                    onClick={() => setWeeklyPreview((prev) =>
-                      prev.map((d) => d.date === day.date ? { ...d, enabled: !d.enabled } : d)
-                    )}
-                    className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
-                      !day.enabled
-                        ? 'bg-slate-50 border-slate-200 opacity-50'
-                        : day.conflict
-                          ? 'bg-amber-50 border-amber-300'
-                          : 'bg-emerald-50 border-emerald-200'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-                        day.enabled ? 'bg-emerald-600 border-emerald-600' : 'border-slate-300 bg-white'
-                      }`}>
-                        {day.enabled && <Check className="h-3 w-3 text-white" />}
+                {weeklyPreview.map((day) => {
+                  const [y, m, dNum] = day.date.split('-').map(Number);
+                  const formattedDay = new Date(y, m - 1, dNum).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+                  return (
+                    <div
+                      key={day.date}
+                      onClick={() => setWeeklyPreview((prev) =>
+                        prev.map((d) => d.date === day.date ? { ...d, enabled: !d.enabled } : d)
+                      )}
+                      className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
+                        !day.enabled
+                          ? 'bg-slate-50 border-slate-200 opacity-50'
+                          : day.conflict
+                            ? 'bg-amber-50 border-amber-300'
+                            : 'bg-emerald-50 border-emerald-200'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
+                          day.enabled ? 'bg-emerald-600 border-emerald-600' : 'border-slate-300 bg-white'
+                        }`}>
+                          {day.enabled && <Check className="h-3 w-3 text-white" />}
+                        </div>
+                        <div>
+                          <p className={`text-sm font-semibold ${day.enabled ? 'text-slate-800' : 'text-slate-400 line-through'}`}>
+                            {day.label}
+                          </p>
+                          <p className="text-xs text-slate-500 font-mono">
+                            {formattedDay}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <p className={`text-sm font-semibold ${day.enabled ? 'text-slate-800' : 'text-slate-400 line-through'}`}>
-                          {day.label}
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          {new Date(day.date + 'T00:00:00').toLocaleDateString('pt-BR')}
-                        </p>
-                      </div>
+                      {day.conflict && day.enabled && (
+                        <span className="text-xs bg-amber-100 text-amber-700 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <AlertTriangle className="h-3 w-3" /> Conflito detectado
+                        </span>
+                      )}
+                      {!day.enabled && (
+                        <span className="text-xs bg-slate-100 text-slate-500 font-medium px-2 py-0.5 rounded-full">Ignorado</span>
+                      )}
                     </div>
-                    {day.conflict && day.enabled && (
-                      <span className="text-xs bg-amber-100 text-amber-700 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <AlertTriangle className="h-3 w-3" /> Conflito detectado
-                      </span>
-                    )}
-                    {!day.enabled && (
-                      <span className="text-xs bg-slate-100 text-slate-500 font-medium px-2 py-0.5 rounded-full">Ignorado</span>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 

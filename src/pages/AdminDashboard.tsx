@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { db, User, Establishment, Schedule, Delivery, Notification, PartnerRequest, RiderLocation, QueueEntry } from '../utils/db';
+import { db, User, Establishment, Schedule, Delivery, PartnerRequest, RiderLocation, QueueEntry } from '../utils/db';
 import { 
   Users, 
   Store, 
@@ -25,7 +25,6 @@ import {
   Phone,
   MapPin,
   Ban,
-  CheckCircle,
   Filter,
   ArrowUpDown,
   UserCheck2,
@@ -67,17 +66,22 @@ export function getShiftLabel(shift: string): string {
   }
 }
 
+// Retorna a segunda-feira da semana atual no formato YYYY-MM-DD local sem desvio de fuso horário
 const getThisMonday = (): string => {
-  const d = new Date();
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  const monday = new Date(d.setDate(diff));
-  return monday.toISOString().split('T')[0];
+  const now = new Date();
+  const day = now.getDay(); // 0 é domingo, 1 é segunda
+  const diff = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
+
+  const year = monday.getFullYear();
+  const month = String(monday.getMonth() + 1).padStart(2, '0');
+  const dateNum = String(monday.getDate()).padStart(2, '0');
+  return `${year}-${month}-${dateNum}`;
 };
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
-  const [adminUser, setAdminUser] = useState(db.getCurrentUser());
+  const [adminUser] = useState(db.getCurrentUser());
   const [activeTab, setActiveTab] = useState<'overview' | 'map' | 'users' | 'establishments' | 'requests' | 'schedules' | 'deliveries' | 'queues' | 'finance' | 'reports'>('overview');
 
   const [users, setUsers] = useState<User[]>([]);
@@ -223,7 +227,7 @@ export default function AdminDashboard() {
 
     setUsers([...currentUsers].sort((a, b) => a.name.localeCompare(b.name)));
     setEstablishments([...currentEsts].sort((a, b) => a.name.localeCompare(b.name)));
-    setSchedules([...currentSchedules].sort((a, b) => b.date.localeCompare(a.date) || b.shift.localeCompare(b.shift) || a.id.localeCompare(b.id)));
+    setSchedules([...currentSchedules].sort((a, b) => b.date.localeCompare(a.date) || b.shift.localeCompare(a.shift) || a.id.localeCompare(b.id)));
     setDeliveries([...currentDeliveries].sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time) || b.id.localeCompare(a.id)));
     setPartnerRequests([...mergedRequests].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
     setRiderLocations(locations);
@@ -764,17 +768,22 @@ export default function AdminDashboard() {
     }
   };
 
+  // Gera pré-visualização garantindo cálculo exato de data no fuso local
   const buildWeeklyPreview = (form: typeof weeklyForm) => {
     if (!form.weekStart || !form.establishmentId) return;
-    const monday = new Date(form.weekStart + 'T00:00:00');
+
+    const [year, month, day] = form.weekStart.split('-').map(Number);
+    const monday = new Date(year, month - 1, day);
     const allSchedules = db.getSchedules();
 
     const targetRiders = weeklySelectedRiderIds.length > 0 ? weeklySelectedRiderIds : (form.riderId ? [form.riderId] : []);
 
     const preview = DAY_KEYS.map((key, idx) => {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + idx);
-      const dateStr = d.toISOString().split('T')[0];
+      const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + idx);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const dateNum = String(d.getDate()).padStart(2, '0');
+      const dateStr = `${y}-${m}-${dateNum}`;
 
       const conflict = targetRiders.some(rId => 
         allSchedules.some(s => s.riderId === rId && s.date === dateStr && s.shift === form.shift)
@@ -1848,7 +1857,15 @@ export default function AdminDashboard() {
                   <button
                     onClick={() => {
                       const activeRiders = users.filter(r => r.role === 'rider' && r.active);
-                      setWeeklyForm({ riderId: activeRiders.length > 0 ? activeRiders[0].id : '', establishmentId: '', shift: 'morning', startTime: '08:00', endTime: '12:00', weekStart: getThisMonday(), days: { seg: true, ter: true, qua: true, qui: true, sex: true, sab: false, dom: false } });
+                      setWeeklyForm({ 
+                        riderId: activeRiders.length > 0 ? activeRiders[0].id : '', 
+                        establishmentId: '', 
+                        shift: 'morning', 
+                        startTime: '08:00', 
+                        endTime: '12:00', 
+                        weekStart: getThisMonday(), 
+                        days: { seg: true, ter: true, qua: true, qui: true, sex: true, sab: false, dom: false } 
+                      });
                       setWeeklySelectedRiderIds([]);
                       setWeeklyStep('form');
                       setShowWeeklyModal(true);
