@@ -25,7 +25,6 @@ import {
   CheckCircle2,
   Download,
   LocateFixed,
-  AlertTriangle,
   RotateCw,
   Bike,
   Ban,
@@ -102,8 +101,7 @@ export default function RiderDashboard() {
 
   const [deliveryStatusFilter, setDeliveryStatusFilter] = useState<'all' | 'pending' | 'active' | 'rejected' | 'cancelled'>('all');
 
-  // ── Presença obrigatória: tick para re-render do timer visual ──────────
-  const [presenceTick, setPresenceTick] = useState(0);
+  const [, setPresenceTick] = useState(0);
   const bgEnterTimeRef = useRef<number | null>(null);
 
   const resolveEst = (id: string): Establishment | undefined => {
@@ -121,7 +119,6 @@ export default function RiderDashboard() {
   const activePos = gpsState.currentLocation;
 
   // ── Sistema de presença obrigatória ────────────────────────────────────
-  // Detecta background/foreground e acumula tempo de presença por corrida
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
@@ -130,7 +127,6 @@ export default function RiderDashboard() {
       } else {
         bgEnterTimeRef.current = null;
         db.resumeAllPresence();
-        // Ao voltar ao foreground: verifica imediatamente se alguma corrida foi perdida
         checkPresenceViolations();
         setPresenceTick(t => t + 1);
       }
@@ -140,7 +136,6 @@ export default function RiderDashboard() {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
-  // Verificador periódico: a cada 15s atualiza o timer visual e verifica violações
   const checkPresenceViolations = useCallback(() => {
     if (!user) return;
     const todayStr = db.getLocalDateString();
@@ -155,16 +150,13 @@ export default function RiderDashboard() {
 
       const presenceMs = db.getPresenceMs(d.id);
 
-      // Se já cumpriu os 30 min → libera, remove rastreio
       if (presenceMs >= db.PRESENCE_REQUIRED_MS) {
         db.removeDeliveryPresence(d.id);
         return d;
       }
 
-      // Ausência contínua atual (só existe se app está em background)
       const absenceMs = db.getCurrentAbsenceMs(d.id);
 
-      // Se ausência contínua > tolerância → corrida perdida
       if (absenceMs > db.ABSENCE_TOLERANCE_MS) {
         changed = true;
         db.removeDeliveryPresence(d.id);
@@ -186,8 +178,8 @@ export default function RiderDashboard() {
       loadData();
       setActiveToast({
         id: 'presence_lost_' + Date.now(),
-        title: '⚠️ Corrida Perdida',
-        message: 'Você ficou ausente do app por mais de 10 minutos. A corrida foi perdida.',
+        title: '⚠️ Corrida Ocultada/Perdida',
+        message: 'Você ficou ausente do app por mais de 10 minutos. A corrida foi enviada para validação da loja.',
         sender: 'Sistema',
       });
     }
@@ -195,7 +187,6 @@ export default function RiderDashboard() {
     setPresenceTick(t => t + 1);
   }, [user]);
 
-  // Roda a cada 15s para atualizar o timer visual
   useEffect(() => {
     const interval = setInterval(checkPresenceViolations, 15_000);
     return () => clearInterval(interval);
@@ -231,7 +222,7 @@ export default function RiderDashboard() {
     });
 
     const allDeliveries = db.getDeliveries().filter(d => {
-      if (d.status === 'lost') return false; // Oculta corridas perdidas/deslogadas do motoboy
+      if (d.status === 'lost') return false;
       if (d.riderId === freshUser.id) return true;
       const riderOfDel = allUsers.find(u => u.id === d.riderId);
       return riderOfDel && riderOfDel.email.toLowerCase() === freshUser.email.toLowerCase();
@@ -350,7 +341,6 @@ export default function RiderDashboard() {
       (db.isSameDayString(q.date, todayStr) || (q.joinedAt && db.isSameDayString(q.joinedAt, todayStr)))
     );
 
-    // Distância máxima para saída automática: 100m
     const MAX_AUTO_LEAVE_DIST = 100;
     myWaitingEntries.forEach(entry => {
       const estCoords = estCoordsMap[entry.establishmentId];
@@ -474,35 +464,30 @@ export default function RiderDashboard() {
     if (user) {
       await db.clearRiderLocation(user.id);
 
-      // Penalidade de logout: corridas 'pending' do dia viram 'lost'
       const nowISO = new Date().toISOString();
       const allDeliveries = db.getDeliveries();
       const todayStr = db.getLocalDateString();
-      const hasPending = allDeliveries.some(
-        d => d.riderId === user.id &&
-             db.isSameDayString(d.date, todayStr) &&
-             d.status === 'pending'
-      );
 
-      if (hasPending) {
-        const updated = allDeliveries.map(d => {
-          if (
-            d.riderId === user.id &&
-            db.isSameDayString(d.date, todayStr) &&
-            d.status === 'pending'
-          ) {
-            return {
-              ...d,
-              status: 'lost' as const,
-              lostAt: nowISO,
-              lostReason: 'logout',
-              updatedAt: nowISO
-            };
-          }
-          return d;
-        });
-        db.setDeliveries(updated);
-      }
+      // Somente oculta/marca como lost ao deslogar se a presença dos 15 minutos NÃO tiver sido cumprida
+      const updated = allDeliveries.map(d => {
+        const presenceDone = db.getPresenceMs(d.id) >= db.PRESENCE_REQUIRED_MS;
+        if (
+          d.riderId === user.id &&
+          db.isSameDayString(d.date, todayStr) &&
+          d.status === 'pending' &&
+          !presenceDone
+        ) {
+          return {
+            ...d,
+            status: 'lost' as const,
+            lostAt: nowISO,
+            lostReason: 'logout',
+            updatedAt: nowISO
+          };
+        }
+        return d;
+      });
+      db.setDeliveries(updated);
 
       db.clearRiderSession();
     }
@@ -583,7 +568,6 @@ export default function RiderDashboard() {
       }
     });
 
-    // Retorna APENAS os escalados no dia, sem fallback
     return uniqueEsts;
   };
 
@@ -634,15 +618,12 @@ export default function RiderDashboard() {
 
     if (!user) return;
 
-    // ── Verificação de número de pedido duplicado ─────────────────────────
     const orderNumberInput = launchForm.orderNumber.trim();
     if (orderNumberInput) {
       const allDeliveries = db.getDeliveries();
       const duplicate = allDeliveries.find(d => {
         if (!d.orderNumber) return false;
-        // Ignora a própria corrida sendo editada
         if (editingDelivery && d.id === editingDelivery.id) return false;
-        // Compara apenas corridas do mesmo dia e mesmo estabelecimento
         const sameDay = db.isSameDayString(d.date, todayStr);
         const sameEst = db.isSameEstablishment(d.establishmentId, launchForm.establishmentId);
         const sameNumber = d.orderNumber.trim().toLowerCase() === orderNumberInput.toLowerCase();
@@ -655,7 +636,7 @@ export default function RiderDashboard() {
           active: 'Aprovada',
           rejected: 'Rejeitada',
           cancelled: 'Cancelada',
-          lost: 'Perdida',
+          lost: 'Ocultada',
         };
         const label = statusLabel[duplicate.status] || duplicate.status;
         alert(`❌ Número de pedido duplicado!\n\nJá existe uma corrida com o número "#${orderNumberInput}" hoje neste estabelecimento.\nStatus: ${label}\n\nVerifique com o administrador se necessário.`);
@@ -663,11 +644,9 @@ export default function RiderDashboard() {
       }
     }
 
-    // ── Verificação de sessão mínima ──────────────────────────────────────
     const sessionCheck = db.checkSessionRequirement();
     if (!sessionCheck.allowed) {
-      alert(`⚠️ Corrida perdida!\n\n${sessionCheck.reason}\n\nEsta corrida não foi registrada. Entre em contato com o administrador.`);
-      // Lança a corrida como 'lost' direto
+      alert(`⚠️ Corrida enviada para validação!\n\n${sessionCheck.reason}\n\nEsta corrida foi enviada ao painel da loja.`);
       const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && db.isSameDayString(s.date, todayStr));
       const allDeliveries = db.getDeliveries();
       const nowStr = new Date().toISOString();
@@ -733,10 +712,7 @@ export default function RiderDashboard() {
       };
 
       db.setDeliveries([...allDeliveries, newDelivery]);
-
-      // Inicia o rastreio de presença obrigatória para esta corrida
       db.startDeliveryPresence(newDelivery.id);
-
       db.markRiderDelivering(user.id, launchForm.establishmentId);
 
       alert('Corrida lançada com sucesso! Aguardando aprovação.');
@@ -881,7 +857,7 @@ export default function RiderDashboard() {
           <div className="flex-1">
             <h4 className="text-sm font-bold text-emerald-900">Rastreamento Contínuo Ativo</h4>
             <p className="text-xs text-emerald-800 mt-1 leading-relaxed">
-              Sua localização continua sendo transmitida para a loja em tempo real **mesmo se você minimizar o app ou fechar a tela**.
+              Sua localização continua sendo transmitida para a loja em tempo real mesmo se você minimizar o app. Permanência mínima recomendada: 15 minutos.
             </p>
           </div>
         </div>
@@ -1129,7 +1105,7 @@ export default function RiderDashboard() {
                       <button
                         onClick={() => setActiveScheduleChatId(todaySchedule.id)}
                         className="bg-white/10 hover:bg-white/20 text-white p-2 rounded-xl transition-colors flex items-center gap-1.5 text-xs font-bold"
-                        title="Chat de Turno"
+                        title="Chat do Turno"
                       >
                         <MessageSquare className="h-4 w-4" />
                         <span>Chat</span>
@@ -1151,7 +1127,7 @@ export default function RiderDashboard() {
                           className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-2 shadow-md transition-all w-full sm:w-auto"
                         >
                           <Compass className="h-4 w-4" />
-                          <span><span>Navegar para o Estabelecimento</span></span>
+                          <span>Navegar para o Estabelecimento</span>
                         </button>
                       </div>
                     )}
@@ -1202,21 +1178,16 @@ export default function RiderDashboard() {
                     const hasNotes = Boolean(delivery.notes && delivery.notes.trim());
                     const notesCount = delivery.notes ? delivery.notes.split('\n').filter(l => l.trim()).length : 0;
 
-                    // ── Timer de presença obrigatória ──
                     const presenceMs    = db.getPresenceMs(delivery.id);
-                    const absenceMs     = db.getCurrentAbsenceMs(delivery.id);  // ausência CONTÍNUA atual
+                    const absenceMs     = db.getCurrentAbsenceMs(delivery.id);
                     const inBackground  = db.isInBackground(delivery.id);
                     const presenceTracked = presenceMs > 0 || inBackground;
                     const presenceDone  = presenceMs >= db.PRESENCE_REQUIRED_MS;
 
-                    // Minutos restantes de presença
                     const presenceMinLeft = presenceDone ? 0 : Math.ceil((db.PRESENCE_REQUIRED_MS - presenceMs) / 60000);
-                    // Progresso da presença (0-100)
                     const presencePercent = Math.min(100, Math.round((presenceMs / db.PRESENCE_REQUIRED_MS) * 100));
 
-                    // Ausência: minutos restantes de tolerância
                     const absenceMinLeft  = Math.max(0, Math.ceil((db.ABSENCE_TOLERANCE_MS - absenceMs) / 60000));
-                    // Progresso da ausência: 0% = acabou de sair, 100% = tolerância esgotada
                     const absencePercent  = Math.min(100, Math.round((absenceMs / db.ABSENCE_TOLERANCE_MS) * 100));
 
                     return (
@@ -1249,7 +1220,6 @@ export default function RiderDashboard() {
                             <span>Horário: {delivery.time}</span>
                           </p>
 
-                          {/* ── Timer de presença ── */}
                           {(delivery.status === 'pending' || delivery.status === 'active') && presenceTracked && !presenceDone && (
                             <div className={`rounded-lg px-2.5 py-2 mt-1 space-y-1.5 border ${
                               inBackground
@@ -1262,7 +1232,7 @@ export default function RiderDashboard() {
                                   <span className={`text-[11px] font-bold ${inBackground ? 'text-red-700' : 'text-amber-800'}`}>
                                     {inBackground
                                       ? `⚠️ Fora do app — ${absenceMinLeft} min restante(s) de tolerância`
-                                      : `Presença: faltam ${presenceMinLeft} min`
+                                      : `Presença: faltam ${presenceMinLeft} min (mínimo de 15 min)`
                                     }
                                   </span>
                                 </div>
@@ -1271,16 +1241,13 @@ export default function RiderDashboard() {
                                 </span>
                               </div>
 
-                              {/* Barra de progresso */}
                               <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
                                 {inBackground ? (
-                                  // Barra de ausência: cresce de 0 → 100% conforme o tempo passa
                                   <div
                                     className="h-full rounded-full bg-red-500 transition-all duration-1000"
                                     style={{ width: `${absencePercent}%` }}
                                   />
                                 ) : (
-                                  // Barra de presença: cresce de 0 → 100% conforme cumpre os 30 min
                                   <div
                                     className="h-full rounded-full bg-amber-500 transition-all duration-1000"
                                     style={{ width: `${presencePercent}%` }}
@@ -1291,17 +1258,16 @@ export default function RiderDashboard() {
                               <p className="text-[10px] text-slate-500 leading-snug">
                                 {inBackground
                                   ? 'Volte ao app antes que o tempo de tolerância acabe para não perder a corrida.'
-                                  : 'Mantenha o app aberto. Se sair por mais de 10 min antes de completar 30 min, a corrida será perdida.'
+                                  : 'Mantenha o app aberto. Se sair por mais de 10 min antes de completar 15 min, a corrida será enviada para validação.'
                                 }
                               </p>
                             </div>
                           )}
 
-                          {/* Presença cumprida */}
                           {(delivery.status === 'pending' || delivery.status === 'active') && presenceDone && (
                             <div className="flex items-center gap-1.5 mt-1">
                               <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 flex-shrink-0" />
-                              <span className="text-[11px] text-emerald-700 font-semibold">Presença obrigatória cumprida ✓</span>
+                              <span className="text-[11px] text-emerald-700 font-semibold">Presença de 15 min cumprida ✓</span>
                             </div>
                           )}
                         </div>
