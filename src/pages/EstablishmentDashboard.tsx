@@ -25,7 +25,8 @@ import {
   UserPlus,
   LocateFixed,
   AlertTriangle,
-  RotateCw
+  RotateCw,
+  Ban
 } from 'lucide-react';
 import L from 'leaflet';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
@@ -307,6 +308,28 @@ export default function EstablishmentDashboard() {
       setCopiedId(deliveryId);
       setTimeout(() => setCopiedId(null), 2000);
     });
+  };
+
+  const handleApproveDelivery = (id: string) => {
+    const allDeliveries = db.getDeliveries();
+    const updated = allDeliveries.map(d => d.id === id ? { ...d, status: 'active' as const, updatedAt: new Date().toISOString() } : d);
+    db.setDeliveries(updated);
+    loadData();
+  };
+
+  const handleRejectDelivery = (id: string) => {
+    const reason = prompt('Digite o motivo da rejeição:');
+    if (reason !== null) {
+      const allDeliveries = db.getDeliveries();
+      const updated = allDeliveries.map(d => d.id === id ? {
+        ...d,
+        status: 'rejected' as const,
+        notes: d.notes ? `${d.notes}\nRejeitado: ${reason}` : `Rejeitado: ${reason}`,
+        updatedAt: new Date().toISOString()
+      } : d);
+      db.setDeliveries(updated);
+      loadData();
+    }
   };
 
   const handleOpenLaunchModal = (riderIdToPreselect?: string) => {
@@ -835,7 +858,7 @@ export default function EstablishmentDashboard() {
                           <p className="font-extrabold text-slate-800 text-sm truncate">{rider?.name || 'Motoboy'}</p>
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                             del.status === 'active' ? 'bg-emerald-100 text-emerald-800' :
-                            del.status === 'pending' ? 'bg-amber-100 text-amber-800' :
+                            del.status === 'pending' ? 'bg-amber-100 text-amber-800 font-black animate-pulse' :
                             del.status === 'lost' ? 'bg-orange-100 text-orange-800 border border-orange-300' :
                             'bg-red-100 text-red-800'
                           }`}>
@@ -846,6 +869,27 @@ export default function EstablishmentDashboard() {
                       </div>
 
                       <div className="flex items-center space-x-2 flex-wrap flex-shrink-0">
+                        {del.status === 'pending' && (
+                          <>
+                            <button
+                              onClick={() => handleApproveDelivery(del.id)}
+                              className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 transition-colors shadow-sm"
+                              title="Aprovar Corrida"
+                            >
+                              <Check className="h-3.5 w-3.5" />
+                              <span>Aprovar</span>
+                            </button>
+                            <button
+                              onClick={() => handleRejectDelivery(del.id)}
+                              className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors"
+                              title="Recusar Corrida com Justificativa"
+                            >
+                              <Ban className="h-3.5 w-3.5" />
+                              <span>Recusar</span>
+                            </button>
+                          </>
+                        )}
+
                         <button
                           onClick={() => setNotesDeliveryId(del.id)}
                           className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${

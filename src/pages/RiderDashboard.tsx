@@ -138,7 +138,7 @@ export default function RiderDashboard() {
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, []);  // checkPresenceViolations definido abaixo via ref para evitar dependência circular
+  }, []);
 
   // Verificador periódico: a cada 15s atualiza o timer visual e verifica violações
   const checkPresenceViolations = useCallback(() => {
@@ -231,6 +231,7 @@ export default function RiderDashboard() {
     });
 
     const allDeliveries = db.getDeliveries().filter(d => {
+      if (d.status === 'lost') return false; // Oculta corridas perdidas/deslogadas do motoboy
       if (d.riderId === freshUser.id) return true;
       const riderOfDel = allUsers.find(u => u.id === d.riderId);
       return riderOfDel && riderOfDel.email.toLowerCase() === freshUser.email.toLowerCase();
