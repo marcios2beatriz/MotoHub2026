@@ -26,7 +26,9 @@ import {
   LocateFixed,
   AlertTriangle,
   RotateCw,
-  Ban
+  Ban,
+  Calendar,
+  Filter
 } from 'lucide-react';
 import L from 'leaflet';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
@@ -48,8 +50,12 @@ export default function EstablishmentDashboard() {
   // Estado de link copiado
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Filtros de corridas
+  // Filtros avançados de corridas e histórico
   const [riderFilter, setRiderFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [timeframeFilter, setTimeframeFilter] = useState<'today' | '7days' | '30days' | 'all' | 'custom'>('today');
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
   const [sortOrder, setSortOrder] = useState<'recent' | 'oldest' | 'highest_value'>('recent');
 
   // Modal para adicionar motoboy na fila manualmente
@@ -84,7 +90,6 @@ export default function EstablishmentDashboard() {
   const loadData = () => {
     if (!user) return;
 
-    // Resolução estrita do estabelecimento
     let estFound: Establishment | undefined;
     if (user.establishmentId) {
       estFound = db.getEstablishments().find(e => e.id === user.establishmentId);
@@ -139,7 +144,6 @@ export default function EstablishmentDashboard() {
     window.addEventListener('queue-updated', handleQueueUpdate);
     window.addEventListener('db-sync-complete', handleQueueUpdate);
 
-    // Ouvinte para sinal offline instantâneo via Realtime
     const unsubscribeOffline = realtimeGps.subscribeToOffline((payload) => {
       if (mapRef.current && markersRef.current[payload.riderId]) {
         mapRef.current.removeLayer(markersRef.current[payload.riderId]);
@@ -158,7 +162,6 @@ export default function EstablishmentDashboard() {
 
   const todaySchedulesRaw = establishmentSchedules.filter(s => db.isSameDayString(s.date, todayStr));
   
-  // De-duplicação visual dos cards de motoboys escalados
   const todaySchedules: Schedule[] = [];
   const seenRiders = new Set<string>();
   todaySchedulesRaw.forEach(s => {
@@ -487,7 +490,6 @@ export default function EstablishmentDashboard() {
     loadData();
   };
 
-  // Se não encontrou estabelecimento vinculado, mostra erro
   if (user && !currentEst && db.getEstablishments().length > 0) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
@@ -501,7 +503,7 @@ export default function EstablishmentDashboard() {
     );
   }
 
-  // Cálculos do Dashboard
+  // Métricas de Hoje
   const todayDeliveries = deliveries.filter(d => db.isSameDayString(d.date, todayStr));
   const todayApprovedDeliveries = todayDeliveries.filter(d => d.status === 'active');
   const todayRevenue = todayApprovedDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
@@ -515,15 +517,43 @@ export default function EstablishmentDashboard() {
     return lastUpdateMs > 0 && (Date.now() - lastUpdateMs < 60 * 1000);
   }).length;
 
-  const filteredTodayDeliveries = todayDeliveries
+  // Filtragem de corridas (suporta todos os status e histórico por período)
+  const filteredDeliveries = deliveries
     .filter(d => {
+      // Filtro de motoboy
       if (riderFilter !== 'all' && d.riderId !== riderFilter) return false;
+
+      // Filtro de status
+      if (statusFilter !== 'all' && d.status !== statusFilter) return false;
+
+      // Filtro de período de data
+      if (timeframeFilter === 'today' && !db.isSameDayString(d.date, todayStr)) return false;
+
+      if (timeframeFilter === '7days') {
+        const d7 = new Date();
+        d7.setDate(d7.getDate() - 7);
+        const limitStr = db.getLocalDateString(d7);
+        if (d.date < limitStr) return false;
+      }
+
+      if (timeframeFilter === '30days') {
+        const d30 = new Date();
+        d30.setDate(d30.getDate() - 30);
+        const limitStr = db.getLocalDateString(d30);
+        if (d.date < limitStr) return false;
+      }
+
+      if (timeframeFilter === 'custom') {
+        if (dateFrom && d.date < dateFrom) return false;
+        if (dateTo && d.date > dateTo) return false;
+      }
+
       return true;
     })
     .sort((a, b) => {
-      if (sortOrder === 'recent') return b.time.localeCompare(a.time) || b.id.localeCompare(a.id);
-      if (sortOrder === 'oldest') return a.time.localeCompare(b.time) || a.id.localeCompare(b.id);
-      if (sortOrder === 'highest_value') return b.value - a.value;
+      if (sortOrder === 'recent') return b.date.localeCompare(a.date) || b.time.localeCompare(a.time) || b.id.localeCompare(a.id);
+      if (sortOrder === 'oldest') return a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || a.id.localeCompare(b.id);
+      if (sortOrder === 'highest_value') return Number(b.value || 0) - Number(a.value || 0);
       return 0;
     });
 
@@ -558,7 +588,7 @@ export default function EstablishmentDashboard() {
       {/* Conteúdo Principal Layout 2 Colunas */}
       <main className="max-w-7xl w-full mx-auto px-4 mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1">
         
-        {/* COLUNA ESQUERDA (Métricas, Fila, Escalados, Corridas Lançadas) */}
+        {/* COLUNA ESQUERDA (Métricas, Fila, Escalados, Corridas e Histórico) */}
         <div className="lg:col-span-7 xl:col-span-8 space-y-6">
           
           {/* CARDS DE MÉTRICAS NO TOPO */}
@@ -665,7 +695,6 @@ export default function EstablishmentDashboard() {
                         </div>
                       </div>
 
-                      {/* Ações de Reordenação e Controle */}
                       <div className="flex items-center space-x-1.5 flex-wrap justify-end flex-shrink-0">
                         {!isFirst && (
                           <button
@@ -678,7 +707,6 @@ export default function EstablishmentDashboard() {
                           </button>
                         )}
 
-                        {/* Setas para subir/descer na fila */}
                         <div className="flex items-center bg-white border border-slate-200 rounded-lg p-0.5">
                           <button
                             disabled={idx === 0}
@@ -754,7 +782,7 @@ export default function EstablishmentDashboard() {
                   const riderTotalVal = riderDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
 
                   const loc = riderLocations.find(l => l.riderId === sch.riderId);
-                  const isOnline = loc && loc.updatedAt && (Date.now() - new Date(loc.updatedAt).getTime() < 60 * 1000); // 1 minuto
+                  const isOnline = loc && loc.updatedAt && (Date.now() - new Date(loc.updatedAt).getTime() < 60 * 1000);
 
                   return (
                     <div key={sch.id} className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
@@ -801,47 +829,127 @@ export default function EstablishmentDashboard() {
             )}
           </div>
 
-          {/* CARD 3: CORRIDAS LANÇADAS HOJE */}
+          {/* CARD 3: CORRIDAS LANÇADAS E HISTÓRICO COMPLETO */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-2">
                 <Check className="h-5 w-5 text-indigo-600" />
-                <h3 className="font-extrabold text-slate-800 text-base">
-                  Corridas Lançadas Hoje ({todayDeliveries.length})
-                </h3>
-              </div>
-
-              <div className="flex items-center space-x-2 flex-wrap">
-                <select
-                  value={riderFilter}
-                  onChange={(e) => setRiderFilter(e.target.value)}
-                  className="px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-700 font-medium focus:outline-none"
-                >
-                  <option value="all">Todos os Motoboys</option>
-                  {allRiders.map(r => (
-                    <option key={r.id} value={r.id}>{r.name}</option>
-                  ))}
-                </select>
-
-                <select
-                  value={sortOrder}
-                  onChange={(e) => setSortOrder(e.target.value as any)}
-                  className="px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-700 font-medium focus:outline-none"
-                >
-                  <option value="recent">Mais Recentes</option>
-                  <option value="oldest">Mais Antigas</option>
-                  <option value="highest_value">Maior Valor</option>
-                </select>
+                <div>
+                  <h3 className="font-extrabold text-slate-800 text-base">
+                    Corridas Lançadas e Histórico ({filteredDeliveries.length})
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Acesse todas as corridas registradas no estabelecimento por período e status
+                  </p>
+                </div>
               </div>
             </div>
 
-            {filteredTodayDeliveries.length === 0 ? (
+            {/* PAINEL DE FILTROS DO ESTABELECIMENTO */}
+            <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-extrabold uppercase text-slate-600 flex items-center gap-1.5">
+                  <Filter className="h-4 w-4 text-indigo-600" />
+                  <span>Filtros do Histórico</span>
+                </p>
+
+                {(timeframeFilter !== 'today' || statusFilter !== 'all' || riderFilter !== 'all' || dateFrom || dateTo) && (
+                  <button
+                    onClick={() => {
+                      setTimeframeFilter('today');
+                      setStatusFilter('all');
+                      setRiderFilter('all');
+                      setDateFrom('');
+                      setDateTo('');
+                    }}
+                    className="text-xs font-bold text-indigo-600 hover:underline"
+                  >
+                    Limpar Filtros
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
+                    <Calendar className="h-3 w-3 text-indigo-600" />
+                    <span>Período de Exibição</span>
+                  </label>
+                  <select
+                    value={timeframeFilter}
+                    onChange={(e) => setTimeframeFilter(e.target.value as any)}
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold text-slate-700"
+                  >
+                    <option value="today">Somente Hoje</option>
+                    <option value="7days">Últimos 7 dias</option>
+                    <option value="30days">Últimos 30 dias</option>
+                    <option value="all">Todas as Datas (Histórico Completo)</option>
+                    <option value="custom">Período Personalizado</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Status da Corrida</label>
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold"
+                  >
+                    <option value="all">Todos os Status</option>
+                    <option value="active">Aprovadas (Ativas)</option>
+                    <option value="pending">Pendentes de Aprovação</option>
+                    <option value="rejected">Rejeitadas</option>
+                    <option value="lost">Ocultadas / Perdidas</option>
+                    <option value="cancelled">Canceladas</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Motoboy</label>
+                  <select
+                    value={riderFilter}
+                    onChange={(e) => setRiderFilter(e.target.value)}
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value="all">Todos os Motoboys</option>
+                    {allRiders.map(r => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {timeframeFilter === 'custom' && (
+                <div className="grid grid-cols-2 gap-2.5 pt-1 border-t border-slate-200">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">De (Data Inicial)</label>
+                    <input
+                      type="date"
+                      value={dateFrom}
+                      onChange={(e) => setDateFrom(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Até (Data Final)</label>
+                    <input
+                      type="date"
+                      value={dateTo}
+                      onChange={(e) => setDateTo(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {filteredDeliveries.length === 0 ? (
               <div className="text-center py-12 text-xs text-slate-400">
-                Nenhuma corrida encontrada para o filtro selecionado.
+                Nenhuma corrida encontrada para os filtros selecionados.
               </div>
             ) : (
               <div className="divide-y divide-slate-100">
-                {filteredTodayDeliveries.map((del) => {
+                {filteredDeliveries.map((del) => {
                   const rider = db.resolveUser(del.riderId);
                   const hasNotes = Boolean(del.notes && del.notes.trim());
                   const notesCount = del.notes ? del.notes.split('\n').filter(l => l.trim()).length : 0;
@@ -865,11 +973,13 @@ export default function EstablishmentDashboard() {
                             {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : del.status === 'lost' ? '⚠️ Ocultada' : 'Rejeitada'}
                           </span>
                         </div>
-                        <p className="text-slate-400">Horário: {del.time}</p>
+                        <p className="text-slate-400">
+                          Data: {new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR')} às {del.time}
+                        </p>
                       </div>
 
                       <div className="flex items-center space-x-2 flex-wrap flex-shrink-0">
-                        {del.status === 'pending' && (
+                        {(del.status === 'pending' || del.status === 'lost') && (
                           <>
                             <button
                               onClick={() => handleApproveDelivery(del.id)}
@@ -902,7 +1012,7 @@ export default function EstablishmentDashboard() {
                           <MessageSquare className="h-3.5 w-3.5" />
                           <span>Obs</span>
                           {hasNotes && (
-                            <span className="bg-amber-900 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full">
+                            <span className="bg-amber-990 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full">
                               {notesCount}
                             </span>
                           )}
@@ -984,7 +1094,6 @@ export default function EstablishmentDashboard() {
               </div>
             </div>
 
-            {/* Container do Mapa GPS Leaflet */}
             <div className={isMapExpanded ? "fixed inset-0 top-0 left-0 w-screen h-screen z-[99999] bg-slate-900 p-3 sm:p-5 flex flex-col space-y-3" : "w-full h-[520px] rounded-2xl border border-slate-200/80 overflow-hidden relative"}>
               {isMapExpanded && (
                 <div className="flex items-center justify-between bg-slate-800 text-white px-4 py-3 rounded-2xl border border-slate-700 flex-shrink-0 shadow-lg z-10">
