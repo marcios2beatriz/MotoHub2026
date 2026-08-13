@@ -130,13 +130,17 @@ export default function AdminDashboard() {
     name: '', street: '', number: '', complement: '', neighborhood: '', city: '', state: '', zipCode: '', phone: '', email: '', password: ''
   });
 
+  // Escalas normais com seleção múltipla de motoboys
   const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [selectedRiderIds, setSelectedRiderIds] = useState<string[]>([]);
   const [scheduleForm, setScheduleForm] = useState({ 
     riderId: '', establishmentId: '', date: '', shift: 'morning' as any, startTime: '08:00', endTime: '12:00'
   });
   const [scheduleConflictWarning, setScheduleConflictWarning] = useState('');
 
+  // Escala Semanal com seleção múltipla de motoboys
   const [showWeeklyModal, setShowWeeklyModal] = useState(false);
+  const [weeklySelectedRiderIds, setWeeklySelectedRiderIds] = useState<string[]>([]);
   const [weeklyForm, setWeeklyForm] = useState({
     riderId: '', establishmentId: '', shift: 'morning' as any, startTime: '08:00', endTime: '12:00', weekStart: '',
     days: { seg: true, ter: true, qua: true, qui: true, sex: true, sab: false, dom: false }
@@ -167,7 +171,6 @@ export default function AdminDashboard() {
   const hasSetInitialAdminMapBoundsRef = useRef(false);
   const [isMapExpanded, setIsMapExpanded] = useState(false);
 
-  // Reseta o flag de enquadramento quando o admin sai da aba do mapa, para enquadrar novamente ao voltar
   useEffect(() => {
     if (activeTab !== 'map') {
       hasSetInitialAdminMapBoundsRef.current = false;
@@ -239,7 +242,6 @@ export default function AdminDashboard() {
       db.pullFromSupabase().then(() => loadData());
     }, 2000);
 
-    // Ouvinte para sinal offline instantâneo via Realtime no Admin também
     const unsubscribeOffline = realtimeGps.subscribeToOffline((payload) => {
       if (mapRef.current && markersRef.current[payload.riderId]) {
         mapRef.current.removeLayer(markersRef.current[payload.riderId]);
@@ -259,7 +261,7 @@ export default function AdminDashboard() {
     if (!currentMap) return;
     const points: L.LatLngExpression[] = [];
     const now = Date.now();
-    const ONLINE_THRESHOLD_MS = 60 * 1000; // 1 minuto de inatividade
+    const ONLINE_THRESHOLD_MS = 60 * 1000;
 
     riderLocations.forEach(loc => {
       const lastUpdateMs = loc.updatedAt ? new Date(loc.updatedAt).getTime() : 0;
@@ -302,10 +304,9 @@ export default function AdminDashboard() {
 
     const currentMap = mapRef.current;
     const now = Date.now();
-    const ONLINE_THRESHOLD_MS = 60 * 1000; // Reduzido para 1 minuto
+    const ONLINE_THRESHOLD_MS = 60 * 1000;
     const points: L.LatLngExpression[] = [];
 
-    // Identifica motoboys online
     const onlineRiders = riderLocations.filter(loc => {
       const lastUpdateMs = loc.updatedAt ? new Date(loc.updatedAt).getTime() : 0;
       return lastUpdateMs > 0 && Math.abs(now - lastUpdateMs) < ONLINE_THRESHOLD_MS;
@@ -313,7 +314,6 @@ export default function AdminDashboard() {
 
     const onlineIds = new Set(onlineRiders.map(r => r.riderId));
 
-    // LIMPEZA IMEDIATA: Remove marcadores de quem não está mais online
     Object.keys(markersRef.current).forEach(markerId => {
       if (!onlineIds.has(markerId)) {
         currentMap.removeLayer(markersRef.current[markerId]);
@@ -321,7 +321,6 @@ export default function AdminDashboard() {
       }
     });
 
-    // Atualiza/Adiciona marcadores
     onlineRiders.forEach(loc => {
       if (!loc.lat || !loc.lng || isNaN(loc.lat) || isNaN(loc.lng)) return;
 
@@ -445,14 +444,16 @@ export default function AdminDashboard() {
   };
 
   const handleOpenDesignateModal = (preselectedRiderId?: string, preselectedEstId?: string) => {
+    const activeRiders = users.filter(r => r.role === 'rider' && r.active);
     setScheduleForm({
-      riderId: preselectedRiderId || '',
+      riderId: preselectedRiderId || (activeRiders.length > 0 ? activeRiders[0].id : ''),
       establishmentId: preselectedEstId || '',
       date: db.getLocalDateString(),
       shift: 'morning',
       startTime: '08:00',
       endTime: '12:00'
     });
+    setSelectedRiderIds(preselectedRiderId ? [preselectedRiderId] : []);
     setScheduleConflictWarning('');
     setShowScheduleModal(true);
   };
@@ -690,35 +691,67 @@ export default function AdminDashboard() {
     loadData();
   };
 
+  // Cria escalas para 1 ou múltiplos motoboys selecionados
   const handleSaveSchedule = (e: React.FormEvent) => {
     e.preventDefault();
-    
-    const conflict = schedules.find(s => s.riderId === scheduleForm.riderId && s.date === scheduleForm.date && s.shift === scheduleForm.shift);
-    if (conflict) {
-      const rider = users.find(r => r.id === scheduleForm.riderId);
-      const est = establishments.find(es => es.id === conflict.establishmentId);
-      alert(`Erro: O motoboy ${rider?.name} já possui uma escala ativa no estabelecimento ${est?.name} neste mesmo dia e turno! Não é possível duplicar a escala.`);
+
+    const riderIdsToSchedule = selectedRiderIds.length > 0 
+      ? selectedRiderIds 
+      : (scheduleForm.riderId ? [scheduleForm.riderId] : []);
+
+    if (riderIdsToSchedule.length === 0) {
+      alert('Erro: Selecione pelo menos um motoboy.');
       return;
     }
 
-    const newSchedule: Schedule = {
-      id: 's_' + Date.now(),
-      riderId: scheduleForm.riderId,
-      establishmentId: scheduleForm.establishmentId,
-      date: scheduleForm.date,
-      shift: scheduleForm.shift,
-      startTime: scheduleForm.startTime,
-      endTime: scheduleForm.endTime,
-      createdBy: adminUser?.name || 'Admin',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
+    if (!scheduleForm.establishmentId) {
+      alert('Erro: Selecione um estabelecimento.');
+      return;
+    }
 
-    db.setSchedules([...schedules, newSchedule]);
+    const newSchedules: Schedule[] = [];
+    const conflicts: string[] = [];
+
+    riderIdsToSchedule.forEach(rId => {
+      const rider = users.find(r => r.id === rId);
+      const conflict = schedules.find(s => s.riderId === rId && s.date === scheduleForm.date && s.shift === scheduleForm.shift);
+      
+      if (conflict) {
+        const est = establishments.find(es => es.id === conflict.establishmentId);
+        conflicts.push(`${rider?.name || 'Motoboy'} (escalado em ${est?.name || 'outro estabelecimento'})`);
+      } else {
+        newSchedules.push({
+          id: 's_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+          riderId: rId,
+          establishmentId: scheduleForm.establishmentId,
+          date: scheduleForm.date,
+          shift: scheduleForm.shift,
+          startTime: scheduleForm.startTime,
+          endTime: scheduleForm.endTime,
+          createdBy: adminUser?.name || 'Admin',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+    });
+
+    if (newSchedules.length === 0) {
+      alert(`Não foi possível criar as escalas devido a conflitos de horário para todos os motoboys selecionados:\n\n• ${conflicts.join('\n• ')}`);
+      return;
+    }
+
+    db.setSchedules([...schedules, ...newSchedules]);
 
     setShowScheduleModal(false);
+    setSelectedRiderIds([]);
     setScheduleConflictWarning('');
     loadData();
+
+    if (conflicts.length > 0) {
+      alert(`${newSchedules.length} escala(s) criada(s) com sucesso!\n\nOs seguintes motoboys foram ignorados por conflito de horário:\n• ${conflicts.join('\n• ')}`);
+    } else if (newSchedules.length > 1) {
+      alert(`${newSchedules.length} escalas criadas com sucesso simultaneamente!`);
+    }
   };
 
   const handleCancelSchedule = async (id: string) => {
@@ -732,52 +765,78 @@ export default function AdminDashboard() {
   };
 
   const buildWeeklyPreview = (form: typeof weeklyForm) => {
-    if (!form.weekStart || !form.riderId || !form.establishmentId) return;
+    if (!form.weekStart || !form.establishmentId) return;
     const monday = new Date(form.weekStart + 'T00:00:00');
     const allSchedules = db.getSchedules();
+
+    const targetRiders = weeklySelectedRiderIds.length > 0 ? weeklySelectedRiderIds : (form.riderId ? [form.riderId] : []);
+
     const preview = DAY_KEYS.map((key, idx) => {
       const d = new Date(monday);
       d.setDate(monday.getDate() + idx);
       const dateStr = d.toISOString().split('T')[0];
-      const conflict = !!allSchedules.find(s => s.riderId === form.riderId && s.date === dateStr && s.shift === form.shift);
+
+      const conflict = targetRiders.some(rId => 
+        allSchedules.some(s => s.riderId === rId && s.date === dateStr && s.shift === form.shift)
+      );
+
       return { date: dateStr, label: DAY_LABELS[idx], conflict, key, enabled: form.days[key] };
     });
+
     setWeeklyPreview(preview);
     setWeeklyStep('preview');
   };
 
+  // Cria escalas semanais para múltiplos motoboys
   const handleSaveWeeklySchedule = () => {
     const allSchedules = db.getSchedules();
     const newSchedules: Schedule[] = [];
 
-    const validDays = weeklyPreview.filter(day => day.enabled && !day.conflict);
-    if (validDays.length === 0) {
-      alert('Erro: Todos os dias selecionados possuem conflitos de escala para este motoboy. Nenhuma escala foi criada.');
+    const targetRiders = weeklySelectedRiderIds.length > 0 ? weeklySelectedRiderIds : (weeklyForm.riderId ? [weeklyForm.riderId] : []);
+    const validDays = weeklyPreview.filter(day => day.enabled);
+
+    if (validDays.length === 0 || targetRiders.length === 0) {
+      alert('Erro: NENHUM motoboy ou dia válido selecionado.');
       return;
     }
 
-    validDays.forEach((day) => {
-      const id = 's_' + Date.now() + '_' + day.date;
-      newSchedules.push({
-        id,
-        riderId: weeklyForm.riderId,
-        establishmentId: weeklyForm.establishmentId,
-        date: day.date,
-        shift: weeklyForm.shift,
-        startTime: weeklyForm.startTime,
-        endTime: weeklyForm.endTime,
-        createdBy: adminUser?.name || 'Admin',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+    let createdCount = 0;
+    let conflictCount = 0;
+
+    targetRiders.forEach(rId => {
+      validDays.forEach(day => {
+        const hasConflict = allSchedules.some(s => s.riderId === rId && s.date === day.date && s.shift === weeklyForm.shift);
+        if (hasConflict) {
+          conflictCount++;
+        } else {
+          const id = 's_' + Date.now() + '_' + rId.slice(-4) + '_' + day.date;
+          newSchedules.push({
+            id,
+            riderId: rId,
+            establishmentId: weeklyForm.establishmentId,
+            date: day.date,
+            shift: weeklyForm.shift,
+            startTime: weeklyForm.startTime,
+            endTime: weeklyForm.endTime,
+            createdBy: adminUser?.name || 'Admin',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
+          createdCount++;
+        }
       });
     });
 
-    db.setSchedules([...allSchedules, ...newSchedules]);
+    if (newSchedules.length > 0) {
+      db.setSchedules([...allSchedules, ...newSchedules]);
+    }
 
     setShowWeeklyModal(false);
     setWeeklyStep('form');
+    setWeeklySelectedRiderIds([]);
     loadData();
-    alert(`${newSchedules.length} escala(s) criada(s) com sucesso! Dias com conflito foram ignorados.`);
+
+    alert(`${createdCount} escala(s) criada(s) com sucesso para ${targetRiders.length} motoboy(s)!${conflictCount > 0 ? ` (${conflictCount} ignoradas por conflito)` : ''}`);
   };
 
   const handleSaveDelivery = (e: React.FormEvent) => {
@@ -972,7 +1031,7 @@ export default function AdminDashboard() {
       establishments.forEach(e => { summary[e.id] = { name: e.name, count: 0 }; });
       schedules.forEach(s => {
         const sDate = new Date(s.date + 'T00:00:00');
-        const dDate = sDate; // Fix for reference error in original logic
+        const dDate = sDate;
         if (sDate >= start && dDate <= end && summary[s.establishmentId]) {
           summary[s.establishmentId].count += 1;
         }
@@ -1367,7 +1426,6 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* ... resto do componente AdminDashboard permanece igual ... */}
           {/* MAPA GPS AO VIVO NO ADMIN */}
           {activeTab === 'map' && (
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
@@ -1570,7 +1628,7 @@ export default function AdminDashboard() {
               </div>
             </div>
           )}
-          {/* ... resto das abas permanecem iguais ... */}
+
           {/* FILAS DE SAÍDA NO ADMIN */}
           {activeTab === 'queues' && (
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-5">
@@ -1776,7 +1834,7 @@ export default function AdminDashboard() {
                     <Calendar className="h-6 w-6 text-indigo-600" />
                     <span>Gerenciamento de Escalas de Motoboys</span>
                   </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">Aloque motoboys para os estabelecimentos por dia e turno</p>
+                  <p className="text-xs text-slate-500 mt-0.5">Aloque um ou mais motoboys para os estabelecimentos por dia e turno</p>
                 </div>
                 
                 <div className="flex flex-wrap items-center gap-2">
@@ -1785,11 +1843,13 @@ export default function AdminDashboard() {
                     className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-xs font-extrabold transition-all shadow-md hover:shadow-lg"
                   >
                     <UserCheck2 className="h-4 w-4" />
-                    <span>Designar Motoboy</span>
+                    <span>Designar Motoboy(s)</span>
                   </button>
                   <button
                     onClick={() => {
-                      setWeeklyForm({ riderId: '', establishmentId: '', shift: 'morning', startTime: '08:00', endTime: '12:00', weekStart: getThisMonday(), days: { seg: true, ter: true, qua: true, qui: true, sex: true, sab: false, dom: false } });
+                      const activeRiders = users.filter(r => r.role === 'rider' && r.active);
+                      setWeeklyForm({ riderId: activeRiders.length > 0 ? activeRiders[0].id : '', establishmentId: '', shift: 'morning', startTime: '08:00', endTime: '12:00', weekStart: getThisMonday(), days: { seg: true, ter: true, qua: true, qui: true, sex: true, sab: false, dom: false } });
+                      setWeeklySelectedRiderIds([]);
                       setWeeklyStep('form');
                       setShowWeeklyModal(true);
                     }}
@@ -2429,7 +2489,6 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* Modais do Admin */}
       <UserModal
         isOpen={showUserModal}
         onClose={() => setShowUserModal(false)}
@@ -2456,6 +2515,8 @@ export default function AdminDashboard() {
         establishments={establishments}
         scheduleForm={scheduleForm}
         setScheduleForm={setScheduleForm}
+        selectedRiderIds={selectedRiderIds}
+        setSelectedRiderIds={setSelectedRiderIds}
         scheduleConflictWarning={scheduleConflictWarning}
         setScheduleConflictWarning={setScheduleConflictWarning}
         onSave={handleSaveSchedule}
@@ -2475,6 +2536,8 @@ export default function AdminDashboard() {
         buildWeeklyPreview={buildWeeklyPreview}
         onSave={handleSaveWeeklySchedule}
         getShiftLabel={getShiftLabel}
+        selectedRiderIds={weeklySelectedRiderIds}
+        setSelectedRiderIds={setWeeklySelectedRiderIds}
       />
 
       <RiderSchedulesModal
