@@ -68,7 +68,7 @@ export default function EstablishmentDashboard() {
   const [deliveryForm, setDeliveryForm] = useState({
     riderId: '',
     establishmentId: '',
-    date: db.getLocalDateString(),
+    date: db.getOperationalDateString(),
     time: new Date().toTimeString().slice(0, 5),
     value: '',
     orderNumber: '',
@@ -85,7 +85,7 @@ export default function EstablishmentDashboard() {
   const [isMapExpanded, setIsMapExpanded] = useState(false);
   const hasSetInitialMapBoundsRef = useRef(false);
 
-  const todayStr = db.getLocalDateString();
+  const todayStr = db.getOperationalDateString();
 
   const loadData = () => {
     if (!user) return;
@@ -503,43 +503,38 @@ export default function EstablishmentDashboard() {
     );
   }
 
-  // Métricas de Hoje
+  // Métricas de Hoje (operacional)
   const todayDeliveries = deliveries.filter(d => db.isSameDayString(d.date, todayStr));
   const todayApprovedDeliveries = todayDeliveries.filter(d => d.status === 'active');
   const todayRevenue = todayApprovedDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
 
   const onlineRidersCount = riderLocations.filter(l => {
     const resolved = db.resolveUser(l.riderId);
-    const riderIdToCheck = resolved ? resolved.id : l.riderId;
+    const riderIdToCheck = resolved ? resolved.id : loc.riderId;
     if (!scheduledRiderIds.has(riderIdToCheck)) return false;
     
     const lastUpdateMs = l.updatedAt ? new Date(l.updatedAt).getTime() : 0;
     return lastUpdateMs > 0 && (Date.now() - lastUpdateMs < 60 * 1000);
   }).length;
 
-  // Filtragem de corridas (suporta todos os status e histórico por período)
   const filteredDeliveries = deliveries
     .filter(d => {
-      // Filtro de motoboy
       if (riderFilter !== 'all' && d.riderId !== riderFilter) return false;
-
-      // Filtro de status
       if (statusFilter !== 'all' && d.status !== statusFilter) return false;
 
-      // Filtro de período de data
       if (timeframeFilter === 'today' && !db.isSameDayString(d.date, todayStr)) return false;
 
       if (timeframeFilter === '7days') {
         const d7 = new Date();
         d7.setDate(d7.getDate() - 7);
-        const limitStr = db.getLocalDateString(d7);
+        const limitStr = db.getOperationalDateString(d7);
         if (d.date < limitStr) return false;
       }
 
       if (timeframeFilter === '30days') {
         const d30 = new Date();
         d30.setDate(d30.getDate() - 30);
-        const limitStr = db.getLocalDateString(d30);
+        const limitStr = db.getOperationalDateString(d30);
         if (d.date < limitStr) return false;
       }
 
@@ -562,7 +557,6 @@ export default function EstablishmentDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans pb-12">
-      {/* Header Superior Escuro */}
       <header className="bg-slate-900 text-white shadow-md sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
           <div className="flex items-center space-x-3">
@@ -585,13 +579,8 @@ export default function EstablishmentDashboard() {
         </div>
       </header>
 
-      {/* Conteúdo Principal Layout 2 Colunas */}
       <main className="max-w-7xl w-full mx-auto px-4 mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1">
-        
-        {/* COLUNA ESQUERDA (Métricas, Fila, Escalados, Corridas e Histórico) */}
         <div className="lg:col-span-7 xl:col-span-8 space-y-6">
-          
-          {/* CARDS DE MÉTRICAS NO TOPO */}
           <div className="grid grid-cols-3 gap-4">
             <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 flex items-center space-x-3">
               <div className="p-3 bg-purple-100 text-purple-600 rounded-xl flex-shrink-0">
@@ -624,7 +613,6 @@ export default function EstablishmentDashboard() {
             </div>
           </div>
 
-          {/* CARD 1: FILA DE SAÍDA DOS MOTOBOYS */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-3">
@@ -751,7 +739,6 @@ export default function EstablishmentDashboard() {
             )}
           </div>
 
-          {/* CARD 2: MOTOBOYS ESCALADOS HOJE */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-2">
@@ -829,7 +816,6 @@ export default function EstablishmentDashboard() {
             )}
           </div>
 
-          {/* CARD 3: CORRIDAS LANÇADAS E HISTÓRICO COMPLETO */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-2">
@@ -845,7 +831,6 @@ export default function EstablishmentDashboard() {
               </div>
             </div>
 
-            {/* PAINEL DE FILTROS DO ESTABELECIMENTO */}
             <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200 space-y-3">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-extrabold uppercase text-slate-600 flex items-center gap-1.5">
@@ -880,7 +865,7 @@ export default function EstablishmentDashboard() {
                     onChange={(e) => setTimeframeFilter(e.target.value as any)}
                     className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold text-slate-700"
                   >
-                    <option value="today">Somente Hoje</option>
+                    <option value="today">Somente Hoje (Turno Atual)</option>
                     <option value="7days">Últimos 7 dias</option>
                     <option value="30days">Últimos 30 dias</option>
                     <option value="all">Todas as Datas (Histórico Completo)</option>
@@ -1063,7 +1048,6 @@ export default function EstablishmentDashboard() {
 
         </div>
 
-        {/* COLUNA DIREITA (Central de Rastreamento com Mapa GPS) */}
         <div className="lg:col-span-5 xl:col-span-4 space-y-6">
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/80 space-y-4 sticky top-20">
             <div className="flex justify-between items-center border-b border-slate-100 pb-3">
@@ -1132,7 +1116,6 @@ export default function EstablishmentDashboard() {
 
       </main>
 
-      {/* MODAL ADICIONAR MOTOBOY NA FILA MANUALMENTE */}
       {showAddQueueModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-xl">
@@ -1188,7 +1171,6 @@ export default function EstablishmentDashboard() {
         </div>
       )}
 
-      {/* MODAIS DO ESTABELECIMENTO */}
       <DeliveryModal
         isOpen={showDeliveryModal}
         onClose={() => setShowDeliveryModal(false)}

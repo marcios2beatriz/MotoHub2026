@@ -138,7 +138,7 @@ export default function RiderDashboard() {
 
   const checkPresenceViolations = useCallback(() => {
     if (!user) return;
-    const todayStr = db.getLocalDateString();
+    const todayStr = db.getOperationalDateString();
     const allDeliveries = db.getDeliveries();
     let changed = false;
 
@@ -272,8 +272,8 @@ export default function RiderDashboard() {
       } catch (e) {}
 
       if (!restoredFromStorage) {
-        const todayStr = db.getLocalDateString();
-        const todaySch = sortedSchedules.find(s => db.isSameDayString(s.date, todayStr));
+        const operationalTodayStr = db.getOperationalDateString();
+        const todaySch = sortedSchedules.find(s => db.isSameDayString(s.date, operationalTodayStr));
         if (todaySch) {
           const est = db.resolveEstablishment(todaySch.establishmentId);
           if (est && est.address) {
@@ -334,11 +334,11 @@ export default function RiderDashboard() {
   useEffect(() => {
     if (!user || !activePos) return;
 
-    const todayStr = db.getLocalDateString();
+    const operationalTodayStr = db.getOperationalDateString();
     const myWaitingEntries = queueEntries.filter(q => 
       q.status === 'waiting' && 
       db.isSameUser(q.riderId, user.id) && 
-      (db.isSameDayString(q.date, todayStr) || (q.joinedAt && db.isSameDayString(q.joinedAt, todayStr)))
+      (db.isSameDayString(q.date, operationalTodayStr) || (q.joinedAt && db.isSameDayString(q.joinedAt, operationalTodayStr)))
     );
 
     const MAX_AUTO_LEAVE_DIST = 100;
@@ -466,14 +466,13 @@ export default function RiderDashboard() {
 
       const nowISO = new Date().toISOString();
       const allDeliveries = db.getDeliveries();
-      const todayStr = db.getLocalDateString();
+      const operationalTodayStr = db.getOperationalDateString();
 
-      // Somente oculta/marca como lost ao deslogar se a presença dos 15 minutos NÃO tiver sido cumprida
       const updated = allDeliveries.map(d => {
         const presenceDone = db.getPresenceMs(d.id) >= db.PRESENCE_REQUIRED_MS;
         if (
           d.riderId === user.id &&
-          db.isSameDayString(d.date, todayStr) &&
+          db.isSameDayString(d.date, operationalTodayStr) &&
           d.status === 'pending' &&
           !presenceDone
         ) {
@@ -522,19 +521,18 @@ export default function RiderDashboard() {
     setActiveTab('navigation');
   };
 
-  const todayStr = db.getLocalDateString();
+  const operationalTodayStr = db.getOperationalDateString();
 
-  const todayDeliveries = deliveries.filter(d => db.isSameDayString(d.date, todayStr));
+  const todayDeliveries = deliveries.filter(d => db.isSameDayString(d.date, operationalTodayStr));
   const todayEarnings = todayDeliveries.filter(d => d.status === 'active').reduce((sum, d) => sum + Number(d.value || 0), 0);
 
   const getFutureSchedules = () => {
-    const todayStr = db.getLocalDateString();
     const limit = new Date();
     limit.setDate(limit.getDate() + 30);
-    const limitDateStr = db.getLocalDateString(limit);
+    const limitDateStr = db.getOperationalDateString(limit);
 
     return schedules.filter(s => {
-      return s.date >= todayStr && s.date <= limitDateStr;
+      return s.date >= operationalTodayStr && s.date <= limitDateStr;
     }).sort((a, b) => a.date.localeCompare(b.date) || a.shift.localeCompare(b.shift) || a.id.localeCompare(b.id));
   };
 
@@ -556,7 +554,7 @@ export default function RiderDashboard() {
   };
 
   const getScheduledEstablishmentsToday = () => {
-    const todaySchedules = schedules.filter(s => db.isSameDayString(s.date, todayStr));
+    const todaySchedules = schedules.filter(s => db.isSameDayString(s.date, operationalTodayStr));
     const resolvedEsts = todaySchedules
       .map(s => db.resolveEstablishment(s.establishmentId))
       .filter((e): e is Establishment => !!e);
@@ -624,7 +622,7 @@ export default function RiderDashboard() {
       const duplicate = allDeliveries.find(d => {
         if (!d.orderNumber) return false;
         if (editingDelivery && d.id === editingDelivery.id) return false;
-        const sameDay = db.isSameDayString(d.date, todayStr);
+        const sameDay = db.isSameDayString(d.date, operationalTodayStr);
         const sameEst = db.isSameEstablishment(d.establishmentId, launchForm.establishmentId);
         const sameNumber = d.orderNumber.trim().toLowerCase() === orderNumberInput.toLowerCase();
         return sameDay && sameEst && sameNumber;
@@ -647,14 +645,14 @@ export default function RiderDashboard() {
     const sessionCheck = db.checkSessionRequirement();
     if (!sessionCheck.allowed) {
       alert(`⚠️ Corrida enviada para validação!\n\n${sessionCheck.reason}\n\nEsta corrida foi enviada ao painel da loja.`);
-      const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && db.isSameDayString(s.date, todayStr));
+      const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && db.isSameDayString(s.date, operationalTodayStr));
       const allDeliveries = db.getDeliveries();
       const nowStr = new Date().toISOString();
       const lostDelivery: Delivery = {
         id: 'd_' + Date.now(),
         riderId: user.id,
         establishmentId: launchForm.establishmentId,
-        date: todayStr,
+        date: operationalTodayStr,
         time: new Date().toTimeString().slice(0, 5),
         value: val,
         status: 'lost',
@@ -674,7 +672,7 @@ export default function RiderDashboard() {
       return;
     }
 
-    const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && db.isSameDayString(s.date, todayStr));
+    const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && db.isSameDayString(s.date, operationalTodayStr));
     const allDeliveries = db.getDeliveries();
     const nowStr = new Date().toISOString();
 
@@ -701,7 +699,7 @@ export default function RiderDashboard() {
         id: 'd_' + Date.now(),
         riderId: user.id,
         establishmentId: launchForm.establishmentId,
-        date: todayStr,
+        date: operationalTodayStr,
         time: new Date().toTimeString().slice(0, 5),
         value: val,
         status: 'pending',
@@ -781,7 +779,7 @@ export default function RiderDashboard() {
   };
 
   const scheduledEstsToday = getScheduledEstablishmentsToday();
-  const todaySchedule = schedules.find(s => db.isSameDayString(s.date, todayStr));
+  const todaySchedule = schedules.find(s => db.isSameDayString(s.date, operationalTodayStr));
 
   const filteredTodayDeliveries = todayDeliveries.filter(d => {
     if (deliveryStatusFilter === 'all') return true;
@@ -946,7 +944,7 @@ export default function RiderDashboard() {
                 {scheduledEstsToday.map(est => {
                   const estQueue = queueEntries
                     .filter(q => {
-                      const isSameDay = db.isSameDayString(q.date, todayStr) || (q.joinedAt && db.isSameDayString(q.joinedAt, todayStr));
+                      const isSameDay = db.isSameDayString(q.date, operationalTodayStr) || (q.joinedAt && db.isSameDayString(q.joinedAt, operationalTodayStr));
                       if (!isSameDay || q.status !== 'waiting') return false;
                       return db.isSameEstablishment(q.establishmentId, est.id);
                     })
@@ -1380,7 +1378,7 @@ export default function RiderDashboard() {
                 <div className="space-y-3">
                   {filteredFutureSchedules.map((sch) => {
                     const est = resolveEst(sch.establishmentId);
-                    const isToday = sch.date === todayStr;
+                    const isToday = sch.date === operationalTodayStr;
 
                     return (
                       <div 

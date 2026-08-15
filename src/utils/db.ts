@@ -509,7 +509,551 @@ export const db = {
   async clearAllDeliveries() {
     localStorage.setItem(KEYS.DELIVERIES, JSON.stringify([]));
     if (!isTableMissing('deliveries')) {
-      // No Supabase, deletamos todos filtrando por algo que seja sempre verdade (ex: id não é vazio)
+      await supabase.from('deliveries').delete().neq('id', '');
+    }
+  },
+
+  getNotifications(): Notification[] {
+    const data = localStorage.getItem(KEYS.NOTIFICATIONS);
+    return data ? JSON.parse(data) : [];
+  },
+  setNotifications(notifications: Notification[]) {
+    localStorage.setItem(KEYS.NOTIFICATIONS, JSON.stringify(notifications));
+  },
+
+  getPartnerRequests(): PartnerRequest[] {
+    const data = localStorage.getItem(KEYS.PARTNER_REQUESTS);
+    return data ? JSON.parse(data) : [];
+  },
+  setPartnerRequests(requests: PartnerRequest[]) {
+    localStorage.setItem(KEYS.PARTNER_REQUESTS, JSON.stringify(requests));
+    requests.forEach(r => {
+      const rawPayload = {
+        id: r.id,
+        establishment_name: r.establishmentName,
+        owner_name: r.ownerName,
+        phone: r.phone,
+        address: r.address,
+        status: r.status,
+        created_at: r.createdAt
+      };
+      safeUpsert('partner_requests', rawPayload);
+    });
+  },
+
+  getQueue(): QueueEntry[] {
+    const data = localStorage.getItem<dyad-write path="src/utils/db.ts" description="Adiciona helper getOperationalDateString para que a data comercial/operacional considere lançamentos até as 04:00 da manhã como parte do turno do dia anterior">
+"use client";
+
+import { createClient } from '@supabase/supabase-js';
+import { realtimeGps } from './realtimeGps';
+
+// Configuração do Supabase utilizando variáveis de ambiente do Vite
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://rqieirvzutdculcdsncb.supabase.co';
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_pjEo4HVVSPTMF-fQDwKpLQ_o9HAIOWR';
+export const supabase = createClient(supabaseUrl, supabaseKey);
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: 'admin' | 'establishment' | 'rider';
+  active: boolean;
+  createdAt?: string;
+  phone: string;
+  cpf: string;
+  passwordHash: string;
+  mustResetPassword?: boolean;
+  establishmentId?: string;
+  updatedAt?: string;
+}
+
+export interface Establishment {
+  id: string;
+  name: string;
+  email?: string;
+  active: boolean;
+  phone: string;
+  address: {
+    street: string;
+    number: string;
+    complement?: string;
+    neighborhood: string;
+    city: string;
+    state: string;
+    zipCode: string;
+  };
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Schedule {
+  id: string;
+  riderId: string;
+  establishmentId: string;
+  date: string; // YYYY-MM-DD
+  shift: 'morning' | 'afternoon' | 'night';
+  startTime: string;
+  endTime: string;
+  chat?: string; // Histórico de chat do turno
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Delivery {
+  id: string;
+  riderId: string;
+  establishmentId: string;
+  date: string; // YYYY-MM-DD
+  time: string; // HH:MM
+  value: number;
+  status: 'pending' | 'active' | 'rejected' | 'cancelled' | 'lost';
+  scheduleId?: string;
+  orderNumber?: string;
+  notes?: string; // Chat/Observações com o estabelecimento
+  customerChat?: string; // Chat com o cliente final
+  updatedAt?: string;
+  paid?: boolean;
+  lostAt?: string;    // ISO timestamp de quando foi perdida
+  lostReason?: string; // motivo: 'logout' | 'session_limit'
+}
+
+export interface Notification {
+  id: string;
+  riderId: string;
+  title: string;
+  message: string;
+  date: string;
+  read: boolean;
+}
+
+export interface PartnerRequest {
+  id: string;
+  establishmentName: string;
+  ownerName: string;
+  phone: string;
+  address: string;
+  status: 'pending' | 'contacted';
+  createdAt: string;
+}
+
+export interface RiderLocation {
+  riderId: string;
+  riderName: string;
+  lat: number;
+  lng: number;
+  updatedAt: string;
+}
+
+export interface QueueEntry {
+  id: string;
+  riderId: string;
+  establishmentId: string;
+  date: string; // YYYY-MM-DD
+  joinedAt: string; // ISO string
+  status: 'waiting' | 'delivering' | 'left';
+  updatedAt: string;
+}
+
+export interface RouteHistoryItem {
+  id: string;
+  riderId: string;
+  riderName: string;
+  date: string; // YYYY-MM-DD
+  time: string; // HH:MM
+  originName: string;
+  destinationName: string;
+  destinationAddress: string;
+  destinationLat?: number;
+  destinationLng?: number;
+  waypointsCount: number;
+  distanceMeters: number;
+  durationSeconds: number;
+  createdAt: string; // ISO
+}
+
+// Helper para comparação de datas flexível
+export function isSameDayString(d1?: string, d2?: string): boolean {
+  if (!d1 || !d2) return false;
+  const clean1 = d1.split('T')[0].split(' ')[0];
+  const clean2 = d2.split('T')[0].split(' ')[0];
+  if (clean1 === clean2) return true;
+  try {
+    const dt1 = new Date(d1.includes('T') ? d1 : d1.replace(' ', 'T'));
+    const dt2 = new Date(d2.includes('T') ? d2 : d2.replace(' ', 'T')); 
+    return dt1.getFullYear() === dt2.getFullYear() &&
+           dt1.getMonth() === dt2.getMonth() &&
+           dt1.getDate() === dt2.getDate();
+  } catch (e) {
+    return false;
+  }
+}
+
+function parseTimestamp(dateStr?: string): number {
+  if (!dateStr) return 0;
+  try {
+    const formatted = dateStr.includes('T') ? dateStr : dateStr.replace(' ', 'T');
+    const t = new Date(formatted).getTime();
+    return isNaN(t) ? 0 : t;
+  } catch (e) {
+    return 0;
+  }
+}
+
+// Chaves para o LocalStorage
+const KEYS = {
+  USERS: 'delivery_system_users',
+  ESTABLISHMENTS: 'delivery_system_establishments',
+  SCHEDULES: 'delivery_system_schedules',
+  DELIVERIES: 'delivery_system_deliveries',
+  NOTIFICATIONS: 'delivery_system_notifications',
+  CURRENT_USER: 'delivery_system_current_user',
+  RIDER_LOCATIONS: 'delivery_system_rider_locations',
+  PARTNER_REQUESTS: 'delivery_system_partner_requests',
+  RIDER_QUEUE: 'delivery_system_rider_queue',
+  ROUTE_HISTORY: 'delivery_system_route_history',
+  MISSING_COLUMNS: 'delivery_system_missing_columns',
+  MISSING_TABLES: 'delivery_system_missing_tables',
+  SESSION_LOGIN_TIME: 'delivery_system_session_login_time',
+  SESSION_DELIVERY_COUNT: 'delivery_system_session_delivery_count',
+  DELIVERY_PRESENCE: 'delivery_system_delivery_presence',
+};
+
+const getMissingColumnsCache = (): Record<string, string[]> => {
+  const data = localStorage.getItem(KEYS.MISSING_COLUMNS);
+  return data ? JSON.parse(data) : {};
+};
+
+const saveMissingColumnsCache = (cache: Record<string, string[]>) => {
+  localStorage.setItem(KEYS.MISSING_COLUMNS, JSON.stringify(cache));
+};
+
+function getInitialMissingTables(): string[] {
+  try {
+    const data = localStorage.getItem(KEYS.MISSING_TABLES);
+    return data ? JSON.parse(data) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+const missingTables = new Set<string>(getInitialMissingTables());
+
+function markTableMissing(tableName: string) {
+  missingTables.add(tableName);
+  try {
+    localStorage.setItem(KEYS.MISSING_TABLES, JSON.stringify(Array.from(missingTables)));
+  } catch (e) {}
+}
+
+function isTableMissing(tableName: boolean | string): boolean {
+  if (typeof tableName === 'boolean') return tableName;
+  return missingTables.has(tableName);
+}
+
+// Canal de comunicação em tempo real via Broadcast do Supabase para sincronizar a Fila
+let queueBroadcastChannel: ReturnType<typeof supabase.channel> | null = null;
+let isQueueChannelSubscribed = false;
+
+function initQueueRealtime() {
+  if (queueBroadcastChannel) return;
+  
+  queueBroadcastChannel = supabase.channel('rider-queue-sync-channel', {
+    config: { broadcast: { self: false } }
+  });
+
+  queueBroadcastChannel
+    .on('broadcast', { event: 'queue-changed' }, (response) => {
+      if (response && response.payload && Array.isArray(response.payload.queue)) {
+        const remoteQueue: QueueEntry[] = response.payload.queue;
+        const localQueue = db.getQueue();
+        
+        const mergedList = db.sanitizeQueue([...localQueue, ...remoteQueue]);
+        localStorage.setItem(KEYS.RIDER_QUEUE, JSON.stringify(mergedList));
+        window.dispatchEvent(new Event('queue-updated'));
+      }
+    })
+    .on('broadcast', { event: 'request-queue' }, () => {
+      const currentQueue = db.getQueue();
+      if (queueBroadcastChannel && isQueueChannelSubscribed) {
+        queueBroadcastChannel.send({
+          type: 'broadcast',
+          event: 'queue-changed',
+          payload: { queue: currentQueue, timestamp: Date.now() }
+        }).catch(() => {});
+      }
+    })
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        isQueueChannelSubscribed = true;
+        queueBroadcastChannel?.send({
+          type: 'broadcast',
+          event: 'request-queue',
+          payload: { timestamp: Date.now() }
+        }).catch(() => {});
+
+        const currentQueue = db.getQueue();
+        if (currentQueue.length > 0) {
+          queueBroadcastChannel?.send({
+            type: 'broadcast',
+            event: 'queue-changed',
+            payload: { queue: currentQueue, timestamp: Date.now() }
+          }).catch(() => {});
+        }
+      } else {
+        isQueueChannelSubscribed = false;
+      }
+    });
+}
+
+initQueueRealtime();
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      initQueueRealtime();
+      broadcastQueueChange();
+    }
+  });
+
+  window.addEventListener('online', () => {
+    initQueueRealtime();
+    broadcastQueueChange();
+  });
+}
+
+function broadcastQueueChange(currentQueue?: QueueEntry[]) {
+  initQueueRealtime();
+  const queueToSend = currentQueue || db.getQueue();
+
+  if (queueBroadcastChannel && isQueueChannelSubscribed) {
+    queueBroadcastChannel.send({
+      type: 'broadcast',
+      event: 'queue-changed',
+      payload: { queue: queueToSend, timestamp: Date.now() }
+    }).catch(() => {});
+  } else if (queueBroadcastChannel) {
+    queueBroadcastChannel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        isQueueChannelSubscribed = true;
+        queueBroadcastChannel?.send({
+          type: 'broadcast',
+          event: 'queue-changed',
+          payload: { queue: queueToSend, timestamp: Date.now() }
+        }).catch(() => {});
+      }
+    });
+  }
+}
+
+function mergeChatStrings(localChat: string | undefined, remoteChat: string | undefined): string {
+  if (!localChat) return remoteChat || '';
+  if (!remoteChat) return localChat || '';
+  if (localChat === remoteChat) return localChat;
+  
+  const localLines = localChat.split('\n').map(l => l.trim()).filter(Boolean);
+  const remoteLines = remoteChat.split('\n').map(l => l.trim()).filter(Boolean);
+  
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  
+  localLines.forEach(l => {
+    merged.push(l);
+    seen.add(l);
+  });
+  
+  remoteLines.forEach(l => {
+    if (!seen.has(l)) {
+      merged.push(l);
+      seen.add(l);
+    }
+  });
+
+  return merged.join('\n');
+}
+
+function isAddressEmptyOrPlaceholder(addr: any): boolean {
+  if (!addr) return true;
+  const street = (addr.street || '').toLowerCase().trim();
+  const neighborhood = (addr.neighborhood || '').toLowerCase().trim();
+  
+  return !street || !neighborhood || street === 'sem rua' || street === 'a definir' || neighborhood === 'sem bairro' || neighborhood === 'a definir';
+}
+
+async function safeUpsert(tableName: string, rawPayload: Record<string, any>): Promise<{ success: boolean; error?: any }> {
+  if (isTableMissing(tableName)) {
+    return { success: false, error: 'Tabela não existe no Supabase' };
+  }
+
+  const payload = { ...rawPayload };
+  
+  const cache = getMissingColumnsCache();
+  const missingCols = cache[tableName] || [];
+  missingCols.forEach(col => {
+    delete payload[col];
+  });
+
+  const maxRetries = 10;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const { error } = await supabase.from(tableName).upsert(payload);
+    
+    if (!error) {
+      return { success: true };
+    }
+
+    const msg = error.message || '';
+    if (msg.includes('Could not find the table') || error.code === 'PGRST205' || (error as any).status === 404) {
+      markTableMissing(tableName);
+      return { success: false, error };
+    }
+
+    const match = msg.match(/Could not find the '([^']+)' column/) || 
+                  msg.match(/column "([^"]+)"/) || 
+                  msg.match(/column '([^']+)'/);
+    
+    if (match && match[1]) {
+      const missingCol = match[1];
+      const currentCache = getMissingColumnsCache();
+      if (!currentCache[tableName]) currentCache[tableName] = [];
+      if (!currentCache[tableName].includes(missingCol)) {
+        currentCache[tableName].push(missingCol);
+        saveMissingColumnsCache(currentCache);
+      }
+
+      delete payload[missingCol];
+      continue;
+    }
+
+    return { success: false, error };
+  }
+
+  return { success: false, error: 'Limite de tentativas de auto-cura excedido' };
+}
+
+export const db = {
+  isSameDayString,
+
+  getUsers(): User[] {
+    const data = localStorage.getItem(KEYS.USERS);
+    return data ? JSON.parse(data) : [];
+  },
+  setUsers(users: User[]) {
+    localStorage.setItem(KEYS.USERS, JSON.stringify(users));
+    users.forEach(u => {
+      const rawPayload = {
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        role: u.role,
+        active: u.active,
+        phone: u.phone,
+        cpf: u.cpf,
+        password_hash: u.passwordHash,
+        must_reset_password: u.mustResetPassword || false,
+        establishment_id: u.establishmentId || null,
+        created_at: u.createdAt || new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      safeUpsert('users', rawPayload);
+    });
+  },
+
+  getEstablishments(): Establishment[] {
+    const data = localStorage.getItem(KEYS.ESTABLISHMENTS);
+    return data ? JSON.parse(data) : [];
+  },
+  setEstablishments(ests: Establishment[]) {
+    localStorage.setItem(KEYS.ESTABLISHMENTS, JSON.stringify(ests));
+    ests.forEach(e => {
+      const rawPayload = {
+        id: e.id,
+        name: e.name,
+        email: e.email || null,
+        active: e.active,
+        phone: e.phone || '',
+        address: typeof e.address === 'object' ? JSON.stringify(e.address) : e.address,
+        street: e.address?.street || '',
+        number: e.address?.number || '',
+        complement: e.address?.complement || '',
+        neighborhood: e.address?.neighborhood || '',
+        city: e.address?.city || '',
+        state: e.address?.state || '',
+        zip_code: e.address?.zipCode || '',
+        created_at: e.createdAt || new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      safeUpsert('establishments', rawPayload);
+    });
+  },
+
+  getSchedules(): Schedule[] {
+    const data = localStorage.getItem(KEYS.SCHEDULES);
+    return data ? JSON.parse(data) : [];
+  },
+  setSchedules(schedules: Schedule[]) {
+    localStorage.setItem(KEYS.SCHEDULES, JSON.stringify(schedules));
+    schedules.forEach(s => {
+      const serializedCreatedBy = JSON.stringify({
+        createdBy: s.createdBy || '',
+        chat: s.chat || '',
+        updatedAt: s.updatedAt || new Date().toISOString()
+      });
+
+      const rawPayload = {
+        id: s.id,
+        rider_id: s.riderId,
+        establishment_id: s.establishmentId,
+        date: s.date,
+        shift: s.shift,
+        start_time: s.startTime,
+        end_time: s.endTime,
+        chat: s.chat || null,
+        created_by: serializedCreatedBy,
+        created_at: s.createdAt || new Date().toISOString(),
+        updated_at: s.updatedAt || new Date().toISOString()
+      };
+      safeUpsert('schedules', rawPayload);
+    });
+  },
+
+  getDeliveries(): Delivery[] {
+    const data = localStorage.getItem(KEYS.DELIVERIES);
+    return data ? JSON.parse(data) : [];
+  },
+  setDeliveries(deliveries: Delivery[]) {
+    localStorage.setItem(KEYS.DELIVERIES, JSON.stringify(deliveries));
+    deliveries.forEach(d => {
+      const serializedOrderNumber = JSON.stringify({
+        orderNumber: d.orderNumber || '',
+        notes: d.notes || '',
+        customerChat: d.customerChat || '',
+        updatedAt: d.updatedAt || new Date().toISOString()
+      });
+
+      const rawPayload = {
+        id: d.id,
+        rider_id: d.riderId,
+        establishment_id: d.establishmentId,
+        date: d.date,
+        time: d.time,
+        value: d.value,
+        status: d.status,
+        schedule_id: d.scheduleId || null,
+        order_number: serializedOrderNumber,
+        notes: d.notes || null,
+        customer_chat: d.customerChat || null,
+        updated_at: d.updatedAt || new Date().toISOString(),
+        paid: d.paid || false
+      };
+      safeUpsert('deliveries', rawPayload);
+    });
+  },
+
+  async clearAllDeliveries() {
+    localStorage.setItem(KEYS.DELIVERIES, JSON.stringify([]));
+    if (!isTableMissing('deliveries')) {
       await supabase.from('deliveries').delete().neq('id', '');
     }
   },
@@ -564,10 +1108,10 @@ export const db = {
       
       let dayKey = item.date ? item.date.split('T')[0].split(' ')[0] : '';
       if (!dayKey && item.joinedAt) {
-        dayKey = this.getLocalDateString(new Date(item.joinedAt));
+        dayKey = this.getOperationalDateString(new Date(item.joinedAt));
       }
       if (!dayKey) {
-        dayKey = this.getLocalDateString();
+        dayKey = this.getOperationalDateString();
       }
 
       const compositeKey = `${riderKey}_${estKey}_${dayKey}`;
@@ -630,7 +1174,7 @@ export const db = {
   },
 
   joinQueue(riderId: string, establishmentId: string): QueueEntry[] {
-    const todayStr = this.getLocalDateString();
+    const todayStr = this.getOperationalDateString();
     const queue = this.getQueue();
     const nowISO = new Date().toISOString();
 
@@ -663,7 +1207,7 @@ export const db = {
   },
 
   leaveQueue(riderId: string, establishmentId: string): QueueEntry[] {
-    const todayStr = this.getLocalDateString();
+    const todayStr = this.getOperationalDateString();
     const queue = this.getQueue();
     const nowISO = new Date().toISOString();
 
@@ -723,7 +1267,7 @@ export const db = {
   },
 
   markRiderDelivering(riderId: string, establishmentId: string) {
-    const todayStr = this.getLocalDateString();
+    const todayStr = this.getOperationalDateString();
     const queue = this.getQueue();
     const nowISO = new Date().toISOString();
 
@@ -768,14 +1312,11 @@ export const db = {
     }
   },
 
-  // ── Controle de sessão do motoboy ──────────────────────────────────────
-  // Registra o momento do login para contagem de tempo mínimo de sessão
   startRiderSession() {
     localStorage.setItem(KEYS.SESSION_LOGIN_TIME, new Date().toISOString());
     localStorage.setItem(KEYS.SESSION_DELIVERY_COUNT, '0');
   },
 
-  // Retorna quantas horas o motoboy está logado nesta sessão
   getRiderSessionHours(): number {
     const loginTimeStr = localStorage.getItem(KEYS.SESSION_LOGIN_TIME);
     if (!loginTimeStr) return 0;
@@ -783,33 +1324,23 @@ export const db = {
     return (Date.now() - loginTime) / (1000 * 60 * 60);
   },
 
-  // Retorna quantas corridas foram lançadas nesta sessão
   getSessionDeliveryCount(): number {
     return parseInt(localStorage.getItem(KEYS.SESSION_DELIVERY_COUNT) || '0', 10);
   },
 
-  // Incrementa contador de corridas da sessão
   incrementSessionDeliveryCount() {
     const current = this.getSessionDeliveryCount();
     localStorage.setItem(KEYS.SESSION_DELIVERY_COUNT, String(current + 1));
   },
 
-  // Limpa dados de sessão (chamado no logout)
   clearRiderSession() {
     localStorage.removeItem(KEYS.SESSION_LOGIN_TIME);
     localStorage.removeItem(KEYS.SESSION_DELIVERY_COUNT);
   },
 
-  // Verifica se o motoboy cumpriu o requisito de sessão para a corrida N
-  // Regra: a cada 2 corridas, exige 2h de sessão
-  // Corridas 1 e 2 são livres; a 3ª e 4ª exigem 2h; a 5ª e 6ª exigem 4h; etc.
   checkSessionRequirement(): { allowed: boolean; reason?: string; sessionHours: number; deliveryCount: number } {
     const sessionHours = this.getRiderSessionHours();
-    const deliveryCount = this.getSessionDeliveryCount(); // corridas já lançadas nesta sessão
-    // A cada bloco de 2 corridas, exige +2h
-    // Bloco 0 (corridas 1-2): 0h mínimas
-    // Bloco 1 (corridas 3-4): 2h mínimas
-    // Bloco 2 (corridas 5-6): 4h mínimas ...
+    const deliveryCount = this.getSessionDeliveryCount();
     const block = Math.floor(deliveryCount / 2);
     const requiredHours = block * 2;
 
@@ -824,20 +1355,6 @@ export const db = {
     }
     return { allowed: true, sessionHours, deliveryCount };
   },
-
-  // ── Controle de presença obrigatória por corrida ───────────────────────
-  //
-  // Estrutura por corrida:
-  //   accumulatedMs      – ms totais em que o app esteve em foreground
-  //   foregroundSince    – ISO timestamp de quando o app entrou em foreground
-  //                        (null = app está em background agora)
-  //   absenceStartedAt   – ISO timestamp de quando o app saiu para background
-  //                        (null = app está em foreground agora)
-  //
-  // Regras:
-  //   • Precisa acumular PRESENCE_REQUIRED_MS (30 min) em foreground → corrida liberada
-  //   • Se a ausência CONTÍNUA atual ultrapassar ABSENCE_TOLERANCE_MS (10 min)
-  //     E ainda não cumpriu os 30 min → corrida perdida
 
   PRESENCE_REQUIRED_MS: 30 * 60 * 1000,   // 30 min
   ABSENCE_TOLERANCE_MS: 10 * 60 * 1000,   // 10 min de ausência contínua
@@ -859,7 +1376,6 @@ export const db = {
     localStorage.setItem(KEYS.DELIVERY_PRESENCE, JSON.stringify(map));
   },
 
-  // Chamado ao lançar uma corrida — começa com o app em foreground
   startDeliveryPresence(deliveryId: string) {
     const map = this.getDeliveryPresenceMap();
     if (!map[deliveryId]) {
@@ -872,7 +1388,6 @@ export const db = {
     }
   },
 
-  // Chamado quando o app vai para background (visibilitychange → hidden)
   pauseAllPresence() {
     const now = Date.now();
     const nowISO = new Date(now).toISOString();
@@ -881,17 +1396,15 @@ export const db = {
     Object.keys(map).forEach(id => {
       const e = map[id];
       if (e.foregroundSince !== null) {
-        // Acumula o tempo de foreground desde a última vez que entrou
         e.accumulatedMs += now - new Date(e.foregroundSince).getTime();
         e.foregroundSince = null;
-        e.absenceStartedAt = nowISO; // inicia contagem de ausência
+        e.absenceStartedAt = nowISO;
         changed = true;
       }
     });
     if (changed) this.setDeliveryPresenceMap(map);
   },
 
-  // Chamado quando o app volta ao foreground (visibilitychange → visible)
   resumeAllPresence() {
     const nowISO = new Date().toISOString();
     const map = this.getDeliveryPresenceMap();
@@ -899,15 +1412,14 @@ export const db = {
     Object.keys(map).forEach(id => {
       const e = map[id];
       if (e.foregroundSince === null) {
-        e.foregroundSince = nowISO;   // volta a acumular presença
-        e.absenceStartedAt = null;    // zera a ausência contínua
+        e.foregroundSince = nowISO;
+        e.absenceStartedAt = null;
         changed = true;
       }
     });
     if (changed) this.setDeliveryPresenceMap(map);
   },
 
-  // Presença acumulada em ms (inclui o tempo atual em foreground se aplicável)
   getPresenceMs(deliveryId: string): number {
     const map = this.getDeliveryPresenceMap();
     const e = map[deliveryId];
@@ -919,7 +1431,6 @@ export const db = {
     return total;
   },
 
-  // Ausência CONTÍNUA atual em ms (0 se o app está em foreground)
   getCurrentAbsenceMs(deliveryId: string): number {
     const map = this.getDeliveryPresenceMap();
     const e = map[deliveryId];
@@ -927,14 +1438,12 @@ export const db = {
     return Date.now() - new Date(e.absenceStartedAt).getTime();
   },
 
-  // True se o app está em background para esta corrida
   isInBackground(deliveryId: string): boolean {
     const map = this.getDeliveryPresenceMap();
     const e = map[deliveryId];
     return !!e && e.foregroundSince === null;
   },
 
-  // Remove o rastreio de uma corrida (cumpriu ou foi perdida)
   removeDeliveryPresence(deliveryId: string) {
     const map = this.getDeliveryPresenceMap();
     delete map[deliveryId];
@@ -946,6 +1455,16 @@ export const db = {
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
+  },
+
+  // Retorna a data operacional: se for entre 00:00 e 03:59 da madrugada,
+  // recua para a data do dia anterior para pertencer à escala/expediente noturno que começou na véspera.
+  getOperationalDateString(date: Date = new Date()): string {
+    const d = new Date(date);
+    if (d.getHours() < 4) {
+      d.setDate(d.getDate() - 1);
+    }
+    return this.getLocalDateString(d);
   },
 
   resolveUser(id: string): User | undefined {
@@ -1068,7 +1587,6 @@ export const db = {
   },
 
   async clearRiderLocation(riderId: string) {
-    // Envia sinal de broadcast instantâneo antes de deletar do banco
     realtimeGps.sendOffline(riderId);
 
     const locations = this.getRiderLocationsRecord();
@@ -1091,7 +1609,6 @@ export const db = {
     return Object.values(this.getRiderLocationsRecord());
   },
 
-  // --- SUPABASE SYNCHRONIZATION ---
   async pullFromSupabase() {
     try {
       const { data: usersData, error } = await supabase.from('users').select('*');
@@ -1178,8 +1695,6 @@ export const db = {
       if (error) throw error;
       if (schData) {
         const localSchedules = this.getSchedules();
-        
-        // De-duplicação lógica durante o Sync
         const uniqueMap = new Map<string, Schedule>();
         
         schData.forEach(s => {
@@ -1325,7 +1840,7 @@ export const db = {
         const mappedReqs: PartnerRequest[] = reqsData.map(r => ({
           id: r.id,
           establishmentName: r.establishment_name,
-          ownerName: r.owner_name,
+          ownerName: r.ownerName,
           phone: r.phone,
           address: r.address,
           status: r.status,

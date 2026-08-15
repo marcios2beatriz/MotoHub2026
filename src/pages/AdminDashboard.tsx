@@ -69,7 +69,7 @@ export function getShiftLabel(shift: string): string {
 // Retorna a segunda-feira da semana atual no formato YYYY-MM-DD local sem desvio de fuso horário
 const getThisMonday = (): string => {
   const now = new Date();
-  const day = now.getDay(); // 0 é domingo, 1 é segunda
+  const day = now.getDay();
   const diff = day === 0 ? -6 : 1 - day;
   const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
 
@@ -134,7 +134,6 @@ export default function AdminDashboard() {
     name: '', street: '', number: '', complement: '', neighborhood: '', city: '', state: '', zipCode: '', phone: '', email: '', password: ''
   });
 
-  // Escalas normais com seleção múltipla de motoboys
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [selectedRiderIds, setSelectedRiderIds] = useState<string[]>([]);
   const [scheduleForm, setScheduleForm] = useState({ 
@@ -142,7 +141,6 @@ export default function AdminDashboard() {
   });
   const [scheduleConflictWarning, setScheduleConflictWarning] = useState('');
 
-  // Escala Semanal com seleção múltipla de motoboys
   const [showWeeklyModal, setShowWeeklyModal] = useState(false);
   const [weeklySelectedRiderIds, setWeeklySelectedRiderIds] = useState<string[]>([]);
   const [weeklyForm, setWeeklyForm] = useState({
@@ -452,7 +450,7 @@ export default function AdminDashboard() {
     setScheduleForm({
       riderId: preselectedRiderId || (activeRiders.length > 0 ? activeRiders[0].id : ''),
       establishmentId: preselectedEstId || '',
-      date: db.getLocalDateString(),
+      date: db.getOperationalDateString(),
       shift: 'morning',
       startTime: '08:00',
       endTime: '12:00'
@@ -695,7 +693,6 @@ export default function AdminDashboard() {
     loadData();
   };
 
-  // Cria escalas para 1 ou múltiplos motoboys selecionados
   const handleSaveSchedule = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -768,7 +765,6 @@ export default function AdminDashboard() {
     }
   };
 
-  // Gera pré-visualização garantindo cálculo exato de data no fuso local
   const buildWeeklyPreview = (form: typeof weeklyForm) => {
     if (!form.weekStart || !form.establishmentId) return;
 
@@ -796,7 +792,6 @@ export default function AdminDashboard() {
     setWeeklyStep('preview');
   };
 
-  // Cria escalas semanais para múltiplos motoboys
   const handleSaveWeeklySchedule = () => {
     const allSchedules = db.getSchedules();
     const newSchedules: Schedule[] = [];
@@ -999,7 +994,9 @@ export default function AdminDashboard() {
     let start = new Date();
     let end = new Date();
     if (reportPeriod === 'daily') {
-      start.setHours(0,0,0,0);
+      const opDateStr = db.getOperationalDateString();
+      start = new Date(opDateStr + 'T00:00:00');
+      end = new Date(opDateStr + 'T23:59:59');
     } else if (reportPeriod === 'weekly') {
       const day = start.getDay();
       const diff = start.getDate() - day + (day === 0 ? -6 : 1);
@@ -1094,7 +1091,1329 @@ export default function AdminDashboard() {
     return matchesSearch && matchesStatus;
   });
 
-  const todayStr = db.getLocalDateString();
+  const todayStr = db.getOperationalDateString();
+  const filteredAndSortedSchedules = schedules
+    .filter(s => {
+      const rider = users.find(u => u.id === s.riderId);
+      const est = establishments.find(e => e.id === s.establishmentId);
+
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        const rName = rider?.name.toLowerCase() || '';
+        const eName = est?.name.toLowerCase() || '';
+        if (!rName.includes(q) && !eName.includes(q)) return false;
+      }
+
+      if (schRiderFilter !== 'all' && s.riderId !== schRiderFilter) return false;
+      if (schEstFilter !== 'all' && s.establishmentId !== schEstFilter) return false;
+      if (schShiftFilter !== 'all' && s.shift !== schShiftFilter) return false;
+      if (schSpecificDate && s.date !== schSpecificDate) return false;
+
+      if (schTimeframeFilter === 'today' && s.date !== todayStr) return false;
+      if (schTimeframeFilter === 'upcoming' && s.date < todayStr) return false;
+      if (schTimeframeFilter === 'past' && s.date >= todayStr) return false;
+
+      return true;
+    })
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  const filteredAndSortedDeliveries = deliveries
+    .filter(d => {
+      const rider = users.find(u => u.id === d.riderId);
+      const est = establishments.find(e => e.id === d.establishmentId);
+
+      if (delSearchQuery) {
+        const q = delSearchQuery.toLowerCase().trim();
+        const orderNum = (d.orderNumber || '').toLowerCase();
+        const rName = (rider?.name || '').toLowerCase();
+        const eName = (est?.name || '').toLowerCase();
+        const matchNum = orderNum.includes(q.replace('#', ''));
+        if (!matchNum && !rName.includes(q) && !eName.includes(q)) return false;
+      }
+
+      if (delRiderFilter !== 'all' && d.riderId !== delRiderFilter) return false;
+      if (delEstFilter !== 'all' && d.establishmentId !== delEstFilter) return false;
+      if (delStatusFilter !== 'all' && d.status !== delStatusFilter) return false;
+
+      if (delDateFrom && d.date < delDateFrom) return false;
+      if (delDateTo && d.date > delDateTo) return false;
+
+      return true;
+    })
+    .sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time));
+
+  const totalFilteredRevenue = filteredAndSortedDeliveries
+    .filter(d => d.status === 'active')
+    .reduce((sum, d) => sum + Number(d.value || 0), 0);
+
+  const pendingRequestsCount = partnerRequests.filter(r => r.status === 'pending').length;
+  const pendingUsersCount = users.filter(u => !u.active).length;
+  const pendingDeliveries = deliveries.filter(d => d.status === 'pending');
+
+  const activeDeliveriesToday = deliveries.filter(d => d.date === todayStr && d.status === 'active');
+  const totalRevenueToday = activeDeliveriesToday.reduce((sum, d) => sum + d.value, 0);
+  const activeRidersCount = users.filter(u => u.role === 'rider' && u.active).length;
+  const activeEstsCount = establishments.filter(e => e.active).length;
+
+  const activeNotesDelivery = db.getDeliveries().find(d => d.id === notesDeliveryId) || null;
+  const activeScheduleChat = schedules.find(s => s.id === activeScheduleChatId) || null;
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col relative">
+      <ChatToastBanner toast={activeToast} onClose={() => setActiveToast(null)} />
+
+      {/* Header */}
+      <header className="bg-slate-900 text-white shadow-md sticky top-0 z-20">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
+          <div className="flex items-center space-x-3">
+            <div className="bg-indigo-600 p-1.5 rounded-lg">
+              <Bike className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-base font-bold leading-tight">Painel Administrativo</h1>
+              <p className="text-xs text-slate-400 hidden sm:block">Gestão de Escalas e Entregas</p>
+            </div>
+          </div>
+          <div className="flex items-center space-x-3">
+            <span className="text-sm text-slate-300 hidden md:inline">Olá, {adminUser?.name}</span>
+            <button 
+              onClick={handleLogout}
+              className="p-2 hover:bg-slate-800 rounded-lg transition-colors flex items-center space-x-1 text-sm text-red-400"
+            >
+              <LogOut className="h-5 w-5" />
+              <span className="hidden sm:inline">Sair</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <div className="max-w-7xl w-full mx-auto px-3 sm:px-4 py-4 sm:py-6 flex-1 grid grid-cols-1 lg:grid-cols-5 gap-4 sm:gap-6">
+        {/* Sidebar Navigation */}
+        <div className="hidden lg:block lg:col-span-1 bg-white p-4 rounded-xl shadow-sm border border-slate-200 h-fit space-y-1">
+          <button
+            onClick={() => setActiveTab('overview')}
+            className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'overview' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <TrendingUp className="h-5 w-5" />
+            <span>Visão Geral</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('map')}
+            className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'map' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <MapIcon className="h-5 w-5 text-emerald-600" />
+            <span>Mapa GPS ao Vivo</span>
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('users'); setSearchQuery(''); setStatusFilter('all'); setRoleFilter('all'); }}
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'users' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <div className="flex items-center space-x-3">
+              <Users className="h-5 w-5" />
+              <span>Usuários</span>
+            </div>
+            {pendingUsersCount > 0 && (
+              <span className="bg-amber-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full">
+                {pendingUsersCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('establishments'); setSearchQuery(''); setStatusFilter('all'); }}
+            className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'establishments' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <Store className="h-5 w-5" />
+            <span>Estabelecimentos</span>
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('requests'); setSearchQuery(''); setRequestStatusFilter('all'); }}
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'requests' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <div className="flex items-center space-x-3">
+              <Building2 className="h-5 w-5" />
+              <span>Solicitações</span>
+            </div>
+            {pendingRequestsCount > 0 && (
+              <span className="bg-emerald-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full">
+                {pendingRequestsCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('schedules'); setSearchQuery(''); }}
+            className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'schedules' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <Calendar className="h-5 w-5" />
+            <span>Escalas</span>
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('deliveries'); }}
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'deliveries' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <div className="flex items-center space-x-3">
+              <Bike className="h-5 w-5" />
+              <span>Corridas</span>
+            </div>
+            {pendingDeliveries.length > 0 && (
+              <span className="bg-amber-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full animate-pulse">
+                {pendingDeliveries.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('queues'); }}
+            className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'queues' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <ListOrdered className="h-5 w-5 text-indigo-600" />
+            <span>Filas de Saída</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('finance')}
+            className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'finance' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <DollarSign className="h-5 w-5" />
+            <span>Fechamento</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('reports')}
+            className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'reports' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <BarChart3 className="h-5 w-5" />
+            <span>Relatórios</span>
+          </button>
+        </div>
+
+        {/* Mobile Navigation bar */}
+        <div className="lg:hidden grid grid-cols-5 sm:grid-cols-10 gap-1 bg-white p-2 rounded-xl border border-slate-200">
+          <button onClick={() => setActiveTab('overview')} className={`p-2 text-xs text-center rounded ${activeTab === 'overview' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Visão</button>
+          <button onClick={() => setActiveTab('map')} className={`p-2 text-xs text-center rounded ${activeTab === 'map' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>GPS</button>
+          <button onClick={() => setActiveTab('users')} className={`p-2 text-xs text-center rounded ${activeTab === 'users' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Usuários</button>
+          <button onClick={() => setActiveTab('establishments')} className={`p-2 text-xs text-center rounded ${activeTab === 'establishments' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Lojas</button>
+          <button onClick={() => setActiveTab('requests')} className={`p-2 text-xs text-center rounded relative ${activeTab === 'requests' ? 'bg-indigo-600 text-white font-bold'<dyad-write path="src/pages/AdminDashboard.tsx" description="Atualiza AdminDashboard para considerar a data operacional nos relatórios e filtros de Hoje">
+"use client";
+
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { db, User, Establishment, Schedule, Delivery, PartnerRequest, RiderLocation, QueueEntry } from '../utils/db';
+import { 
+  Users, 
+  Store, 
+  Calendar, 
+  CalendarDays,
+  Bike, 
+  BarChart3, 
+  LogOut, 
+  Plus, 
+  Edit2, 
+  Trash2, 
+  Check, 
+  Download, 
+  Search,
+  Clock,
+  MessageSquare,
+  Building2,
+  TrendingUp,
+  DollarSign,
+  Phone,
+  MapPin,
+  Ban,
+  Filter,
+  ArrowUpDown,
+  UserCheck2,
+  Map as MapIcon,
+  ListOrdered,
+  KeyRound,
+  CheckCheck,
+  Maximize2,
+  Minimize2,
+  Eye,
+  EyeOff,
+  LocateFixed,
+  RotateCcw,
+  RotateCw
+} from 'lucide-react';
+
+import L from 'leaflet';
+import UserModal from '../components/UserModal';
+import EstablishmentModal from '../components/EstablishmentModal';
+import ScheduleModal from '../components/ScheduleModal';
+import WeeklyScheduleModal from '../components/WeeklyScheduleModal';
+import RiderSchedulesModal from '../components/RiderSchedulesModal';
+import DeliveryModal from '../components/DeliveryModal';
+import DeliveryNotesModal from '../components/DeliveryNotesModal';
+import ScheduleChatModal from '../components/ScheduleChatModal';
+import ChatToastBanner, { ChatToast } from '../components/ChatToastBanner';
+import { sendDeviceNotification, playNotificationSound, requestNotificationPermission } from '../utils/notifications';
+import { realtimeGps } from '../utils/realtimeGps';
+
+const DAY_KEYS = ['seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom'] as const;
+const DAY_LABELS = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'];
+
+export function getShiftLabel(shift: string): string {
+  switch(shift) {
+    case 'morning': return 'Manhã';
+    case 'afternoon': return 'Tarde';
+    case 'night': return 'Noite';
+    default: return shift || '';
+  }
+}
+
+// Retorna a segunda-feira da semana atual no formato YYYY-MM-DD local sem desvio de fuso horário
+const getThisMonday = (): string => {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
+
+  const year = monday.getFullYear();
+  const month = String(monday.getMonth() + 1).padStart(2, '0');
+  const dateNum = String(monday.getDate()).padStart(2, '0');
+  return `${year}-${month}-${dateNum}`;
+};
+
+export default function AdminDashboard() {
+  const navigate = useNavigate();
+  const [adminUser] = useState(db.getCurrentUser());
+  const [activeTab, setActiveTab] = useState<'overview' | 'map' | 'users' | 'establishments' | 'requests' | 'schedules' | 'deliveries' | 'queues' | 'finance' | 'reports'>('overview');
+
+  const [users, setUsers] = useState<User[]>([]);
+  const [establishments, setEstablishments] = useState<Establishment[]>([]);
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [deliveries, setDeliveries] = useState<Delivery[]>([]);
+  const [partnerRequests, setPartnerRequests] = useState<PartnerRequest[]>([]);
+  const [riderLocations, setRiderLocations] = useState<RiderLocation[]>([]);
+  const [queueEntries, setQueueEntries] = useState<QueueEntry[]>([]);
+  const [activeToast, setActiveToast] = useState<ChatToast | null>(null);
+
+  const prevNotesRef = useRef<Record<string, string>>({});
+  const prevScheduleChatRef = useRef<Record<string, string>>({});
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [roleFilter, setRoleFilter] = useState<'all' | 'admin' | 'rider' | 'establishment'>('all');
+  const [requestStatusFilter, setRequestStatusFilter] = useState<'all' | 'pending' | 'contacted'>('all');
+
+  // Filtros de Escalas
+  const [schRiderFilter, setSchRiderFilter] = useState<string>('all');
+  const [schEstFilter, setSchEstFilter] = useState<string>('all');
+  const [schShiftFilter, setSchShiftFilter] = useState<string>('all');
+  const [schTimeframeFilter, setSchTimeframeFilter] = useState<'all' | 'today' | 'upcoming' | 'past'>('all');
+  const [schSpecificDate, setSchSpecificDate] = useState<string>('');
+  const [schSortOrder, setSchSortOrder] = useState<'date_desc' | 'date_asc' | 'rider_name' | 'est_name'>('date_desc');
+
+  // Filtros de Corridas
+  const [delRiderFilter, setDelRiderFilter] = useState<string>('all');
+  const [delEstFilter, setDelEstFilter] = useState<string>('all');
+  const [delStatusFilter, setDelStatusFilter] = useState<string>('all');
+  const [delDateFrom, setDelDateFrom] = useState<string>('');
+  const [delDateTo, setDelDateTo] = useState<string>('');
+  const [delSearchQuery, setDelSearchQuery] = useState<string>('');
+  const [delSortOrder, setDelSortOrder] = useState<'date_desc' | 'date_asc' | 'value_desc' | 'value_asc' | 'rider_name' | 'est_name'>('date_desc');
+
+  // Filtro de Fila no Admin
+  const [queueEstFilter, setQueueEstFilter] = useState<string>('all');
+  const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
+
+  const [showUserModal, setShowUserModal] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [userForm, setUserForm] = useState({
+    name: '', cpf: '', phone: '', email: '', role: 'rider' as any, password: '', establishmentId: '', establishmentName: '', zipCode: '', street: '', number: '', neighborhood: '', city: '', state: ''
+  });
+
+  const [showEstModal, setShowEstModal] = useState(false);
+  const [editingEst, setEditingEst] = useState<Establishment | null>(null);
+  const [estForm, setEstForm] = useState({
+    name: '', street: '', number: '', complement: '', neighborhood: '', city: '', state: '', zipCode: '', phone: '', email: '', password: ''
+  });
+
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [selectedRiderIds, setSelectedRiderIds] = useState<string[]>([]);
+  const [scheduleForm, setScheduleForm] = useState({ 
+    riderId: '', establishmentId: '', date: '', shift: 'morning' as any, startTime: '08:00', endTime: '12:00'
+  });
+  const [scheduleConflictWarning, setScheduleConflictWarning] = useState('');
+
+  const [showWeeklyModal, setShowWeeklyModal] = useState(false);
+  const [weeklySelectedRiderIds, setWeeklySelectedRiderIds] = useState<string[]>([]);
+  const [weeklyForm, setWeeklyForm] = useState({
+    riderId: '', establishmentId: '', shift: 'morning' as any, startTime: '08:00', endTime: '12:00', weekStart: '',
+    days: { seg: true, ter: true, qua: true, qui: true, sex: true, sab: false, dom: false }
+  });
+  const [weeklyPreview, setWeeklyPreview] = useState<any[]>([]);
+  const [weeklyStep, setWeeklyStep] = useState<'form' | 'preview'>('form');
+
+  const [riderSchedulesModal, setRiderSchedulesModal] = useState<string | null>(null);
+  const [modalHistoryEst, setModalHistoryEst] = useState('');
+  const [modalHistoryFrom, setModalHistoryFrom] = useState('');
+  const [modalHistoryTo, setModalHistoryTo] = useState('');
+
+  const [showDeliveryModal, setShowDeliveryModal] = useState(false);
+  const [editingDelivery, setEditingDelivery] = useState<Delivery | null>(null);
+  const [deliveryForm, setDeliveryForm] = useState({ riderId: '', establishmentId: '', date: '', time: '', value: '', orderNumber: '', notes: '' });
+
+  const [notesDeliveryId, setNotesDeliveryId] = useState<string | null>(null);
+  const [activeScheduleChatId, setActiveScheduleChatId] = useState<string | null>(null);
+
+  const [reportType, setReportType] = useState<'earnings' | 'deliveries' | 'schedules'>('earnings');
+  const [reportPeriod, setReportPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'custom'>('weekly');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const markersRef = useRef<{ [key: string]: L.Marker }>({});
+  const hasSetInitialAdminMapBoundsRef = useRef(false);
+  const [isMapExpanded, setIsMapExpanded] = useState(false);
+
+  useEffect(() => {
+    if (activeTab !== 'map') {
+      hasSetInitialAdminMapBoundsRef.current = false;
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (mapRef.current && activeTab === 'map') {
+      setTimeout(() => {
+        mapRef.current?.invalidateSize();
+      }, 100);
+    }
+  }, [isMapExpanded, activeTab]);
+
+  const loadData = () => {
+    const currentUsers = db.getUsers();
+    const currentEsts = db.getEstablishments();
+    const currentSchedules = db.getSchedules();
+    const currentDeliveries = db.getDeliveries();
+    const rawRequests = db.getPartnerRequests();
+    const locations = db.getRiderLocations();
+    const queue = db.getQueue();
+
+    const inactiveEsts = currentEsts.filter(e => !e.active);
+    const virtualRequests: PartnerRequest[] = inactiveEsts.map(e => {
+      const manager = currentUsers.find(u => u.establishmentId === e.id);
+      const street = e.address?.street || 'Endereço não informado';
+      const num = e.address?.number || 'S/N';
+      const neighborhood = e.address?.neighborhood || '';
+      const city = e.address?.city || '';
+      
+      return {
+        id: 'req_virtual_' + e.id,
+        establishmentName: e.name,
+        ownerName: manager ? manager.name.replace('Gerente ', '') : 'Proprietário',
+        phone: e.phone || manager?.phone || 'Sem telefone',
+        address: `${street}, ${num} - ${neighborhood} ${city}`.trim(),
+        status: 'pending' as const,
+        createdAt: e.createdAt || new Date().toISOString()
+      };
+    });
+
+    const mergedRequests = [...rawRequests];
+    virtualRequests.forEach(vr => {
+      const exists = mergedRequests.some(r => r.establishmentName.toLowerCase().trim() === vr.establishmentName.toLowerCase().trim());
+      if (!exists) {
+        mergedRequests.push(vr);
+      }
+    });
+
+    setUsers([...currentUsers].sort((a, b) => a.name.localeCompare(b.name)));
+    setEstablishments([...currentEsts].sort((a, b) => a.name.localeCompare(b.name)));
+    setSchedules([...currentSchedules].sort((a, b) => b.date.localeCompare(a.date) || b.shift.localeCompare(a.shift) || a.id.localeCompare(b.id)));
+    setDeliveries([...currentDeliveries].sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time) || b.id.localeCompare(a.id)));
+    setPartnerRequests([...mergedRequests].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+    setRiderLocations(locations);
+    setQueueEntries(queue);
+  };
+
+  useEffect(() => {
+    if (!adminUser || adminUser.role !== 'admin') {
+      navigate('/login');
+      return;
+    }
+    requestNotificationPermission();
+    loadData();
+
+    const interval = setInterval(() => {
+      db.pullFromSupabase().then(() => loadData());
+    }, 2000);
+
+    const unsubscribeOffline = realtimeGps.subscribeToOffline((payload) => {
+      if (mapRef.current && markersRef.current[payload.riderId]) {
+        mapRef.current.removeLayer(markersRef.current[payload.riderId]);
+        delete markersRef.current[payload.riderId];
+      }
+      loadData();
+    });
+
+    return () => {
+      clearInterval(interval);
+      unsubscribeOffline();
+    };
+  }, [adminUser, navigate, activeTab]);
+
+  const handleRecenterMap = () => {
+    const currentMap = mapRef.current;
+    if (!currentMap) return;
+    const points: L.LatLngExpression[] = [];
+    const now = Date.now();
+    const ONLINE_THRESHOLD_MS = 60 * 1000;
+
+    riderLocations.forEach(loc => {
+      const lastUpdateMs = loc.updatedAt ? new Date(loc.updatedAt).getTime() : 0;
+      if (loc.lat && loc.lng && lastUpdateMs > 0 && Math.abs(now - lastUpdateMs) < ONLINE_THRESHOLD_MS) {
+        points.push([loc.lat, loc.lng]);
+      }
+    });
+
+    if (points.length >= 2) {
+      const bounds = L.latLngBounds(points);
+      currentMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+    } else if (points.length === 1) {
+      currentMap.setView(points[0], 16);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== 'map' || !mapContainerRef.current) return;
+
+    if (!document.getElementById('leaflet-css')) {
+      const link = document.createElement('link');
+      link.id = 'leaflet-css';
+      link.rel = 'stylesheet';
+      link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+      document.head.appendChild(link);
+    }
+
+    if (!mapRef.current) {
+      const mapInstance = L.map(mapContainerRef.current, {
+        zoomControl: true,
+        attributionControl: false
+      }).setView([-7.2247, -35.8878], 14);
+
+      L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+        maxZoom: 20
+      }).addTo(mapInstance);
+
+      mapRef.current = mapInstance;
+    }
+
+    const currentMap = mapRef.current;
+    const now = Date.now();
+    const ONLINE_THRESHOLD_MS = 60 * 1000;
+    const points: L.LatLngExpression[] = [];
+
+    const onlineRiders = riderLocations.filter(loc => {
+      const lastUpdateMs = loc.updatedAt ? new Date(loc.updatedAt).getTime() : 0;
+      return lastUpdateMs > 0 && Math.abs(now - lastUpdateMs) < ONLINE_THRESHOLD_MS;
+    });
+
+    const onlineIds = new Set(onlineRiders.map(r => r.riderId));
+
+    Object.keys(markersRef.current).forEach(markerId => {
+      if (!onlineIds.has(markerId)) {
+        currentMap.removeLayer(markersRef.current[markerId]);
+        delete markersRef.current[markerId];
+      }
+    });
+
+    onlineRiders.forEach(loc => {
+      if (!loc.lat || !loc.lng || isNaN(loc.lat) || isNaN(loc.lng)) return;
+
+      points.push([loc.lat, loc.lng]);
+      const riderName = loc.riderName || 'Entregador';
+      const existingMarker = markersRef.current[loc.riderId];
+
+      if (existingMarker) {
+        existingMarker.setLatLng([loc.lat, loc.lng]);
+      } else {
+        const riderIcon = L.divIcon({
+          html: `
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center;">
+              <div style="background: #0f172a; color: white; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px; white-space: nowrap; margin-bottom: 2px; border: 1px solid #334155;">
+                ${riderName}
+              </div>
+              <div style="background-color: #10b981; color: white; width: 36px; height: 36px; border-radius: 50%; border: 3px solid white; box-shadow: 0 6px 12px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="3" /><circle cx="18" cy="18" r="3" /><path d="M18 18v-3l-3-4H9l-3 4v3" /><rect x="8" y="6" width="5" height="5" rx="1" /><path d="M15 11l1.5-4.5H19" /></svg>
+              </div>
+            </div>
+          `,
+          className: 'custom-admin-rider-icon',
+          iconSize: [80, 55],
+          iconAnchor: [40, 45]
+        });
+
+        const marker = L.marker([loc.lat, loc.lng], { icon: riderIcon }).addTo(currentMap).bindPopup(`<b>${riderName}</b>`);
+        markersRef.current[loc.riderId] = marker;
+      }
+    });
+
+    if (!hasSetInitialAdminMapBoundsRef.current && points.length > 0) {
+      if (points.length >= 2) {
+        const bounds = L.latLngBounds(points);
+        currentMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+      } else if (points.length === 1) {
+        currentMap.setView(points[0], 16);
+      }
+      hasSetInitialAdminMapBoundsRef.current = true;
+    }
+  }, [activeTab, riderLocations]);
+
+  useEffect(() => {
+    deliveries.forEach(d => {
+      const prevNotes = prevNotesRef.current[d.id];
+      if (prevNotes !== undefined && d.notes && d.notes !== prevNotes) {
+        const prevLines = prevNotes ? prevNotes.split('\n') : [];
+        const currentLines = d.notes.split('\n');
+
+        if (currentLines.length > prevLines.length) {
+          const newLines = currentLines.slice(prevLines.length);
+          newLines.forEach(line => {
+            const isMe = line.includes('- Admin') || line.includes(`(${adminUser?.name})`);
+            if (!isMe) {
+              const rider = db.resolveUser(d.riderId);
+              const est = db.resolveEstablishment(d.establishmentId);
+              const sender = line.includes('- Motoboy') ? 'Motoboy' : 'Estabelecimento';
+              const messageText = line.substring(line.indexOf(']: ') + 3);
+              const title = `Mensagem de ${sender} (Pedido #${d.orderNumber || d.id.slice(-4)})`;
+              
+              sendDeviceNotification(title, `${est?.name || ''} / ${rider?.name || ''}: "${messageText}"`);
+              playNotificationSound();
+              setActiveToast({
+                id: 'admin_notes_' + Date.now(),
+                title,
+                message: messageText,
+                sender,
+                onClick: () => setNotesDeliveryId(d.id)
+              });
+            }
+          });
+        }
+      }
+      prevNotesRef.current[d.id] = d.notes || '';
+    });
+  }, [deliveries, adminUser]);
+
+  useEffect(() => {
+    schedules.forEach(s => {
+      const prevChat = prevScheduleChatRef.current[s.id];
+      if (prevChat !== undefined && s.chat && s.chat !== prevChat) {
+        const prevLines = prevChat ? prevChat.split('\n') : [];
+        const currentLines = s.chat.split('\n');
+
+        if (currentLines.length > prevLines.length) {
+          const newLines = currentLines.slice(prevLines.length);
+          newLines.forEach(line => {
+            const isMe = line.includes('- Admin') || line.includes(`(${adminUser?.name})`);
+            if (!isMe) {
+              const rider = db.resolveUser(s.riderId);
+              const est = db.resolveEstablishment(s.establishmentId);
+              const messageText = line.substring(line.indexOf(']: ') + 3);
+              const title = `Aviso no Turno (${est?.name || 'Estabelecimento'} - ${rider?.name || 'Motoboy'})`;
+              
+              sendDeviceNotification(title, `"${messageText}"`);
+              playNotificationSound();
+              setActiveToast({
+                id: 'admin_sch_' + Date.now(),
+                title,
+                message: messageText,
+                sender: rider?.name || 'Motoboy/Estabelecimento',
+                onClick: () => setActiveScheduleChatId(s.id)
+              });
+            }
+          });
+        }
+      }
+      prevScheduleChatRef.current[s.id] = s.chat || '';
+    });
+  }, [schedules, adminUser]);
+
+  useEffect(() => {
+    const handleSyncComplete = () => loadData();
+    window.addEventListener('db-sync-complete', handleSyncComplete);
+    return () => window.removeEventListener('db-sync-complete', handleSyncComplete);
+  }, []);
+
+  const handleLogout = () => {
+    db.setCurrentUser(null);
+    navigate('/login');
+  };
+
+  const handleOpenDesignateModal = (preselectedRiderId?: string, preselectedEstId?: string) => {
+    const activeRiders = users.filter(r => r.role === 'rider' && r.active);
+    setScheduleForm({
+      riderId: preselectedRiderId || (activeRiders.length > 0 ? activeRiders[0].id : ''),
+      establishmentId: preselectedEstId || '',
+      date: db.getOperationalDateString(),
+      shift: 'morning',
+      startTime: '08:00',
+      endTime: '12:00'
+    });
+    setSelectedRiderIds(preselectedRiderId ? [preselectedRiderId] : []);
+    setScheduleConflictWarning('');
+    setShowScheduleModal(true);
+  };
+
+  const handleQuickResetPassword = (userToReset: User) => {
+    const newPass = prompt(`Digite a nova senha para ${userToReset.name}:`, 'moto123');
+    if (newPass !== null && newPass.trim() !== '') {
+      const allUsers = db.getUsers();
+      const updated = allUsers.map(u => u.id === userToReset.id ? {
+        ...u,
+        passwordHash: newPass.trim(),
+        must_reset_password: true,
+        updatedAt: new Date().toISOString()
+      } : u);
+      db.setUsers(updated);
+      loadData();
+      alert(`Senha alterada com sucesso para: ${newPass.trim()}`);
+    }
+  };
+
+  const handleApproveAllPendingDeliveries = () => {
+    const pendingDels = deliveries.filter(d => d.status === 'pending');
+    if (pendingDels.length === 0) {
+      alert('Não há corridas pendentes para aprovar no momento.');
+      return;
+    }
+
+    if (confirm(`Deseja aprovar todas as ${pendingDels.length} corridas pendentes de uma só vez?`)) {
+      const allDeliveries = db.getDeliveries();
+      const pendingIds = new Set(pendingDels.map(p => p.id));
+      const updated = allDeliveries.map(d => pendingIds.has(d.id) ? {
+        ...d,
+        status: 'active' as const,
+        updatedAt: new Date().toISOString()
+      } : d);
+
+      db.setDeliveries(updated);
+      loadData();
+      alert(`${pendingDels.length} corridas aprovadas com sucesso!`);
+    }
+  };
+
+  const handleZeroOutAllDeliveries = async () => {
+    if (confirm('ATENÇÃO: Esta ação irá apagar DEFINITIVAMENTE todas as corridas e valores lançados de todos os motoboys e estabelecimentos no sistema. Deseja prosseguir?')) {
+      if (confirm('Confirme mais uma vez: deseja limpar todo o histórico de faturamento agora?')) {
+        await db.clearAllDeliveries();
+        loadData();
+        alert('Sistema zerado com sucesso! Todas as corridas foram removidas.');
+      }
+    }
+  };
+
+  const handleSaveUser = (e: React.FormEvent) => {
+    e.preventDefault();
+    const allUsers = db.getUsers();
+    const allEsts = db.getEstablishments();
+    const userCpf = userForm.role === 'establishment' ? db.generateUniqueDummyCpf() : userForm.cpf;
+
+    const duplicateCpf = allUsers.find(u => u.cpf === userCpf && (!editingUser || u.id !== editingUser.id));
+    const duplicateEmail = allUsers.find(u => u.email.toLowerCase() === userForm.email.toLowerCase() && (!editingUser || u.id !== editingUser.id));
+
+    if (userForm.role !== 'establishment' && duplicateCpf && userCpf !== '000.000.000-00') {
+      alert('Erro: CPF já cadastrado no sistema.');
+      return;
+    }
+    if (duplicateEmail) {
+      alert('Erro: E-mail já cadastrado no sistema.');
+      return;
+    }
+
+    const nowStr = new Date().toISOString();
+    let finalEstId = userForm.establishmentId;
+
+    if (userForm.role === 'establishment' && userForm.establishmentName) {
+      const existingEst = allEsts.find(e => e.name.toLowerCase() === userForm.establishmentName.toLowerCase());
+      if (existingEst) {
+        finalEstId = existingEst.id;
+      } else {
+        const newEstId = 'e_' + Date.now();
+        const newEst: Establishment = {
+          id: newEstId,
+          name: userForm.establishmentName,
+          email: userForm.email,
+          phone: userForm.phone || '',
+          active: true,
+          address: {
+            street: userForm.street || 'A definir',
+            number: userForm.number || 'S/N',
+            complement: '',
+            neighborhood: userForm.neighborhood || 'A definir',
+            city: userForm.city || 'A definir',
+            state: userForm.state || 'PB',
+            zipCode: userForm.zipCode || '00000-000'
+          },
+          updatedAt: nowStr
+        };
+        db.setEstablishments([...allEsts, newEst]);
+        finalEstId = newEstId;
+      }
+    }
+
+    if (editingUser) {
+      const updated = allUsers.map(u => u.id === editingUser.id ? {
+        ...u,
+        name: userForm.name,
+        cpf: userCpf,
+        phone: userForm.phone,
+        email: userForm.email,
+        role: userForm.role,
+        establishmentId: userForm.role === 'establishment' ? finalEstId : undefined,
+        passwordHash: userForm.password || u.passwordHash,
+        mustResetPassword: userForm.password ? true : u.mustResetPassword,
+        updatedAt: nowStr
+      } : u);
+      db.setUsers(updated);
+    } else {
+      const newUser: User = {
+        id: 'u_' + Date.now(),
+        name: userForm.name,
+        cpf: userCpf,
+        phone: userForm.phone,
+        email: userForm.email,
+        role: userForm.role,
+        active: true,
+        passwordHash: userForm.password || 'moto123',
+        establishmentId: userForm.role === 'establishment' ? finalEstId : undefined,
+        updatedAt: nowStr
+      };
+      db.setUsers([...allUsers, newUser]);
+    }
+
+    setShowUserModal(false);
+    setEditingUser(null);
+    loadData();
+  };
+
+  const handleDeleteUser = async (id: string) => {
+    if (id === adminUser?.id) {
+      alert('Erro: Você não pode excluir a si mesmo.');
+      return;
+    }
+    if (confirm('Deseja realmente excluir este usuário definitivamente?')) {
+      await db.deleteUser(id);
+      loadData();
+    }
+  };
+
+  const toggleUserStatus = (id: string) => {
+    const allUsers = db.getUsers();
+    const updated = allUsers.map(u => u.id === id ? { ...u, active: !u.active, updatedAt: new Date().toISOString() } : u);
+    db.setUsers(updated);
+    loadData();
+  };
+
+  const handleApproveRider = (id: string) => {
+    const allUsers = db.getUsers();
+    const userToApprove = allUsers.find(u => u.id === id);
+    if (!userToApprove) return;
+
+    const updatedUsers = allUsers.map(u => u.id === id ? { ...u, active: true, updatedAt: new Date().toISOString() } : u);
+    db.setUsers(updatedUsers);
+
+    loadData();
+    alert('Usuário aprovado com sucesso!');
+  };
+
+  const handleSaveEst = (e: React.FormEvent) => {
+    e.preventDefault();
+    const allEst = db.getEstablishments();
+
+    const duplicateName = allEst.find(es => es.name.toLowerCase() === estForm.name.toLowerCase() && (!editingEst || es.id !== editingEst.id));
+    if (duplicateName) {
+      alert('Erro: Já existe um estabelecimento com este nome.');
+      return;
+    }
+
+    const estId = editingEst ? editingEst.id : 'e_' + Date.now();
+    const nowStr = new Date().toISOString();
+
+    if (editingEst) {
+      const updated = allEst.map(es => es.id === editingEst.id ? {
+        ...es,
+        name: estForm.name,
+        email: estForm.email || es.email,
+        phone: estForm.phone,
+        address: {
+          street: estForm.street,
+          number: estForm.number,
+          complement: estForm.complement || '',
+          neighborhood: estForm.neighborhood,
+          city: estForm.city,
+          state: estForm.state,
+          zipCode: estForm.zipCode
+        },
+        updatedAt: nowStr
+      } : es);
+      db.setEstablishments(updated);
+    } else {
+      const newEst: Establishment = {
+        id: estId,
+        name: estForm.name,
+        email: estForm.email,
+        phone: estForm.phone,
+        active: true,
+        address: {
+          street: estForm.street,
+          number: estForm.number,
+          complement: estForm.complement || '',
+          neighborhood: estForm.neighborhood,
+          city: estForm.city,
+          state: estForm.state,
+          zipCode: estForm.zipCode
+        },
+        updatedAt: nowStr
+      };
+      db.setEstablishments([...allEst, newEst]);
+    }
+
+    setShowEstModal(false);
+    setEditingEst(null);
+    loadData();
+  };
+
+  const handleDeleteEst = async (id: string) => {
+    if (confirm('Deseja realmente excluir este estabelecimento definitivamente?')) {
+      await db.deleteEstablishment(id);
+      loadData();
+    }
+  };
+
+  const toggleEstStatus = (id: string) => {
+    const allEst = db.getEstablishments();
+    const updated = allEst.map(es => es.id === id ? { ...es, active: !es.active, updatedAt: new Date().toISOString() } : es);
+    db.setEstablishments(updated);
+    loadData();
+  };
+
+  const handleSaveSchedule = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    const riderIdsToSchedule = selectedRiderIds.length > 0 
+      ? selectedRiderIds 
+      : (scheduleForm.riderId ? [scheduleForm.riderId] : []);
+
+    if (riderIdsToSchedule.length === 0) {
+      alert('Erro: Selecione pelo menos um motoboy.');
+      return;
+    }
+
+    if (!scheduleForm.establishmentId) {
+      alert('Erro: Selecione um estabelecimento.');
+      return;
+    }
+
+    const newSchedules: Schedule[] = [];
+    const conflicts: string[] = [];
+
+    riderIdsToSchedule.forEach(rId => {
+      const rider = users.find(r => r.id === rId);
+      const conflict = schedules.find(s => s.riderId === rId && s.date === scheduleForm.date && s.shift === scheduleForm.shift);
+      
+      if (conflict) {
+        const est = establishments.find(es => es.id === conflict.establishmentId);
+        conflicts.push(`${rider?.name || 'Motoboy'} (escalado em ${est?.name || 'outro estabelecimento'})`);
+      } else {
+        newSchedules.push({
+          id: 's_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+          riderId: rId,
+          establishmentId: scheduleForm.establishmentId,
+          date: scheduleForm.date,
+          shift: scheduleForm.shift,
+          startTime: scheduleForm.startTime,
+          endTime: scheduleForm.endTime,
+          createdBy: adminUser?.name || 'Admin',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+    });
+
+    if (newSchedules.length === 0) {
+      alert(`Não foi possível criar as escalas devido a conflitos de horário para todos os motoboys selecionados:\n\n• ${conflicts.join('\n• ')}`);
+      return;
+    }
+
+    db.setSchedules([...schedules, ...newSchedules]);
+
+    setShowScheduleModal(false);
+    setSelectedRiderIds([]);
+    setScheduleConflictWarning('');
+    loadData();
+
+    if (conflicts.length > 0) {
+      alert(`${newSchedules.length} escala(s) criada(s) com sucesso!\n\nOs seguintes motoboys foram ignorados por conflito de horário:\n• ${conflicts.join('\n• ')}`);
+    } else if (newSchedules.length > 1) {
+      alert(`${newSchedules.length} escalas criadas com sucesso simultaneamente!`);
+    }
+  };
+
+  const handleCancelSchedule = async (id: string) => {
+    const schedule = schedules.find(s => s.id === id);
+    if (!schedule) return;
+
+    if (confirm('Tem certeza que deseja cancelar esta escala?')) {
+      await db.deleteSchedule(id);
+      loadData();
+    }
+  };
+
+  const buildWeeklyPreview = (form: typeof weeklyForm) => {
+    if (!form.weekStart || !form.establishmentId) return;
+
+    const [year, month, day] = form.weekStart.split('-').map(Number);
+    const monday = new Date(year, month - 1, day);
+    const allSchedules = db.getSchedules();
+
+    const targetRiders = weeklySelectedRiderIds.length > 0 ? weeklySelectedRiderIds : (form.riderId ? [form.riderId] : []);
+
+    const preview = DAY_KEYS.map((key, idx) => {
+      const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + idx);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const dateNum = String(d.getDate()).padStart(2, '0');
+      const dateStr = `${y}-${m}-${dateNum}`;
+
+      const conflict = targetRiders.some(rId => 
+        allSchedules.some(s => s.riderId === rId && s.date === dateStr && s.shift === form.shift)
+      );
+
+      return { date: dateStr, label: DAY_LABELS[idx], conflict, key, enabled: form.days[key] };
+    });
+
+    setWeeklyPreview(preview);
+    setWeeklyStep('preview');
+  };
+
+  const handleSaveWeeklySchedule = () => {
+    const allSchedules = db.getSchedules();
+    const newSchedules: Schedule[] = [];
+
+    const targetRiders = weeklySelectedRiderIds.length > 0 ? weeklySelectedRiderIds : (weeklyForm.riderId ? [weeklyForm.riderId] : []);
+    const validDays = weeklyPreview.filter(day => day.enabled);
+
+    if (validDays.length === 0 || targetRiders.length === 0) {
+      alert('Erro: NENHUM motoboy ou dia válido selecionado.');
+      return;
+    }
+
+    let createdCount = 0;
+    let conflictCount = 0;
+
+    targetRiders.forEach(rId => {
+      validDays.forEach(day => {
+        const hasConflict = allSchedules.some(s => s.riderId === rId && s.date === day.date && s.shift === weeklyForm.shift);
+        if (hasConflict) {
+          conflictCount++;
+        } else {
+          const id = 's_' + Date.now() + '_' + rId.slice(-4) + '_' + day.date;
+          newSchedules.push({
+            id,
+            riderId: rId,
+            establishmentId: weeklyForm.establishmentId,
+            date: day.date,
+            shift: weeklyForm.shift,
+            startTime: weeklyForm.startTime,
+            endTime: weeklyForm.endTime,
+            createdBy: adminUser?.name || 'Admin',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
+          createdCount++;
+        }
+      });
+    });
+
+    if (newSchedules.length > 0) {
+      db.setSchedules([...allSchedules, ...newSchedules]);
+    }
+
+    setShowWeeklyModal(false);
+    setWeeklyStep('form');
+    setWeeklySelectedRiderIds([]);
+    loadData();
+
+    alert(`${createdCount} escala(s) criada(s) com sucesso para ${targetRiders.length} motoboy(s)!${conflictCount > 0 ? ` (${conflictCount} ignoradas por conflito)` : ''}`);
+  };
+
+  const handleSaveDelivery = (e: React.FormEvent) => {
+    e.preventDefault();
+    const val = parseFloat(deliveryForm.value);
+    if (isNaN(val) || val <= 0) {
+      alert('Erro: O valor da corrida deve ser maior que zero.');
+      return;
+    }
+
+    const activeSchedule = schedules.find(s => s.riderId === deliveryForm.riderId && s.establishmentId === deliveryForm.establishmentId && s.date === deliveryForm.date);
+    const nowStr = new Date().toISOString();
+
+    if (editingDelivery) {
+      const updated = deliveries.map(d => d.id === editingDelivery.id ? {
+        ...d,
+        riderId: deliveryForm.riderId,
+        establishmentId: deliveryForm.establishmentId,
+        date: deliveryForm.date,
+        time: deliveryForm.time,
+        value: val,
+        scheduleId: activeSchedule?.id || d.scheduleId,
+        orderNumber: deliveryForm.orderNumber.trim() || undefined,
+        notes: deliveryForm.notes.trim() || undefined,
+        updatedAt: nowStr
+      } : d);
+      db.setDeliveries(updated);
+    } else {
+      const newDelivery: Delivery = {
+        id: 'd_' + Date.now(),
+        riderId: deliveryForm.riderId,
+        establishmentId: deliveryForm.establishmentId,
+        date: deliveryForm.date,
+        time: deliveryForm.time,
+        value: val,
+        status: 'active',
+        scheduleId: activeSchedule?.id,
+        orderNumber: deliveryForm.orderNumber.trim() || undefined,
+        notes: deliveryForm.notes.trim() || undefined,
+        updatedAt: nowStr,
+        paid: false
+      };
+      db.setDeliveries([...deliveries, newDelivery]);
+    }
+
+    setShowDeliveryModal(false);
+    setEditingDelivery(null);
+    loadData();
+  };
+
+  const handleDeleteDelivery = async (id: string) => {
+    if (confirm('Deseja realmente excluir esta corrida definitivamente do banco de dados?')) {
+      await db.deleteDelivery(id);
+      loadData();
+    }
+  };
+
+  const handleRestoreDelivery = (id: string) => {
+    const allDeliveries = db.getDeliveries();
+    const updated = allDeliveries.map(d =>
+      d.id === id && d.status === 'lost'
+        ? { ...d, status: 'pending' as const, lostAt: undefined, lostReason: undefined, updatedAt: new Date().toISOString() }
+        : d
+    );
+    db.setDeliveries(updated);
+    loadData();
+  };
+
+  const handleApproveDelivery = (id: string) => {
+    const updated = deliveries.map(d => d.id === id ? { ...d, status: 'active' as const, updatedAt: new Date().toISOString() } : d);
+    db.setDeliveries(updated);
+    loadData();
+  };
+
+  const handleRejectDelivery = (id: string) => {
+    const reason = prompt('Digite o motivo da rejeição:');
+    if (reason !== null) {
+      const updated = deliveries.map(d => d.id === id ? { ...d, status: 'rejected' as const, notes: reason, updatedAt: new Date().toISOString() } : d);
+      db.setDeliveries(updated);
+      loadData();
+    }
+  };
+
+  const handleContactRequest = (request: PartnerRequest) => {
+    const cleanPhone = request.phone.replace(/\D/g, '');
+    const formattedPhone = cleanPhone.startsWith('55') ? cleanPhone : `55${cleanPhone}`;
+    const message = encodeURIComponent(`Olá ${request.ownerName}! Recebemos sua solicitação de parceria para o estabelecimento ${request.establishmentName} no MotoHub.`);
+    window.open(`https://wa.me/${formattedPhone}?text=${message}`, '_blank');
+  };
+
+  const handleApproveRequest = (req: PartnerRequest) => {
+    const allEsts = db.getEstablishments();
+    const est = allEsts.find(e => e.name.toLowerCase().trim() === req.establishmentName.toLowerCase().trim());
+    if (est) {
+      const updatedEsts = allEsts.map(e => e.id === est.id ? { ...e, active: true, updatedAt: new Date().toISOString() } : e);
+      db.setEstablishments(updatedEsts);
+      
+      loadData();
+      alert('Solicitação aprovada com sucesso!');
+    } else {
+      alert('Erro: Estabelecimento correspondente não encontrado.');
+    }
+  };
+
+  const handleDeleteRequest = async (id: string) => {
+    if (confirm('Deseja realmente excluir esta solicitação?')) {
+      await db.deletePartnerRequest(id);
+      loadData();
+    }
+  };
+
+  const handleSettleRiderDeliveries = (riderId: string) => {
+    if (confirm('Deseja realmente dar baixa e marcar todas as corridas ativas deste motoboy como pagas?')) {
+      const updated = deliveries.map(d => d.riderId === riderId && d.status === 'active' ? { ...d, paid: true, updatedAt: new Date().toISOString() } : d);
+      db.setDeliveries(updated);
+      loadData();
+    }
+  };
+
+  const handleSettleEstDeliveries = (estId: string) => {
+    if (confirm('Deseja realmente dar baixa e marcar todas as corridas ativas deste estabelecimento como pagas?')) {
+      const updated = deliveries.map(d => d.establishmentId === estId && d.status === 'active' ? { ...d, paid: true, updatedAt: new Date().toISOString() } : d);
+      db.setDeliveries(updated);
+      loadData();
+    }
+  };
+
+  const handleSaveNotes = (deliveryId: string, updatedNotes: string) => {
+    const allDeliveries = db.getDeliveries();
+    const updated = allDeliveries.map(d => d.id === deliveryId ? {
+      ...d,
+      notes: updatedNotes,
+      updatedAt: new Date().toISOString()
+    } : d);
+    db.setDeliveries(updated);
+    loadData();
+  };
+
+  const handleSaveScheduleChat = (scheduleId: string, updatedChat: string) => {
+    const allSchedules = db.getSchedules();
+    const updated = allSchedules.map(s => s.id === scheduleId ? {
+      ...s,
+      chat: updatedChat,
+      updatedAt: new Date().toISOString()
+    } : s);
+    db.setSchedules(updated);
+    loadData();
+  };
+
+  const getFilteredReportData = () => {
+    let start = new Date();
+    let end = new Date();
+    if (reportPeriod === 'daily') {
+      const opDateStr = db.getOperationalDateString();
+      start = new Date(opDateStr + 'T00:00:00');
+      end = new Date(opDateStr + 'T23:59:59');
+    } else if (reportPeriod === 'weekly') {
+      const day = start.getDay();
+      const diff = start.getDate() - day + (day === 0 ? -6 : 1);
+      start = new Date(start.setDate(diff));
+      start.setHours(0,0,0,0);
+    } else if (reportPeriod === 'monthly') {
+      start = new Date(start.getFullYear(), start.getMonth(), 1);
+    } else if (reportPeriod === 'custom' && customStartDate && customEndDate) {
+      start = new Date(customStartDate + 'T00:00:00');
+      end = new Date(customEndDate + 'T23:59:59');
+    }
+
+    const riders = users.filter(u => u.role === 'rider');
+    if (reportType === 'earnings') {
+      const summary: any = {};
+      riders.forEach(r => { summary[r.id] = { name: r.name, total: 0, count: 0 }; });
+      deliveries.filter(d => d.status === 'active').forEach(d => {
+        const dDate = new Date(d.date + 'T00:00:00');
+        if (dDate >= start && dDate <= end && summary[d.riderId]) {
+          summary[d.riderId].total += d.value;
+          summary[d.riderId].count += 1;
+        }
+      });
+      return Object.values(summary);
+    } else if (reportType === 'deliveries') {
+      const summary: any = {};
+      riders.forEach(r => { summary[r.id] = { name: r.name, count: 0, cancelled: 0 }; });
+      deliveries.forEach(d => {
+        const dDate = new Date(d.date + 'T00:00:00');
+        if (dDate >= start && dDate <= end && summary[d.riderId]) {
+          if (d.status === 'active') summary[d.riderId].count += 1;
+          else summary[d.riderId].cancelled += 1;
+        }
+      });
+      return Object.values(summary);
+    } else {
+      const summary: any = {};
+      establishments.forEach(e => { summary[e.id] = { name: e.name, count: 0 }; });
+      schedules.forEach(s => {
+        const sDate = new Date(s.date + 'T00:00:00');
+        const dDate = sDate;
+        if (sDate >= start && dDate <= end && summary[s.establishmentId]) {
+          summary[s.establishmentId].count += 1;
+        }
+      });
+      return Object.values(summary);
+    }
+  };
+
+  const exportToCSV = () => {
+    const data = getFilteredReportData();
+    let csvContent = "data:text/csv;charset=utf-8,";
+    if (reportType === 'earnings') {
+      csvContent += "Motoboy,Total Faturado (R$),Quantidade de Corridas\n";
+      data.forEach((row: any) => { csvContent += `"${row.name}",${row.total.toFixed(2)},${row.count}\n`; });
+    } else if (reportType === 'deliveries') {
+      csvContent += "Motoboy,Corridas Ativas,Corridas Canceladas\n";
+      data.forEach((row: any) => { csvContent += `"${row.name}",${row.count},${row.cancelled}\n`; });
+    } else {
+      csvContent += "Estabelecimento,Total de Escalas\n";
+      data.forEach((row: any) => { csvContent += `"${row.name}",${row.count}\n`; });
+    }
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `relatorio_${reportType}_${reportPeriod}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const togglePasswordVisibility = (userId: string) => {
+    setVisiblePasswords(prev => ({ ...prev, [userId]: !prev[userId] }));
+  };
+
+  const filteredUsers = users.filter(u => {
+    const matchesSearch = u.name.toLowerCase().includes(searchQuery.toLowerCase()) || u.cpf.includes(searchQuery) || u.email.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesStatus = statusFilter === 'all' || (statusFilter === 'active' && u.active) || (statusFilter === 'inactive' && !u.active);
+    const matchesRole = roleFilter === 'all' || u.role === roleFilter;
+    return matchesSearch && matchesStatus && matchesRole;
+  });
+
+  const filteredEsts = establishments.filter(e => {
+    const matchesSearch = e.name.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesStatus = statusFilter === 'all' || (statusFilter === 'active' && e.active) || (statusFilter === 'inactive' && !e.active);
+    return matchesSearch && matchesStatus;
+  });
+
+  const filteredRequests = partnerRequests.filter(r => {
+    const matchesSearch = r.establishmentName.toLowerCase().includes(searchQuery.toLowerCase()) || r.ownerName.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesStatus = requestStatusFilter === 'all' || r.status === requestStatusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
+  const todayStr = db.getOperationalDateString();
   const filteredAndSortedSchedules = schedules
     .filter(s => {
       const rider = users.find(u => u.id === s.riderId);
@@ -1954,7 +3273,7 @@ export default function AdminDashboard() {
                       className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
                     >
                       <option value="all">Todas as Datas</option>
-                      <option value="today">Somente Hoje</option>
+                      <option value="today">Somente Hoje (Turno Atual)</option>
                       <option value="upcoming">Escalas Futuras</option>
                       <option value="past">Concluídas / Passadas</option>
                     </select>
@@ -2088,7 +3407,7 @@ export default function AdminDashboard() {
                   <button
                     onClick={() => {
                       setEditingDelivery(null);
-                      setDeliveryForm({ riderId: '', establishmentId: '', date: db.getLocalDateString(), time: new Date().toTimeString().slice(0,5), value: '', orderNumber: '', notes: '' });
+                      setDeliveryForm({ riderId: '', establishmentId: '', date: db.getOperationalDateString(), time: new Date().toTimeString().slice(0,5), value: '', orderNumber: '', notes: '' });
                       setShowDeliveryModal(true);
                     }}
                     className="flex items-center justify-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-md hover:shadow-lg"
@@ -2149,7 +3468,6 @@ export default function AdminDashboard() {
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-                  {/* Busca textual por Pedido/Nome */}
                   <div className="lg:col-span-2">
                     <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Buscar por Nº do Pedido, Motoboy ou Loja</label>
                     <div className="relative">
@@ -2259,7 +3577,7 @@ export default function AdminDashboard() {
               ) : (
                 <div className="divide-y divide-slate-100">
                   {filteredAndSortedDeliveries.map(del => {
-                    const rider = users.find(r => r.id === del.riderId);
+                    const rider = users.find(u => u.id === del.riderId);
                     const est = establishments.find(e => e.id === del.establishmentId);
                     const isPending = del.status === 'pending';
                     const hasNotes = Boolean(del.notes && del.notes.trim());
