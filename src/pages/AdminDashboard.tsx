@@ -38,7 +38,8 @@ import {
   EyeOff,
   LocateFixed,
   RotateCcw,
-  RotateCw
+  RotateCw,
+  Sparkles
 } from 'lucide-react';
 
 import L from 'leaflet';
@@ -474,6 +475,12 @@ export default function AdminDashboard() {
       loadData();
       alert(`Senha alterada com sucesso para: ${newPass.trim()}`);
     }
+  };
+
+  const handleRunIntelligentSync = () => {
+    const res = db.normalizeAndLinkHistoricalDeliveries();
+    loadData();
+    alert(`✨ Vinculação Inteligente Concluída!\n\n• ${res.updatedCount} corrida(s) re-alinhadas ao turno operacional correspondente.\n• ${res.linkedSchedulesCount} novo(s) vínculos de escala atribuídos.`);
   };
 
   const handleApproveAllPendingDeliveries = () => {
@@ -1379,15 +1386,16 @@ export default function AdminDashboard() {
               <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
                 <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                   <RotateCcw className="h-4 w-4 text-red-600" />
-                  <span>Ações de Manutenção do Sistema</span>
+                  <span>Ações de Manutenção e Vinculação Inteligente</span>
                 </h3>
                 <div className="flex flex-wrap gap-3">
                   <button
-                    onClick={handleZeroOutAllDeliveries}
-                    className="flex items-center space-x-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-4 py-3 rounded-xl text-xs font-black transition-all shadow-sm"
+                    onClick={handleRunIntelligentSync}
+                    className="flex items-center space-x-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-300 px-4 py-3 rounded-xl text-xs font-black transition-all shadow-sm"
+                    title="Alinha todas as corridas da madrugada (00h-04h) com a escala da noite anterior e vincula IDs"
                   >
-                    <Trash2 className="h-4 w-4" />
-                    <span>ZERAR TODAS AS CORRIDAS E VALORES</span>
+                    <Sparkles className="h-4 w-4 text-indigo-600" />
+                    <span>RE-VINCULAR CORRIDAS & ESCALAS RETROATIVAS</span>
                   </button>
 
                   <button
@@ -1397,8 +1405,16 @@ export default function AdminDashboard() {
                     <CheckCheck className="h-4 w-4" />
                     <span>APROVAR TODAS AS PENDENTES</span>
                   </button>
+
+                  <button
+                    onClick={handleZeroOutAllDeliveries}
+                    className="flex items-center space-x-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-4 py-3 rounded-xl text-xs font-black transition-all shadow-sm"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    <span>ZERAR TODAS AS CORRIDAS E VALORES</span>
+                  </button>
                 </div>
-                <p className="text-[10px] text-slate-400 font-medium">Nota: "Zerar Corridas" limpa todos os registros de entregas e zera os saldos de motoboys e lojas instantaneamente em todo o sistema.</p>
+                <p className="text-[10px] text-slate-400 font-medium">Nota: O botão "Re-vincular Corridas & Escalas Retroativas" verifica todo o histórico e ajusta corridas passadas lançadas de madrugada (00:00 - 03:59) para pertencerem à escala noturna da véspera.</p>
               </div>
 
               {pendingDeliveries.length > 0 && (
@@ -1420,8 +1436,8 @@ export default function AdminDashboard() {
                             <p className="text-[11px] text-slate-500">{del.date} às {del.time} • R$ {del.value.toFixed(2)}</p>
                           </div>
                           <div className="flex items-center space-x-2">
-                            <button onClick={() => handleApproveDelivery(del.id)} className="px-2.5 py-1 bg-emerald-600 text-white rounded text-xs font-bold hover:bg-emerald-700">Aprovar</button>
-                            <button onClick={() => handleRejectDelivery(del.id)} className="px-2.5 py-1 bg-red-100 text-red-700 rounded text-xs font-bold hover:bg-red-200">Rejeitar</button>
+                            <button onClick={() => handleApproveDelivery(del.id)} className="px-2.5 py-1.5 bg-emerald-600 text-white rounded text-xs font-bold hover:bg-emerald-700">Aprovar</button>
+                            <button onClick={() => handleRejectDelivery(del.id)} className="px-2.5 py-1.5 bg-red-100 text-red-700 rounded text-xs font-bold hover:bg-red-200">Rejeitar</button>
                           </div>
                         </div>
                       );

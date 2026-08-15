@@ -922,6 +922,80 @@ export const db = {
     return this.getLocalDateString(d);
   },
 
+  // Vinculação Inteligente Retroativa: Normaliza corridas lançadas de madrugada
+  // associando-as à escala e data do turno que começou na noite anterior.
+  normalizeAndLinkHistoricalDeliveries(): { updatedCount: number; linkedSchedulesCount: number } {
+    const deliveries = this.getDeliveries();
+    const schedules = this.getSchedules();
+    let updatedCount = 0;
+    let linkedSchedulesCount = 0;
+
+    const updatedDeliveries = deliveries.map(d => {
+      let isModified = false;
+      let targetDate = d.date;
+      let targetScheduleId = d.scheduleId;
+
+      // Se a corrida ocorreu de madrugada (00:00 - 03:59)
+      const hour = parseInt((d.time || '12:00').split(':')[0], 10);
+      if (hour >= 0 && hour < 4) {
+        const [y, m, day] = d.date.split('-').map(Number);
+        const prevDay = new Date(y, m - 1, day);
+        prevDay.setDate(prevDay.getDate() - 1);
+        const prevDayStr = this.getLocalDateString(prevDay);
+
+        // Verifica se há escala no dia anterior (turno da noite)
+        const matchingSchedule = schedules.find(s => 
+          this.isSameUser(s.riderId, d.riderId) &&
+          this.isSameEstablishment(s.establishmentId, d.establishmentId) &&
+          (isSameDayString(s.date, prevDayStr) || isSameDayString(s.date, d.date))
+        );
+
+        if (matchingSchedule) {
+          if (targetDate !== matchingSchedule.date) {
+            targetDate = matchingSchedule.date;
+            isModified = true;
+          }
+          if (targetScheduleId !== matchingSchedule.id) {
+            targetScheduleId = matchingSchedule.id;
+            linkedSchedulesCount++;
+            isModified = true;
+          }
+        }
+      } else {
+        // Horário normal: se ainda não tem scheduleId, tenta vincular à escala ativa correspondente
+        if (!targetScheduleId) {
+          const matchingSchedule = schedules.find(s => 
+            this.isSameUser(s.riderId, d.riderId) &&
+            this.isSameEstablishment(s.establishmentId, d.establishmentId) &&
+            isSameDayString(s.date, d.date)
+          );
+          if (matchingSchedule) {
+            targetScheduleId = matchingSchedule.id;
+            linkedSchedulesCount++;
+            isModified = true;
+          }
+        }
+      }
+
+      if (isModified) {
+        updatedCount++;
+        return {
+          ...d,
+          date: targetDate,
+          scheduleId: targetScheduleId,
+          updatedAt: new Date().toISOString()
+        };
+      }
+      return d;
+    });
+
+    if (updatedCount > 0) {
+      this.setDeliveries(updatedDeliveries);
+    }
+
+    return { updatedCount, linkedSchedulesCount };
+  },
+
   resolveUser(id: string): User | undefined {
     if (!id) return undefined;
     const users = this.getUsers();
@@ -1329,6 +1403,9 @@ export const db = {
     } catch (err) {
       console.warn('Erro ao sincronizar tabela "rider_locations":', err);
     }
+
+    // Executa a normalização e vinculação retroativa após puxar os dados mais recentes
+    this.normalizeAndLinkHistoricalDeliveries();
 
     window.dispatchEvent(new Event('db-sync-complete'));
   }
