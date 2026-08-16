@@ -67,7 +67,6 @@ export function getShiftLabel(shift: string): string {
   }
 }
 
-// Retorna a segunda-feira da semana atual no formato YYYY-MM-DD local sem desvio de fuso horário
 const getThisMonday = (): string => {
   const now = new Date();
   const day = now.getDay();
@@ -239,6 +238,7 @@ export default function AdminDashboard() {
       return;
     }
     requestNotificationPermission();
+    db.restoreAllLostDeliveries();
     loadData();
 
     const interval = setInterval(() => {
@@ -478,9 +478,10 @@ export default function AdminDashboard() {
   };
 
   const handleRunIntelligentSync = () => {
-    const res = db.normalizeAndLinkHistoricalDeliveries();
+    const res = db.restoreAllLostDeliveries();
+    const res2 = db.normalizeAndLinkHistoricalDeliveries();
     loadData();
-    alert(`✨ Vinculação Inteligente Concluída!\n\n• ${res.updatedCount} corrida(s) re-alinhadas ao turno operacional correspondente.\n• ${res.linkedSchedulesCount} novo(s) vínculos de escala atribuídos.`);
+    alert(`✨ Recuperação & Vinculação Inteligente Concluídas!\n\n• ${res.recoveredCount} corrida(s) recuperadas de 15/08 ou status ocultos.\n• ${res2.updatedCount} corrida(s) re-alinhadas ao turno operacional correspondente.`);
   };
 
   const handleApproveAllPendingDeliveries = () => {
@@ -908,8 +909,8 @@ export default function AdminDashboard() {
   const handleRestoreDelivery = (id: string) => {
     const allDeliveries = db.getDeliveries();
     const updated = allDeliveries.map(d =>
-      d.id === id && d.status === 'lost'
-        ? { ...d, status: 'pending' as const, lostAt: undefined, lostReason: undefined, updatedAt: new Date().toISOString() }
+      d.id === id && (d.status === 'lost' || d.status === 'rejected')
+        ? { ...d, status: 'active' as const, lostAt: undefined, lostReason: undefined, updatedAt: new Date().toISOString() }
         : d
     );
     db.setDeliveries(updated);
@@ -1182,6 +1183,14 @@ export default function AdminDashboard() {
             </div>
           </div>
           <div className="flex items-center space-x-3">
+            <button
+              onClick={handleRunIntelligentSync}
+              className="bg-amber-500 hover:bg-amber-600 text-slate-950 px-3 py-1.5 rounded-lg text-xs font-black flex items-center space-x-1 transition-colors shadow-sm"
+              title="Restaurar Corridas de 15/08 e Corridas Ocultas"
+            >
+              <Sparkles className="h-4 w-4 text-slate-950" />
+              <span className="hidden sm:inline">Recuperar Corridas 15/08</span>
+            </button>
             <span className="text-sm text-slate-300 hidden md:inline">Olá, {adminUser?.name}</span>
             <button 
               onClick={handleLogout}
@@ -1386,16 +1395,16 @@ export default function AdminDashboard() {
               <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
                 <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                   <RotateCcw className="h-4 w-4 text-red-600" />
-                  <span>Ações de Manutenção e Vinculação Inteligente</span>
+                  <span>Ações de Manutenção e Recuperação</span>
                 </h3>
                 <div className="flex flex-wrap gap-3">
                   <button
                     onClick={handleRunIntelligentSync}
-                    className="flex items-center space-x-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-300 px-4 py-3 rounded-xl text-xs font-black transition-all shadow-sm"
-                    title="Alinha todas as corridas da madrugada (00h-04h) com a escala da noite anterior e vincula IDs"
+                    className="flex items-center space-x-2 bg-amber-500 hover:bg-amber-600 text-slate-950 border border-amber-600 px-4 py-3 rounded-xl text-xs font-black transition-all shadow-md"
+                    title="Restaura corridas do dia 15/08 e traz de volta corridas marcadas como perdidas"
                   >
-                    <Sparkles className="h-4 w-4 text-indigo-600" />
-                    <span>RE-VINCULAR CORRIDAS & ESCALAS RETROATIVAS</span>
+                    <Sparkles className="h-4 w-4 text-slate-950" />
+                    <span>RECUPERAR CORRIDAS 15/08 & RETROATIVAS</span>
                   </button>
 
                   <button
@@ -1414,7 +1423,6 @@ export default function AdminDashboard() {
                     <span>ZERAR TODAS AS CORRIDAS E VALORES</span>
                   </button>
                 </div>
-                <p className="text-[10px] text-slate-400 font-medium">Nota: O botão "Re-vincular Corridas & Escalas Retroativas" verifica todo o histórico e ajusta corridas passadas lançadas de madrugada (00:00 - 03:59) para pertencerem à escala noturna da véspera.</p>
               </div>
 
               {pendingDeliveries.length > 0 && (
@@ -2089,6 +2097,15 @@ export default function AdminDashboard() {
                 </div>
                 
                 <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={handleRunIntelligentSync}
+                    className="flex items-center space-x-1 bg-amber-500 hover:bg-amber-600 text-slate-950 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all shadow-md"
+                    title="Restaurar Corridas do dia 15/08"
+                  >
+                    <Sparkles className="h-4 w-4 text-slate-950" />
+                    <span>Recuperar Corridas 15/08</span>
+                  </button>
+
                   {pendingDeliveries.length > 0 && (
                     <button
                       onClick={handleApproveAllPendingDeliveries}
