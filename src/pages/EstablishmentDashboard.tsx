@@ -23,7 +23,9 @@ import {
   Calendar,
   Filter,
   Layers,
-  Sparkles
+  Sparkles,
+  Hash,
+  FileText
 } from 'lucide-react';
 import L from 'leaflet';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
@@ -44,7 +46,7 @@ export default function EstablishmentDashboard() {
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // --- FILTRO DE TURNO INTELIGENTE POR DATA (ESTABELECIMENTO) ---
+  // --- FILTROS DE CORRIDAS (ESTABELECIMENTO) ---
   const [filterMode, setFilterMode] = useState<'smart_shift' | 'date_range' | 'all'>('smart_shift');
   const [smartDate, setSmartDate] = useState<string>(db.getOperationalDateString());
   const [smartPeriod, setSmartPeriod] = useState<'all_shifts' | 'night_shift' | 'morning_shift' | 'afternoon_shift'>('all_shifts');
@@ -53,6 +55,8 @@ export default function EstablishmentDashboard() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
+  const [orderNumberFilter, setOrderNumberFilter] = useState<string>('');
+  const [notesFilter, setNotesFilter] = useState<'all' | 'with_notes' | 'without_notes'>('all');
   const [sortOrder, setSortOrder] = useState<'recent' | 'oldest' | 'highest_value'>('recent');
 
   // Modais de chat e corrida
@@ -467,6 +471,19 @@ export default function EstablishmentDashboard() {
 
   const filteredDeliveries = deliveries
     .filter(d => {
+      // Filtro de Observações
+      const hasNotes = Boolean(d.notes && d.notes.trim().length > 0);
+      if (notesFilter === 'with_notes' && !hasNotes) return false;
+      if (notesFilter === 'without_notes' && hasNotes) return false;
+
+      // Filtro por Número da Corrida / Pedido
+      if (orderNumberFilter.trim()) {
+        const cleanTarget = orderNumberFilter.trim().toLowerCase().replace('#', '');
+        const orderNum = (d.orderNumber || '').toLowerCase().replace('#', '');
+        const delId = d.id.toLowerCase();
+        if (!orderNum.includes(cleanTarget) && !delId.includes(cleanTarget)) return false;
+      }
+
       if (riderFilter !== 'all' && d.riderId !== riderFilter) return false;
       if (statusFilter !== 'all' && d.status !== statusFilter) return false;
 
@@ -688,7 +705,7 @@ export default function EstablishmentDashboard() {
               </button>
             </div>
 
-            {/* PAINEL DE FILTRO DE TURNO INTELIGENTE (ESTABELECIMENTO) */}
+            {/* PAINEL DE FILTRO DE TURNO INTELIGENTE, NÚMERO DO PEDIDO E OBSERVAÇÕES */}
             <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/70 pb-2.5">
                 <p className="text-xs font-black uppercase text-indigo-900 flex items-center gap-1.5 tracking-wider">
@@ -784,7 +801,41 @@ export default function EstablishmentDashboard() {
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1 border-t border-slate-200">
+              {/* FILTRO POR NÚMERO DO PEDIDO, OBSERVAÇÕES, MOTOBOY E STATUS */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1 border-t border-slate-200">
+                <div>
+                  <label className="block text-[10px] font-bold text-indigo-700 uppercase mb-1 flex items-center gap-1">
+                    <Hash className="h-3 w-3" />
+                    <span>Nº da Corrida / Pedido</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Ex: 1042"
+                      value={orderNumberFilter}
+                      onChange={(e) => setOrderNumberFilter(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 border border-indigo-200 bg-indigo-50/50 rounded-lg text-xs font-bold text-indigo-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <Hash className="h-3.5 w-3.5 text-indigo-400 absolute left-2.5 top-2.5" />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-amber-700 uppercase mb-1 flex items-center gap-1">
+                    <FileText className="h-3 w-3" />
+                    <span>Filtro de Observações</span>
+                  </label>
+                  <select
+                    value={notesFilter}
+                    onChange={(e) => setNotesFilter(e.target.value as any)}
+                    className="w-full px-2.5 py-1.5 border border-amber-300 bg-amber-50/50 rounded-lg text-xs font-bold text-amber-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  >
+                    <option value="all">Todas as Corridas</option>
+                    <option value="with_notes">💬 Somente COM Observações</option>
+                    <option value="without_notes">Sem Observações</option>
+                  </select>
+                </div>
+
                 <div>
                   <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Motoboy</label>
                   <select
@@ -814,8 +865,10 @@ export default function EstablishmentDashboard() {
                     <option value="cancelled">Canceladas</option>
                   </select>
                 </div>
+              </div>
 
-                <div>
+              <div className="pt-1 flex justify-end">
+                <div className="w-full sm:w-64">
                   <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Ordenação</label>
                   <select
                     value={sortOrder}

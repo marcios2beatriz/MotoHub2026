@@ -39,7 +39,9 @@ import {
   RotateCcw,
   RotateCw,
   Sparkles,
-  Layers
+  Layers,
+  Hash,
+  FileText
 } from 'lucide-react';
 
 import L from 'leaflet';
@@ -109,7 +111,7 @@ export default function AdminDashboard() {
   const [schSpecificDate, setSchSpecificDate] = useState<string>('');
   const [schSortOrder, setSchSortOrder] = useState<'date_desc' | 'date_asc' | 'rider_name' | 'est_name'>('date_desc');
 
-  // --- FILTRO DE TURNO INTELIGENTE POR DATA NAS CORRIDAS (ADMIN) ---
+  // --- FILTRO DE CORRIDAS (ADMIN) ---
   const [delFilterMode, setDelFilterMode] = useState<'smart_shift' | 'date_range' | 'all'>('smart_shift');
   const [delSmartDate, setDelSmartDate] = useState<string>(db.getOperationalDateString());
   const [delSmartPeriod, setDelSmartPeriod] = useState<'all_shifts' | 'night_shift' | 'morning_shift' | 'afternoon_shift'>('all_shifts');
@@ -120,6 +122,8 @@ export default function AdminDashboard() {
   const [delDateFrom, setDelDateFrom] = useState<string>('');
   const [delDateTo, setDelDateTo] = useState<string>('');
   const [delSearchQuery, setDelSearchQuery] = useState<string>('');
+  const [delOrderNumberFilter, setDelOrderNumberFilter] = useState<string>('');
+  const [delNotesFilter, setDelNotesFilter] = useState<'all' | 'with_notes' | 'without_notes'>('all');
   const [delSortOrder, setDelSortOrder] = useState<'date_desc' | 'date_asc' | 'value_desc' | 'value_asc' | 'rider_name' | 'est_name'>('date_desc');
 
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
@@ -476,12 +480,6 @@ export default function AdminDashboard() {
       loadData();
       alert(`Senha alterada com sucesso para: ${newPass.trim()}`);
     }
-  };
-
-  const handleRunIntelligentSync = () => {
-    const res = db.restoreAllLostDeliveries();
-    loadData();
-    alert(`✨ Sincronização concluída!\n\n${res.recoveredCount} corrida(s) sincronizadas.`);
   };
 
   const handleApproveAllPendingDeliveries = () => {
@@ -1125,12 +1123,26 @@ export default function AdminDashboard() {
     })
     .sort((a, b) => b.date.localeCompare(a.date));
 
-  // --- FILTRO DE CORRIDAS COM TURNO INTELIGENTE (ADMIN) ---
+  // --- FILTRO DE CORRIDAS COM BUSCA POR NÚMERO E OBSERVAÇÃO (ADMIN) ---
   const filteredAndSortedDeliveries = deliveries
     .filter(d => {
       const rider = users.find(u => u.id === d.riderId);
       const est = establishments.find(e => e.id === d.establishmentId);
 
+      // Filtro de Observações
+      const hasNotes = Boolean(d.notes && d.notes.trim().length > 0);
+      if (delNotesFilter === 'with_notes' && !hasNotes) return false;
+      if (delNotesFilter === 'without_notes' && hasNotes) return false;
+
+      // Filtro Exclusivo por Número do Pedido
+      if (delOrderNumberFilter.trim()) {
+        const cleanTarget = delOrderNumberFilter.trim().toLowerCase().replace('#', '');
+        const orderNum = (d.orderNumber || '').toLowerCase().replace('#', '');
+        const delId = d.id.toLowerCase();
+        if (!orderNum.includes(cleanTarget) && !delId.includes(cleanTarget)) return false;
+      }
+
+      // Busca Geral (Texto, Nome, Estabelecimento)
       if (delSearchQuery) {
         const q = delSearchQuery.toLowerCase().trim();
         const orderNum = (d.orderNumber || '').toLowerCase();
@@ -2027,7 +2039,7 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* CORRIDAS - COM PAINEL DE FILTRO DE TURNO INTELIGENTE (ADMIN) */}
+          {/* CORRIDAS - COM FILTROS DE NÚMERO DO PEDIDO E OBSERVAÇÕES */}
           {activeTab === 'deliveries' && (
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
@@ -2071,7 +2083,7 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
-              {/* CARD DE FILTRO DE TURNO E PERÍODO (TURNO INTELIGENTE NO ADMIN) */}
+              {/* CARD DE FILTRO DE TURNO, NÚMERO DO PEDIDO E OBSERVAÇÕES */}
               <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/70 pb-2.5">
                   <p className="text-xs font-black uppercase text-indigo-900 flex items-center gap-1.5 tracking-wider">
@@ -2167,19 +2179,41 @@ export default function AdminDashboard() {
                   </div>
                 )}
 
+                {/* FILTROS ADICIONAIS: NÚMERO DO PEDIDO, OBSERVAÇÕES E BUSCA */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1 border-t border-slate-200">
-                  <div className="lg:col-span-2">
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Buscar por Pedido / Nome</label>
+                  {/* Busca por Número do Pedido */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-indigo-700 uppercase mb-1 flex items-center gap-1">
+                      <Hash className="h-3 w-3" />
+                      <span>Nº da Corrida / Pedido</span>
+                    </label>
                     <div className="relative">
                       <input
                         type="text"
-                        placeholder="Ex: #1042, João, Burgrill..."
-                        value={delSearchQuery}
-                        onChange={(e) => setDelSearchQuery(e.target.value)}
-                        className="w-full pl-8 pr-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        placeholder="Ex: 1042"
+                        value={delOrderNumberFilter}
+                        onChange={(e) => setDelOrderNumberFilter(e.target.value)}
+                        className="w-full pl-8 pr-3 py-1.5 border border-indigo-200 bg-indigo-50/50 rounded-lg text-xs font-bold text-indigo-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                       />
-                      <Search className="h-3.5 w-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                      <Hash className="h-3.5 w-3.5 text-indigo-400 absolute left-2.5 top-2.5" />
                     </div>
+                  </div>
+
+                  {/* Filtro de Observações */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-amber-700 uppercase mb-1 flex items-center gap-1">
+                      <FileText className="h-3 w-3" />
+                      <span>Filtro de Observações</span>
+                    </label>
+                    <select
+                      value={delNotesFilter}
+                      onChange={(e) => setDelNotesFilter(e.target.value as any)}
+                      className="w-full px-2.5 py-1.5 border border-amber-300 bg-amber-50/50 rounded-lg text-xs font-bold text-amber-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    >
+                      <option value="all">Todas as Corridas</option>
+                      <option value="with_notes">💬 Somente COM Observações</option>
+                      <option value="without_notes">Sem Observações</option>
+                    </select>
                   </div>
 
                   <div>
@@ -2211,7 +2245,21 @@ export default function AdminDashboard() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 border-t border-slate-200">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1 border-t border-slate-200">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Buscar por Nome / Loja</label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Ex: João, Burgrill..."
+                        value={delSearchQuery}
+                        onChange={(e) => setDelSearchQuery(e.target.value)}
+                        className="w-full pl-8 pr-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                      <Search className="h-3.5 w-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                    </div>
+                  </div>
+
                   <div>
                     <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Status da Corrida</label>
                     <select
