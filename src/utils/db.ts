@@ -70,8 +70,8 @@ export interface Delivery {
   customerChat?: string; // Chat com o cliente final
   updatedAt?: string;
   paid?: boolean;
-  lostAt?: string;    // ISO timestamp de quando foi perdida
-  lostReason?: string; // motivo: 'logout' | 'session_limit'
+  lostAt?: string;
+  lostReason?: string;
 }
 
 export interface Notification {
@@ -98,16 +98,6 @@ export interface RiderLocation {
   riderName: string;
   lat: number;
   lng: number;
-  updatedAt: string;
-}
-
-export interface QueueEntry {
-  id: string;
-  riderId: string;
-  establishmentId: string;
-  date: string; // YYYY-MM-DD
-  joinedAt: string; // ISO string
-  status: 'waiting' | 'delivering' | 'left';
   updatedAt: string;
 }
 
@@ -166,13 +156,9 @@ const KEYS = {
   CURRENT_USER: 'delivery_system_current_user',
   RIDER_LOCATIONS: 'delivery_system_rider_locations',
   PARTNER_REQUESTS: 'delivery_system_partner_requests',
-  RIDER_QUEUE: 'delivery_system_rider_queue',
   ROUTE_HISTORY: 'delivery_system_route_history',
   MISSING_COLUMNS: 'delivery_system_missing_columns',
-  MISSING_TABLES: 'delivery_system_missing_tables',
-  SESSION_LOGIN_TIME: 'delivery_system_session_login_time',
-  SESSION_DELIVERY_COUNT: 'delivery_system_session_delivery_count',
-  DELIVERY_PRESENCE: 'delivery_system_delivery_presence',
+  MISSING_TABLES: 'delivery_system_missing_tables'
 };
 
 const getMissingColumnsCache = (): Record<string, string[]> => {
@@ -205,101 +191,6 @@ function markTableMissing(tableName: string) {
 function isTableMissing(tableName: boolean | string): boolean {
   if (typeof tableName === 'boolean') return tableName;
   return missingTables.has(tableName);
-}
-
-// Canal de comunicação em tempo real via Broadcast do Supabase para sincronizar a Fila
-let queueBroadcastChannel: ReturnType<typeof supabase.channel> | null = null;
-let isQueueChannelSubscribed = false;
-
-function initQueueRealtime() {
-  if (queueBroadcastChannel) return;
-  
-  queueBroadcastChannel = supabase.channel('rider-queue-sync-channel', {
-    config: { broadcast: { self: false } }
-  });
-
-  queueBroadcastChannel
-    .on('broadcast', { event: 'queue-changed' }, (response) => {
-      if (response && response.payload && Array.isArray(response.payload.queue)) {
-        const remoteQueue: QueueEntry[] = response.payload.queue;
-        const localQueue = db.getQueue();
-        
-        const mergedList = db.sanitizeQueue([...localQueue, ...remoteQueue]);
-        localStorage.setItem(KEYS.RIDER_QUEUE, JSON.stringify(mergedList));
-        window.dispatchEvent(new Event('queue-updated'));
-      }
-    })
-    .on('broadcast', { event: 'request-queue' }, () => {
-      const currentQueue = db.getQueue();
-      if (queueBroadcastChannel && isQueueChannelSubscribed) {
-        queueBroadcastChannel.send({
-          type: 'broadcast',
-          event: 'queue-changed',
-          payload: { queue: currentQueue, timestamp: Date.now() }
-        }).catch(() => {});
-      }
-    })
-    .subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        isQueueChannelSubscribed = true;
-        queueBroadcastChannel?.send({
-          type: 'broadcast',
-          event: 'request-queue',
-          payload: { timestamp: Date.now() }
-        }).catch(() => {});
-
-        const currentQueue = db.getQueue();
-        if (currentQueue.length > 0) {
-          queueBroadcastChannel?.send({
-            type: 'broadcast',
-            event: 'queue-changed',
-            payload: { queue: currentQueue, timestamp: Date.now() }
-          }).catch(() => {});
-        }
-      } else {
-        isQueueChannelSubscribed = false;
-      }
-    });
-}
-
-initQueueRealtime();
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      initQueueRealtime();
-      broadcastQueueChange();
-    }
-  });
-
-  window.addEventListener('online', () => {
-    initQueueRealtime();
-    broadcastQueueChange();
-  });
-}
-
-function broadcastQueueChange(currentQueue?: QueueEntry[]) {
-  initQueueRealtime();
-  const queueToSend = currentQueue || db.getQueue();
-
-  if (queueBroadcastChannel && isQueueChannelSubscribed) {
-    queueBroadcastChannel.send({
-      type: 'broadcast',
-      event: 'queue-changed',
-      payload: { queue: queueToSend, timestamp: Date.now() }
-    }).catch(() => {});
-  } else if (queueBroadcastChannel) {
-    queueBroadcastChannel.subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        isQueueChannelSubscribed = true;
-        queueBroadcastChannel?.send({
-          type: 'broadcast',
-          event: 'queue-changed',
-          payload: { queue: queueToSend, timestamp: Date.now() }
-        }).catch(() => {});
-      }
-    });
-  }
 }
 
 function mergeChatStrings(localChat: string | undefined, remoteChat: string | undefined): string {
@@ -541,75 +432,6 @@ export const db = {
     });
   },
 
-  getQueue(): QueueEntry[] {
-    const data = localStorage.getItem(KEYS.RIDER_QUEUE);
-    const rawQueue: QueueEntry[] = data ? JSON.parse(data) : [];
-    return this.sanitizeQueue(rawQueue);
-  },
-  
-  sanitizeQueue(queue: QueueEntry[]): QueueEntry[] {
-    if (!Array.isArray(queue)) return [];
-    
-    const map = new Map<string, QueueEntry>();
-
-    queue.forEach(item => {
-      if (!item || !item.riderId || !item.establishmentId) return;
-
-      const user = this.resolveUser(item.riderId);
-      const est = this.resolveEstablishment(item.establishmentId);
-
-      const riderKey = user ? user.id : item.riderId;
-      const estKey = est ? est.id : item.establishmentId;
-      
-      let dayKey = item.date ? item.date.split('T')[0].split(' ')[0] : '';
-      if (!dayKey && item.joinedAt) {
-        dayKey = this.getOperationalDateString(new Date(item.joinedAt));
-      }
-      if (!dayKey) {
-        dayKey = this.getOperationalDateString();
-      }
-
-      const compositeKey = `${riderKey}_${estKey}_${dayKey}`;
-
-      const existing = map.get(compositeKey);
-      if (!existing) {
-        map.set(compositeKey, item);
-      } else {
-        const existingTime = Math.max(parseTimestamp(existing.updatedAt), parseTimestamp(existing.joinedAt));
-        const itemTime = Math.max(parseTimestamp(item.updatedAt), parseTimestamp(item.joinedAt));
-
-        if (itemTime >= existingTime) {
-          map.set(compositeKey, item);
-        }
-      }
-    });
-
-    return Array.from(map.values());
-  },
-
-  setQueue(queue: QueueEntry[]) {
-    const sanitized = this.sanitizeQueue(queue);
-    localStorage.setItem(KEYS.RIDER_QUEUE, JSON.stringify(sanitized));
-    
-    if (!isTableMissing('rider_queue')) {
-      sanitized.forEach(q => {
-        const rawPayload = {
-          id: q.id,
-          rider_id: q.riderId,
-          establishment_id: q.establishmentId,
-          date: q.date,
-          joined_at: q.joinedAt,
-          status: q.status,
-          updated_at: q.updatedAt || new Date().toISOString()
-        };
-        safeUpsert('rider_queue', rawPayload).catch(() => {});
-      });
-    }
-
-    window.dispatchEvent(new Event('queue-updated'));
-    broadcastQueueChange(sanitized);
-  },
-
   // --- HISTÓRICO DE ROTAS ---
   getRouteHistory(): RouteHistoryItem[] {
     const data = localStorage.getItem(KEYS.ROUTE_HISTORY);
@@ -628,133 +450,6 @@ export const db = {
     }
   },
 
-  joinQueue(riderId: string, establishmentId: string): QueueEntry[] {
-    const todayStr = this.getOperationalDateString();
-    const queue = this.getQueue();
-    const nowISO = new Date().toISOString();
-
-    const canonicalUser = this.resolveUser(riderId);
-    const canonicalEst = this.resolveEstablishment(establishmentId);
-
-    const actualRiderId = canonicalUser?.id || riderId;
-    const actualEstId = canonicalEst?.id || establishmentId;
-
-    const remainingQueue = queue.filter(q => {
-      const isSameRider = this.isSameUser(q.riderId, actualRiderId);
-      const isSameEst = this.isSameEstablishment(q.establishmentId, actualEstId);
-      const isSameDay = isSameDayString(q.date, todayStr) || (q.joinedAt && isSameDayString(q.joinedAt, todayStr));
-      return !(isSameRider && isSameEst && isSameDay);
-    });
-
-    const newEntry: QueueEntry = {
-      id: 'q_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-      riderId: actualRiderId,
-      establishmentId: actualEstId,
-      date: todayStr,
-      joinedAt: nowISO,
-      status: 'waiting',
-      updatedAt: nowISO
-    };
-
-    const updatedQueue = [...remainingQueue, newEntry];
-    this.setQueue(updatedQueue);
-    return updatedQueue;
-  },
-
-  leaveQueue(riderId: string, establishmentId: string): QueueEntry[] {
-    const todayStr = this.getOperationalDateString();
-    const queue = this.getQueue();
-    const nowISO = new Date().toISOString();
-
-    const canonicalUser = this.resolveUser(riderId);
-    const actualRiderId = canonicalUser?.id || riderId;
-
-    const updated = queue.map(q => {
-      const isSameDay = isSameDayString(q.date, todayStr) || (q.joinedAt && isSameDayString(q.joinedAt, todayStr));
-      if (isSameDay) {
-        const isSameRider = this.isSameUser(q.riderId, actualRiderId);
-        const isSameEst = this.isSameEstablishment(q.establishmentId, establishmentId);
-
-        if (isSameRider && isSameEst && q.status === 'waiting') {
-          return { ...q, status: 'left' as const, updatedAt: nowISO };
-        }
-      }
-      return q;
-    });
-
-    this.setQueue(updated);
-
-    if (!isTableMissing('rider_queue')) {
-      Promise.resolve(
-        supabase.from('rider_queue')
-          .update({ status: 'left', updated_at: nowISO })
-          .eq('rider_id', actualRiderId)
-          .eq('establishment_id', establishmentId)
-          .eq('status', 'waiting')
-      ).catch(() => {});
-    }
-
-    return updated;
-  },
-
-  reorderQueue(establishmentId: string, orderedEntryIds: string[]) {
-    const queue = this.getQueue();
-    const nowMs = Date.now();
-    const baseTime = nowMs - (orderedEntryIds.length * 1000);
-
-    const idOrderMap = new Map<string, number>();
-    orderedEntryIds.forEach((id, index) => idOrderMap.set(id, index));
-
-    const updated = queue.map(q => {
-      if (idOrderMap.has(q.id)) {
-        const idx = idOrderMap.get(q.id)!;
-        const newJoinedAt = new Date(baseTime + (idx * 1000)).toISOString();
-        return {
-          ...q,
-          joinedAt: newJoinedAt,
-          updatedAt: new Date().toISOString()
-        };
-      }
-      return q;
-    });
-
-    this.setQueue(updated);
-  },
-
-  markRiderDelivering(riderId: string, establishmentId: string) {
-    const todayStr = this.getOperationalDateString();
-    const queue = this.getQueue();
-    const nowISO = new Date().toISOString();
-
-    const canonicalUser = this.resolveUser(riderId);
-    const actualRiderId = canonicalUser?.id || riderId;
-
-    const updated = queue.map(q => {
-      const isSameDay = isSameDayString(q.date, todayStr) || (q.joinedAt && isSameDayString(q.joinedAt, todayStr));
-      if (isSameDay && q.status === 'waiting') {
-        const isSameRider = this.isSameUser(q.riderId, actualRiderId);
-        const isSameEst = this.isSameEstablishment(q.establishmentId, establishmentId);
-
-        if (isSameRider && isSameEst) {
-          return { ...q, status: 'delivering' as const, updatedAt: nowISO };
-        }
-      }
-      return q;
-    });
-
-    this.setQueue(updated);
-
-    if (!isTableMissing('rider_queue')) {
-      Promise.resolve(
-        supabase.from('rider_queue')
-          .update({ status: 'delivering', updated_at: nowISO })
-          .eq('rider_id', actualRiderId)
-          .eq('establishment_id', establishmentId)
-          .eq('status', 'waiting')
-      ).catch(() => {});
-    }
-  },
-
   getCurrentUser(): User | null {
     const data = localStorage.getItem(KEYS.CURRENT_USER);
     return data ? JSON.parse(data) : null;
@@ -765,130 +460,6 @@ export const db = {
     } else {
       localStorage.removeItem(KEYS.CURRENT_USER);
     }
-  },
-
-  startRiderSession() {
-    localStorage.setItem(KEYS.SESSION_LOGIN_TIME, new Date().toISOString());
-    localStorage.setItem(KEYS.SESSION_DELIVERY_COUNT, '0');
-  },
-
-  getRiderSessionHours(): number {
-    const loginTimeStr = localStorage.getItem(KEYS.SESSION_LOGIN_TIME);
-    if (!loginTimeStr) return 0;
-    const loginTime = new Date(loginTimeStr).getTime();
-    return (Date.now() - loginTime) / (1000 * 60 * 60);
-  },
-
-  getSessionDeliveryCount(): number {
-    return parseInt(localStorage.getItem(KEYS.SESSION_DELIVERY_COUNT) || '0', 10);
-  },
-
-  incrementSessionDeliveryCount() {
-    const current = this.getSessionDeliveryCount();
-    localStorage.setItem(KEYS.SESSION_DELIVERY_COUNT, String(current + 1));
-  },
-
-  clearRiderSession() {
-    localStorage.removeItem(KEYS.SESSION_LOGIN_TIME);
-    localStorage.removeItem(KEYS.SESSION_DELIVERY_COUNT);
-  },
-
-  checkSessionRequirement(): { allowed: boolean; reason?: string; sessionHours: number; deliveryCount: number } {
-    return { allowed: true, sessionHours: 10, deliveryCount: 0 };
-  },
-
-  PRESENCE_REQUIRED_MS: 30 * 60 * 1000,
-  ABSENCE_TOLERANCE_MS: 10 * 60 * 1000,
-
-  getDeliveryPresenceMap(): Record<string, {
-    accumulatedMs: number;
-    foregroundSince: string | null;
-    absenceStartedAt: string | null;
-  }> {
-    const raw = localStorage.getItem(KEYS.DELIVERY_PRESENCE);
-    return raw ? JSON.parse(raw) : {};
-  },
-
-  setDeliveryPresenceMap(map: Record<string, {
-    accumulatedMs: number;
-    foregroundSince: string | null;
-    absenceStartedAt: string | null;
-  }>) {
-    localStorage.setItem(KEYS.DELIVERY_PRESENCE, JSON.stringify(map));
-  },
-
-  startDeliveryPresence(deliveryId: string) {
-    const map = this.getDeliveryPresenceMap();
-    if (!map[deliveryId]) {
-      map[deliveryId] = {
-        accumulatedMs: 0,
-        foregroundSince: new Date().toISOString(),
-        absenceStartedAt: null,
-      };
-      this.setDeliveryPresenceMap(map);
-    }
-  },
-
-  pauseAllPresence() {
-    const now = Date.now();
-    const nowISO = new Date(now).toISOString();
-    const map = this.getDeliveryPresenceMap();
-    let changed = false;
-    Object.keys(map).forEach(id => {
-      const e = map[id];
-      if (e.foregroundSince !== null) {
-        e.accumulatedMs += now - new Date(e.foregroundSince).getTime();
-        e.foregroundSince = null;
-        e.absenceStartedAt = nowISO;
-        changed = true;
-      }
-    });
-    if (changed) this.setDeliveryPresenceMap(map);
-  },
-
-  resumeAllPresence() {
-    const nowISO = new Date().toISOString();
-    const map = this.getDeliveryPresenceMap();
-    let changed = false;
-    Object.keys(map).forEach(id => {
-      const e = map[id];
-      if (e.foregroundSince === null) {
-        e.foregroundSince = nowISO;
-        e.absenceStartedAt = null;
-        changed = true;
-      }
-    });
-    if (changed) this.setDeliveryPresenceMap(map);
-  },
-
-  getPresenceMs(deliveryId: string): number {
-    const map = this.getDeliveryPresenceMap();
-    const e = map[deliveryId];
-    if (!e) return 0;
-    let total = e.accumulatedMs;
-    if (e.foregroundSince !== null) {
-      total += Date.now() - new Date(e.foregroundSince).getTime();
-    }
-    return total;
-  },
-
-  getCurrentAbsenceMs(deliveryId: string): number {
-    const map = this.getDeliveryPresenceMap();
-    const e = map[deliveryId];
-    if (!e || !e.absenceStartedAt) return 0;
-    return Date.now() - new Date(e.absenceStartedAt).getTime();
-  },
-
-  isInBackground(deliveryId: string): boolean {
-    const map = this.getDeliveryPresenceMap();
-    const e = map[deliveryId];
-    return !!e && e.foregroundSince === null;
-  },
-
-  removeDeliveryPresence(deliveryId: string) {
-    const map = this.getDeliveryPresenceMap();
-    delete map[deliveryId];
-    this.setDeliveryPresenceMap(map);
   },
 
   getLocalDateString(date: Date = new Date()): string {
@@ -906,14 +477,13 @@ export const db = {
     return this.getLocalDateString(d);
   },
 
-  // Restaura e recupera todas as corridas que foram marcadas como 'lost' ou de dias recentes (ex: 15/08/2026)
+  // Restaura e recupera todas as corridas que foram marcadas como 'lost' ou de dias recentes
   restoreAllLostDeliveries(): { recoveredCount: number; datesRecovered: string[] } {
     const deliveries = this.getDeliveries();
     let recoveredCount = 0;
     const datesSet = new Set<string>();
 
     const updated = deliveries.map(d => {
-      // Se a corrida estava oculta/lost ou pertence ao dia 15/08/2026
       if (d.status === 'lost' || d.date === '2026-08-15' || d.date === '2024-08-15' || d.date.includes('08-15')) {
         if (d.status === 'lost') {
           recoveredCount++;
@@ -937,7 +507,6 @@ export const db = {
     return { recoveredCount, datesRecovered: Array.from(datesSet) };
   },
 
-  // Vinculação Inteligente Retroativa: Normaliza corridas lançadas de madrugada
   normalizeAndLinkHistoricalDeliveries(): { updatedCount: number; linkedSchedulesCount: number } {
     const deliveries = this.getDeliveries();
     const schedules = this.getSchedules();
@@ -950,13 +519,11 @@ export const db = {
       let targetScheduleId = d.scheduleId;
       let targetStatus = d.status;
 
-      // Se for lost, restaura para active
       if (targetStatus === 'lost') {
         targetStatus = 'active';
         isModified = true;
       }
 
-      // Se a corrida ocorreu de madrugada (00:00 - 03:59)
       const hour = parseInt((d.time || '12:00').split(':')[0], 10);
       if (hour >= 0 && hour < 4) {
         const [y, m, day] = d.date.split('-').map(Number);
@@ -1312,7 +879,6 @@ export const db = {
             } catch (e) {}
           }
 
-          // Se a corrida vier como 'lost' do Supabase ou de versão anterior, recupera como active
           let finalStatus: 'pending' | 'active' | 'rejected' | 'cancelled' | 'lost' = d.status;
           if (finalStatus === 'lost') {
             finalStatus = 'active';
@@ -1354,7 +920,6 @@ export const db = {
           };
         });
 
-        // Junta com possíveis corridas locais para nunca perder nada
         const mergedDeliveries = [...mappedDeliveries];
         localDeliveries.forEach(loc => {
           if (!mergedDeliveries.some(m => m.id === loc.id)) {
@@ -1369,38 +934,6 @@ export const db = {
       }
     } catch (err) {
       console.warn('Erro ao sincronizar tabela "deliveries":', err);
-    }
-
-    if (!isTableMissing('rider_queue')) {
-      try {
-        const { data: queueData, error } = await supabase.from('rider_queue').select('*');
-        if (error) {
-          if (error.code === 'PGRST205' || (error as any).status === 404) {
-            markTableMissing('rider_queue');
-          } else {
-            throw error;
-          }
-        } else if (queueData) {
-          const localQueue = this.getQueue();
-          const remoteQueue: QueueEntry[] = queueData.map(q => ({
-            id: q.id,
-            riderId: q.rider_id,
-            establishmentId: q.establishment_id,
-            date: q.date,
-            joinedAt: q.joined_at,
-            status: q.status,
-            updatedAt: q.updated_at
-          }));
-
-          const mergedList = this.sanitizeQueue([...localQueue, ...remoteQueue]);
-          localStorage.setItem(KEYS.RIDER_QUEUE, JSON.stringify(mergedList));
-          window.dispatchEvent(new Event('queue-updated'));
-        }
-      } catch (err: any) {
-        if (err?.code === 'PGRST205' || err?.status === 404) {
-          markTableMissing('rider_queue');
-        }
-      }
     }
 
     try {
@@ -1445,7 +978,6 @@ export const db = {
       console.warn('Erro ao sincronizar tabela "rider_locations":', err);
     }
 
-    // Auto-recupera qualquer corrida perdida e executa normalização inteligente
     this.restoreAllLostDeliveries();
     this.normalizeAndLinkHistoricalDeliveries();
 

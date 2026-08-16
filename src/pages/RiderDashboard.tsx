@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { db, Schedule, Delivery, Notification, Establishment, QueueEntry, RouteHistoryItem } from '../utils/db';
+import { db, Schedule, Delivery, Notification, Establishment, RouteHistoryItem } from '../utils/db';
 import { 
   DollarSign, 
   Calendar, 
@@ -21,12 +21,8 @@ import {
   ShieldAlert,
   Check,
   Compass,
-  ListOrdered,
-  CheckCircle2,
   Download,
-  LocateFixed,
   RotateCw,
-  Ban,
   Sparkles
 } from 'lucide-react';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
@@ -35,8 +31,7 @@ import ScheduleChatModal from '../components/ScheduleChatModal';
 import RiderNavigationMap from '../components/RiderNavigationMap';
 import ChatToastBanner, { ChatToast } from '../components/ChatToastBanner';
 import { sendDeviceNotification, playNotificationSound, requestNotificationPermission } from '../utils/notifications';
-import { calculateDistanceMeters, gpsTracker, GpsState } from '../utils/gpsTracker';
-import { geocodeAddress } from '../utils/geocoding';
+import { gpsTracker, GpsState } from '../utils/gpsTracker';
 
 export default function RiderDashboard() {
   const navigate = useNavigate();
@@ -45,7 +40,6 @@ export default function RiderDashboard() {
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [establishments, setEstablishments] = useState<Establishment[]>([]);
-  const [queueEntries, setQueueEntries] = useState<QueueEntry[]>([]);
   const [routeHistory, setRouteHistory] = useState<RouteHistoryItem[]>([]);
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'schedules' | 'history' | 'notifications' | 'navigation'>('dashboard');
@@ -54,8 +48,6 @@ export default function RiderDashboard() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [activeToast, setActiveToast] = useState<ChatToast | null>(null);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-
-  const [estCoordsMap, setEstCoordsMap] = useState<Record<string, { lat: number; lng: number }>>({});
 
   const [gpsState, setGpsState] = useState<GpsState>({
     currentLocation: null,
@@ -142,7 +134,6 @@ export default function RiderDashboard() {
       return riderOfSch && riderOfSch.email.toLowerCase() === freshUser.email.toLowerCase();
     });
 
-    // Mantém todas as corridas visíveis, nunca esconde corridas do motoboy
     const allDeliveries = db.getDeliveries().filter(d => {
       if (d.riderId === freshUser.id) return true;
       const riderOfDel = allUsers.find(u => u.id === d.riderId);
@@ -156,7 +147,6 @@ export default function RiderDashboard() {
     });
 
     const allEsts = db.getEstablishments().filter(e => e.active);
-    const allQueue = db.getQueue();
     const myRoutes = db.getRouteHistory().filter(r => r.riderId === freshUser.id);
     
     const sortedSchedules = [...allSchedules].sort((a, b) => a.date.localeCompare(b.date) || a.shift.localeCompare(b.shift) || a.id.localeCompare(b.id));
@@ -172,7 +162,6 @@ export default function RiderDashboard() {
     setDeliveries(sortedDeliveries);
     setNotifications(sortedNotifications);
     setEstablishments(allEsts);
-    setQueueEntries(allQueue);
     setRouteHistory(myRoutes);
 
     if (!hasInitializedDestRef.current) {
@@ -224,65 +213,17 @@ export default function RiderDashboard() {
     }, 2000);
 
     const handleSyncComplete = () => loadData();
-    const handleQueueUpdated = () => loadData();
     const handleHistoryUpdated = () => loadData();
 
     window.addEventListener('db-sync-complete', handleSyncComplete);
-    window.addEventListener('queue-updated', handleQueueUpdated);
     window.addEventListener('route-history-updated', handleHistoryUpdated);
 
     return () => {
       clearInterval(interval);
       window.removeEventListener('db-sync-complete', handleSyncComplete);
-      window.removeEventListener('queue-updated', handleQueueUpdated);
       window.removeEventListener('route-history-updated', handleHistoryUpdated);
     };
   }, [user, navigate, activeTab]);
-
-  useEffect(() => {
-    establishments.forEach(async (est) => {
-      if (!estCoordsMap[est.id] && est.address) {
-        const coords = await geocodeAddress(est.address);
-        if (coords) {
-          setEstCoordsMap(prev => ({
-            ...prev,
-            [est.id]: { lat: coords.lat, lng: coords.lng }
-          }));
-        }
-      }
-    });
-  }, [establishments]);
-
-  useEffect(() => {
-    if (!user || !activePos) return;
-
-    const operationalTodayStr = db.getOperationalDateString();
-    const myWaitingEntries = queueEntries.filter(q => 
-      q.status === 'waiting' && 
-      db.isSameUser(q.riderId, user.id) && 
-      (db.isSameDayString(q.date, operationalTodayStr) || (q.joinedAt && db.isSameDayString(q.joinedAt, operationalTodayStr)))
-    );
-
-    const MAX_AUTO_LEAVE_DIST = 100;
-    myWaitingEntries.forEach(entry => {
-      const estCoords = estCoordsMap[entry.establishmentId];
-      if (estCoords) {
-        const dist = Math.round(calculateDistanceMeters(activePos.lat, activePos.lng, estCoords.lat, estCoords.lng));
-        if (dist > MAX_AUTO_LEAVE_DIST) {
-          handleLeaveQueue(entry.establishmentId);
-          const est = db.resolveEstablishment(entry.establishmentId);
-          setActiveToast({
-            id: 'auto_leave_' + Date.now(),
-            title: 'Saída Automática da Fila',
-            message: `Você se afastou ${dist}m do estabelecimento ${est?.name || ''} (máximo 100m) e foi removido da fila.`,
-            sender: 'Sistema'
-          });
-          sendDeviceNotification('Saída da Fila', `Você se afastou mais de 100m de ${est?.name || 'estabelecimento'} e foi removido da fila.`);
-          playNotificationSound();
-        }
-      }
-    });
-  }, [activePos, queueEntries, estCoordsMap, user]);
 
   useEffect(() => {
     deliveries.forEach(d => {
@@ -383,7 +324,7 @@ export default function RiderDashboard() {
   }, [schedules, user]);
 
   const handleManualRecover = () => {
-    const res = db.restoreAllLostDeliveries();
+    db.restoreAllLostDeliveries();
     db.normalizeAndLinkHistoricalDeliveries();
     loadData();
     alert(`✅ Recuperação Concluída!\n\nForam recuperadas e restauradas com sucesso todas as corridas do sistema.`);
@@ -392,7 +333,6 @@ export default function RiderDashboard() {
   const handleLogout = async () => {
     if (user) {
       await db.clearRiderLocation(user.id);
-      db.clearRiderSession();
     }
     db.setCurrentUser(null);
     navigate('/login');
@@ -473,43 +413,6 @@ export default function RiderDashboard() {
     return uniqueEsts;
   };
 
-  const handleJoinQueue = (establishmentId: string) => {
-    if (!user) return;
-
-    const estCoords = estCoordsMap[establishmentId];
-    if (!activePos || !estCoords) {
-      alert('Sua localização via GPS é necessária para calcular a distância e entrar na fila.');
-      return;
-    }
-
-    const dist = Math.round(calculateDistanceMeters(activePos.lat, activePos.lng, estCoords.lat, estCoords.lng));
-    if (dist > 50) {
-      alert(`Você está a ${dist}m do estabelecimento. Para entrar na fila é necessário estar a no máximo 50m de distância.`);
-      return;
-    }
-
-    const updatedQueue = db.joinQueue(user.id, establishmentId);
-    setQueueEntries(updatedQueue);
-    setActiveToast({
-      id: 'queue_' + Date.now(),
-      title: 'Fila de Saída',
-      message: 'Você entrou na fila de saída com sucesso!',
-      sender: 'Sistema'
-    });
-  };
-
-  const handleLeaveQueue = (establishmentId: string) => {
-    if (!user) return;
-    const updatedQueue = db.leaveQueue(user.id, establishmentId);
-    setQueueEntries(updatedQueue);
-    setActiveToast({
-      id: 'queue_leave_' + Date.now(),
-      title: 'Fila de Saída',
-      message: 'Você saiu da fila de saída.',
-      sender: 'Sistema'
-    });
-  };
-
   const handleLaunchDelivery = (e: React.FormEvent) => {
     e.preventDefault();
     const val = parseFloat(launchForm.value);
@@ -553,8 +456,6 @@ export default function RiderDashboard() {
       };
 
       db.setDeliveries([...allDeliveries, newDelivery]);
-      db.markRiderDelivering(user.id, launchForm.establishmentId);
-
       alert('Corrida lançada com sucesso! Aguardando aprovação.');
     }
 
@@ -567,7 +468,7 @@ export default function RiderDashboard() {
   const handleSendCustomerMessage = (text: string) => {
     if (!customerChatDeliveryId) return;
     const now = new Date();
-    const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     const dateStr = now.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
     
     const formattedMessage = `[${dateStr} ${timeStr} - Motoboy (${user?.name})]: ${text}`;
@@ -788,151 +689,6 @@ export default function RiderDashboard() {
                 </div>
               </div>
             </div>
-
-            {scheduledEstsToday.length > 0 ? (
-              <div className="space-y-4">
-                {scheduledEstsToday.map(est => {
-                  const estQueue = queueEntries
-                    .filter(q => {
-                      const isSameDay = db.isSameDayString(q.date, operationalTodayStr) || (q.joinedAt && db.isSameDayString(q.joinedAt, operationalTodayStr));
-                      if (!isSameDay || q.status !== 'waiting') return false;
-                      return db.isSameEstablishment(q.establishmentId, est.id);
-                    })
-                    .sort((a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime());
-
-                  const myEntryIndex = estQueue.findIndex(q => {
-                    return db.isSameUser(q.riderId, user?.id);
-                  });
-
-                  const isInQueue = myEntryIndex !== -1;
-                  const myQueueEntry = isInQueue ? estQueue[myEntryIndex] : null;
-
-                  const estCoords = estCoordsMap[est.id];
-                  let distanceMeters: number | null = null;
-                  
-                  if (activePos && estCoords) {
-                    distanceMeters = Math.round(calculateDistanceMeters(activePos.lat, activePos.lng, estCoords.lat, estCoords.lng));
-                  }
-
-                  const isWithinRadius = distanceMeters !== null && distanceMeters <= 50;
-
-                  return (
-                    <div key={est.id} className="bg-white p-5 rounded-2xl shadow-sm border border-indigo-100 space-y-4">
-                      <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                        <div className="flex items-center space-x-2">
-                          <div className="p-2 bg-indigo-100 text-indigo-600 rounded-xl">
-                            <ListOrdered className="h-5 w-5" />
-                          </div>
-                          <div>
-                            <h3 className="font-extrabold text-slate-800 text-base">Fila de Saída — {est.name}</h3>
-                            <p className="text-xs text-slate-500">{estQueue.length} entregador(es) na fila agora</p>
-                          </div>
-                        </div>
-
-                        {isInQueue ? (
-                          <button
-                            onClick={() => handleLeaveQueue(est.id)}
-                            className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors flex items-center space-x-1"
-                          >
-                            <X className="h-4 w-4" />
-                            <span>Sair da Fila</span>
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleJoinQueue(est.id)}
-                            className={`px-4 py-2 rounded-xl text-xs font-extrabold flex items-center space-x-1.5 transition-all shadow-md active:scale-95 text-white ${
-                              isWithinRadius 
-                                ? 'bg-emerald-600 hover:bg-emerald-700' 
-                                : 'bg-indigo-600 hover:bg-indigo-700'
-                            }`}
-                          >
-                            <CheckCircle2 className="h-4 w-4" />
-                            <span>Entrar na Fila</span>
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-between text-xs px-1">
-                        <div className="flex items-center space-x-1.5">
-                          <LocateFixed className="h-4 w-4 text-emerald-600 animate-pulse" />
-                          <span className="font-bold text-slate-700">
-                            {distanceMeters !== null 
-                              ? `Distância da loja: ${distanceMeters}m`
-                              : 'Obtendo GPS...'}
-                          </span>
-                        </div>
-
-                        <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full ${
-                          isWithinRadius 
-                            ? 'bg-emerald-100 text-emerald-800' 
-                            : 'bg-amber-100 text-amber-800'
-                        }`}>
-                          {isWithinRadius ? '✓ Dentro do Raio (≤ 50m)' : 'Entrada: ≤ 50m | Saída Auto: > 100m'}
-                        </span>
-                      </div>
-
-                      {isInQueue ? (
-                        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-center justify-between">
-                          <div>
-                            <span className="text-[10px] font-extrabold uppercase text-emerald-700 tracking-wider">Sua Posição Atual</span>
-                            <h4 className="text-2xl font-black text-emerald-900 mt-0.5">
-                              {myEntryIndex === 0 ? '🥇 1º da Fila (VOCÊ É O PRÓXIMO!)' : `${myEntryIndex + 1}º da Fila`}
-                            </h4>
-                            <p className="text-xs text-emerald-700 mt-1">
-                              Chegada registrada às: <strong>{new Date(myQueueEntry?.joinedAt || '').toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</strong>
-                            </p>
-                          </div>
-                          <div className="p-3 bg-emerald-600 text-white rounded-2xl font-black text-lg shadow-md animate-pulse">
-                            #{myEntryIndex + 1}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-center text-xs text-slate-600">
-                          Aproxime-se a no máximo <strong>50m</strong> da loja e toque em <strong>"Entrar na Fila"</strong>.
-                        </div>
-                      )}
-
-                      {estQueue.length > 0 && (
-                        <div className="space-y-2 pt-1">
-                          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Ordem da Fila Hoje:</p>
-                          <div className="divide-y divide-slate-100 bg-slate-50/70 rounded-xl border border-slate-200 overflow-hidden">
-                            {estQueue.map((item, idx) => {
-                              const riderUser = db.resolveUser(item.riderId);
-                              const isMe = db.isSameUser(item.riderId, user?.id);
-                              const timeStr = new Date(item.joinedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-
-                              return (
-                                <div key={item.id} className={`p-3 flex items-center justify-between text-xs ${isMe ? 'bg-indigo-50 font-bold' : ''}`}>
-                                  <div className="flex items-center space-x-2.5">
-                                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                                      idx === 0 ? 'bg-amber-500 text-white' : 'bg-slate-200 text-slate-700'
-                                    }`}>
-                                      {idx + 1}
-                                    </span>
-                                    <span className="text-slate-800 font-semibold">{riderUser?.name || 'Entregador'} {isMe && '(Você)'}</span>
-                                  </div>
-                                  <span className="text-slate-400 font-mono text-[11px]">{timeStr}</span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-center space-y-3">
-                <Ban className="h-10 w-10 text-red-500 mx-auto" />
-                <div>
-                  <h4 className="font-extrabold text-red-900 text-base">Fila de Saída Bloqueada</h4>
-                  <p className="text-xs text-red-700 mt-1 leading-relaxed">
-                    Não é possível entrar na fila pois você não está escalado para nenhum estabelecimento hoje.
-                  </p>
-                </div>
-              </div>
-            )}
 
             {todaySchedule ? (
               (() => {

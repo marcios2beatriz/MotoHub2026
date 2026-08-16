@@ -2,12 +2,12 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { db, User, Establishment, Schedule, Delivery, PartnerRequest, RiderLocation, QueueEntry } from '../utils/db';
+import { db, User, Establishment, Schedule, Delivery, PartnerRequest, RiderLocation } from '../utils/db';
 import { 
   Users, 
   Store, 
   Calendar, 
-  CalendarDays,
+  CalendarDays, 
   Bike, 
   BarChart3, 
   LogOut, 
@@ -29,7 +29,6 @@ import {
   ArrowUpDown,
   UserCheck2,
   Map as MapIcon,
-  ListOrdered,
   KeyRound,
   CheckCheck,
   Maximize2,
@@ -84,7 +83,7 @@ const getThisMonday = (): string => {
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const [adminUser] = useState(db.getCurrentUser());
-  const [activeTab, setActiveTab] = useState<'overview' | 'map' | 'users' | 'establishments' | 'requests' | 'schedules' | 'deliveries' | 'queues' | 'finance' | 'reports'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'map' | 'users' | 'establishments' | 'requests' | 'schedules' | 'deliveries' | 'finance' | 'reports'>('overview');
 
   const [users, setUsers] = useState<User[]>([]);
   const [establishments, setEstablishments] = useState<Establishment[]>([]);
@@ -92,7 +91,6 @@ export default function AdminDashboard() {
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [partnerRequests, setPartnerRequests] = useState<PartnerRequest[]>([]);
   const [riderLocations, setRiderLocations] = useState<RiderLocation[]>([]);
-  const [queueEntries, setQueueEntries] = useState<QueueEntry[]>([]);
   const [activeToast, setActiveToast] = useState<ChatToast | null>(null);
 
   const prevNotesRef = useRef<Record<string, string>>({});
@@ -120,8 +118,6 @@ export default function AdminDashboard() {
   const [delSearchQuery, setDelSearchQuery] = useState<string>('');
   const [delSortOrder, setDelSortOrder] = useState<'date_desc' | 'date_asc' | 'value_desc' | 'value_asc' | 'rider_name' | 'est_name'>('date_desc');
 
-  // Filtro de Fila no Admin
-  const [queueEstFilter, setQueueEstFilter] = useState<string>('all');
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
 
   const [showUserModal, setShowUserModal] = useState(false);
@@ -161,7 +157,6 @@ export default function AdminDashboard() {
   const [editingDelivery, setEditingDelivery] = useState<Delivery | null>(null);
   const [deliveryForm, setDeliveryForm] = useState({ riderId: '', establishmentId: '', date: '', time: '', value: '', orderNumber: '', notes: '' });
 
-  // Modal de Lote
   const [showBatchModal, setShowBatchModal] = useState(false);
 
   const [notesDeliveryId, setNotesDeliveryId] = useState<string | null>(null);
@@ -199,7 +194,6 @@ export default function AdminDashboard() {
     const currentDeliveries = db.getDeliveries();
     const rawRequests = db.getPartnerRequests();
     const locations = db.getRiderLocations();
-    const queue = db.getQueue();
 
     const inactiveEsts = currentEsts.filter(e => !e.active);
     const virtualRequests: PartnerRequest[] = inactiveEsts.map(e => {
@@ -234,7 +228,6 @@ export default function AdminDashboard() {
     setDeliveries([...currentDeliveries].sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time) || b.id.localeCompare(a.id)));
     setPartnerRequests([...mergedRequests].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
     setRiderLocations(locations);
-    setQueueEntries(queue);
   };
 
   useEffect(() => {
@@ -1312,16 +1305,6 @@ export default function AdminDashboard() {
           </button>
 
           <button
-            onClick={() => { setActiveTab('queues'); }}
-            className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
-              activeTab === 'queues' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
-            }`}
-          >
-            <ListOrdered className="h-5 w-5 text-indigo-600" />
-            <span>Filas de Saída</span>
-          </button>
-
-          <button
             onClick={() => setActiveTab('finance')}
             className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
               activeTab === 'finance' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
@@ -1343,7 +1326,7 @@ export default function AdminDashboard() {
         </div>
 
         {/* Mobile Navigation bar */}
-        <div className="lg:hidden grid grid-cols-5 sm:grid-cols-10 gap-1 bg-white p-2 rounded-xl border border-slate-200">
+        <div className="lg:hidden grid grid-cols-4 sm:grid-cols-8 gap-1 bg-white p-2 rounded-xl border border-slate-200">
           <button onClick={() => setActiveTab('overview')} className={`p-2 text-xs text-center rounded ${activeTab === 'overview' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Visão</button>
           <button onClick={() => setActiveTab('map')} className={`p-2 text-xs text-center rounded ${activeTab === 'map' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>GPS</button>
           <button onClick={() => setActiveTab('users')} className={`p-2 text-xs text-center rounded ${activeTab === 'users' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Usuários</button>
@@ -1351,9 +1334,7 @@ export default function AdminDashboard() {
           <button onClick={() => setActiveTab('requests')} className={`p-2 text-xs text-center rounded relative ${activeTab === 'requests' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Pedidos</button>
           <button onClick={() => setActiveTab('schedules')} className={`p-2 text-xs text-center rounded ${activeTab === 'schedules' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Escalas</button>
           <button onClick={() => setActiveTab('deliveries')} className={`p-2 text-xs text-center rounded ${activeTab === 'deliveries' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Corridas</button>
-          <button onClick={() => setActiveTab('queues')} className={`p-2 text-xs text-center rounded ${activeTab === 'queues' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Filas</button>
           <button onClick={() => setActiveTab('finance')} className={`p-2 text-xs text-center rounded ${activeTab === 'finance' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Fechamento</button>
-          <button onClick={() => setActiveTab('reports')} className={`p-2 text-xs text-center rounded ${activeTab === 'reports' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Relatórios</button>
         </div>
 
         {/* Content Area */}
@@ -1677,95 +1658,6 @@ export default function AdminDashboard() {
                     ))}
                   </tbody>
                 </table>
-              </div>
-            </div>
-          )}
-
-          {/* FILAS DE SAÍDA NO ADMIN */}
-          {activeTab === 'queues' && (
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-5">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-                <div>
-                  <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                    <ListOrdered className="h-6 w-6 text-indigo-600" />
-                    <span>Gerenciamento Global das Filas de Saída</span>
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">Acompanhe e administre a ordem da fila de motoboys em cada estabelecimento</p>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  <select
-                    value={queueEstFilter}
-                    onChange={(e) => setQueueEstFilter(e.target.value)}
-                    className="px-3 py-2 border border-slate-300 rounded-lg text-xs bg-slate-50 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold"
-                  >
-                    <option value="all">Todos os Estabelecimentos</option>
-                    {establishments.map(e => (
-                      <option key={e.id} value={e.id}>{e.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-6">
-                {establishments
-                  .filter(e => queueEstFilter === 'all' || e.id === queueEstFilter)
-                  .map(est => {
-                    const estQueue = queueEntries
-                      .filter(q => db.isSameEstablishment(q.establishmentId, est.id) && q.date === todayStr && q.status === 'waiting')
-                      .sort((a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime());
-
-                    return (
-                      <div key={est.id} className="border border-slate-200 rounded-xl p-4 bg-slate-50/50 space-y-3">
-                        <div className="flex justify-between items-center">
-                          <h3 className="font-extrabold text-slate-800 text-base">{est.name}</h3>
-                          <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-2.5 py-0.5 rounded-full">
-                            {estQueue.length} na fila
-                          </span>
-                        </div>
-
-                        {estQueue.length === 0 ? (
-                          <p className="text-xs text-slate-400 italic">Nenhum motoboy na fila neste estabelecimento hoje.</p>
-                        ) : (
-                          <div className="divide-y divide-slate-200 bg-white rounded-lg border border-slate-200 overflow-hidden">
-                            {estQueue.map((item, idx) => {
-                              const riderUser = db.resolveUser(item.riderId);
-                              const arrivalTime = new Date(item.joinedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-
-                              return (
-                                <div key={item.id} className="p-3 flex items-center justify-between text-xs">
-                                  <div className="flex items-center space-x-3">
-                                    <span className={`w-7 h-7 rounded-full flex items-center justify-center font-black text-xs ${
-                                      idx === 0 ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-700'
-                                    }`}>
-                                      {idx + 1}º
-                                    </span>
-                                    <div>
-                                      <p className="font-bold text-slate-800">{riderUser?.name || 'Motoboy'}</p>
-                                      <p className="text-[10px] text-slate-400">Entrou às: {arrivalTime}</p>
-                                    </div>
-                                  </div>
-
-                                  <button
-                                    onClick={() => {
-                                      if (confirm(`Deseja remover ${riderUser?.name} da fila?`)) {
-                                        db.leaveQueue(item.riderId, est.id);
-                                        loadData();
-                                      }
-                                    }}
-                                    className="text-red-500 hover:text-red-700 p-1"
-                                    title="Remover da Fila"
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </button>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
               </div>
             </div>
           )}
