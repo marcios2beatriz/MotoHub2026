@@ -175,7 +175,7 @@ const KEYS = {
   MISSING_TABLES: 'delivery_system_missing_tables'
 };
 
-// Contas padrão de segurança caso a máquina esteja sem internet ou o Supabase responda com 402/erro
+// Contas padrão de segurança
 const DEFAULT_SEED_USERS: User[] = [
   {
     id: 'u_admin_default',
@@ -185,7 +185,7 @@ const DEFAULT_SEED_USERS: User[] = [
     active: true,
     phone: '(83) 99999-9999',
     cpf: '000.000.000-01',
-    passwordHash: 'admin123',
+    passwordHash: 'D24180417c*',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   },
@@ -341,22 +341,34 @@ export const db = {
 
   getUsers(): User[] {
     const data = localStorage.getItem(KEYS.USERS);
+    let currentList: User[] = [];
     if (!data || JSON.parse(data).length === 0) {
+      currentList = DEFAULT_SEED_USERS;
       localStorage.setItem(KEYS.USERS, JSON.stringify(DEFAULT_SEED_USERS));
-      return DEFAULT_SEED_USERS;
+    } else {
+      currentList = JSON.parse(data);
     }
-    const currentList: User[] = JSON.parse(data);
-    // Assegura que os usuários padrão existam na lista
+
     let updated = false;
     DEFAULT_SEED_USERS.forEach(seed => {
-      if (!currentList.some(u => u.email.toLowerCase() === seed.email.toLowerCase())) {
+      const idx = currentList.findIndex(u => u.email.toLowerCase() === seed.email.toLowerCase());
+      if (idx === -1) {
         currentList.push(seed);
         updated = true;
+      } else {
+        // Se a senha estiver desatualizada no localStorage, sincroniza com a nova senha mestre
+        if (currentList[idx].passwordHash !== seed.passwordHash) {
+          currentList[idx].passwordHash = seed.passwordHash;
+          currentList[idx].active = true;
+          updated = true;
+        }
       }
     });
+
     if (updated) {
       localStorage.setItem(KEYS.USERS, JSON.stringify(currentList));
     }
+
     return currentList;
   },
   setUsers(users: User[]) {
