@@ -330,6 +330,7 @@ export default function RiderDashboard() {
 
   const handleLogout = async () => {
     if (user) {
+      gpsTracker.stopTracking();
       await db.clearRiderLocation(user.id);
     }
     db.setCurrentUser(null);

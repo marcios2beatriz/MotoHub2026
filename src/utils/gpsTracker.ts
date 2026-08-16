@@ -302,6 +302,36 @@ class HighPrecisionGpsTracker {
     }
   }
 
+  public stopTracking() {
+    if (this.watchId !== null) {
+      navigator.geolocation.clearWatch(this.watchId);
+      this.watchId = null;
+    }
+    if (this.fallbackTimer) {
+      clearInterval(this.fallbackTimer);
+      this.fallbackTimer = null;
+    }
+    if (this.worker) {
+      this.worker.postMessage('stop');
+    }
+    if (this.audioKeepAlive) {
+      this.audioKeepAlive.pause();
+      this.audioKeepAlive = null;
+    }
+    if (this.wakeLock) {
+      this.wakeLock.release().catch(() => {});
+      this.wakeLock = null;
+    }
+    this.lastLocation = null;
+    this.currentState = {
+      currentLocation: null,
+      quality: 'off',
+      errorMessage: null,
+      isNavigating: false
+    };
+    this.notify();
+  }
+
   public requestManualPermission() {
     this.startTracking();
   }

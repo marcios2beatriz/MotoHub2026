@@ -8,6 +8,7 @@ import L from 'leaflet';
 import CustomerChatModal from '../components/CustomerChatModal';
 import { sendDeviceNotification } from '../utils/notifications';
 import { geocodeAddress } from '../utils/geocoding';
+import { realtimeGps } from '../utils/realtimeGps';
 
 export default function CustomerTracking() {
   const { deliveryId } = useParams<{ deliveryId: string }>();
@@ -95,7 +96,7 @@ export default function CustomerTracking() {
 
       const locations = db.getRiderLocations();
       const currentLoc = locations.find(l => l.riderId === currentDelivery.riderId);
-      if (currentLoc) setRiderLocation(currentLoc);
+      setRiderLocation(currentLoc || null);
     }
     setLoading(false);
   };
@@ -107,8 +108,36 @@ export default function CustomerTracking() {
       db.pullFromSupabase().then(() => loadTrackingData());
     }, 3000);
 
-    return () => clearInterval(interval);
-  }, [deliveryId]);
+    // Escuta atualizações de GPS em tempo real do motoboy
+    const unsubscribeLocation = realtimeGps.subscribeToLocations((payload) => {
+      if (delivery && payload.riderId === delivery.riderId) {
+        setRiderLocation({
+          riderId: payload.riderId,
+          riderName: payload.riderName,
+          lat: payload.lat,
+          lng: payload.lng,
+          updatedAt: new Date().toISOString()
+        });
+      }
+    });
+
+    // Se o motoboy deslogar, remove o ícone dele imediatamente da tela do cliente
+    const unsubscribeOffline = realtimeGps.subscribeToOffline((payload) => {
+      if (delivery && payload.riderId === delivery.riderId) {
+        if (mapRef.current && riderMarkerRef.current) {
+          mapRef.current.removeLayer(riderMarkerRef.current);
+          riderMarkerRef.current = null;
+        }
+        setRiderLocation(null);
+      }
+    });
+
+    return () => {
+      clearInterval(interval);
+      unsubscribeLocation();
+      unsubscribeOffline();
+    };
+  }, [deliveryId, delivery?.riderId]);
 
   useEffect(() => {
     if (delivery && prevChatRef.current !== undefined && delivery.customerChat && delivery.customerChat !== prevChatRef.current) {
@@ -206,6 +235,12 @@ export default function CustomerTracking() {
           .bindPopup(`<b>${rider?.name || 'Entregador'}</b><br/>A caminho do seu endereço!`);
 
         riderMarkerRef.current = marker;
+      }
+    } else {
+      // Se não há localização, remove o marcador imediatamente
+      if (riderMarkerRef.current) {
+        currentMap.removeLayer(riderMarkerRef.current);
+        riderMarkerRef.current = null;
       }
     }
 
