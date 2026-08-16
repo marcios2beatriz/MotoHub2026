@@ -60,7 +60,7 @@ export interface Delivery {
   id: string;
   riderId: string;
   establishmentId: string;
-  date: string; // YYYY-MM-DD (Data exata em que ocorreu)
+  date: string; // YYYY-MM-DD (Data real gravada)
   time: string; // HH:MM
   value: number;
   status: 'pending' | 'active' | 'rejected' | 'cancelled' | 'lost';
@@ -124,6 +124,29 @@ export function isSameDayString(d1?: string, d2?: string): boolean {
   const clean1 = d1.split('T')[0].split(' ')[0].trim();
   const clean2 = d2.split('T')[0].split(' ')[0].trim();
   return clean1 === clean2;
+}
+
+/**
+ * Calcula a data-base do expediente da corrida para filtragem inteligente:
+ * Se a corrida ocorreu entre 00:00 e 02:59, ela pertence ao expediente da noite do dia anterior.
+ */
+export function getDeliveryOperationalDate(dateStr: string, timeStr: string = '12:00'): string {
+  if (!dateStr) return '';
+  const cleanDate = dateStr.split('T')[0].split(' ')[0].trim();
+  const [hStr] = (timeStr || '12:00').split(':');
+  const h = parseInt(hStr, 10);
+
+  if (!isNaN(h) && h < 3) {
+    const [y, m, d] = cleanDate.split('-').map(Number);
+    const dateObj = new Date(y, m - 1, d);
+    dateObj.setDate(dateObj.getDate() - 1);
+    const prevY = dateObj.getFullYear();
+    const prevM = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const prevD = String(dateObj.getDate()).padStart(2, '0');
+    return `${prevY}-${prevM}-${prevD}`;
+  }
+
+  return cleanDate;
 }
 
 function parseTimestamp(dateStr?: string): number {
@@ -262,6 +285,7 @@ async function safeUpsert(tableName: string, rawPayload: Record<string, any>): P
 
 export const db = {
   isSameDayString,
+  getDeliveryOperationalDate,
 
   getUsers(): User[] {
     const data = localStorage.getItem(KEYS.USERS);
@@ -443,7 +467,6 @@ export const db = {
     }
   },
 
-  // Retorna a data no formato YYYY-MM-DD estritamente sem nenhuma alteração
   getLocalDateString(date: Date = new Date()): string {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');

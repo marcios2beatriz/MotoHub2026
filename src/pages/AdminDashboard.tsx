@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { db, User, Establishment, Schedule, Delivery, PartnerRequest, RiderLocation } from '../utils/db';
+import { db, User, Establishment, Schedule, Delivery, PartnerRequest, RiderLocation, getDeliveryOperationalDate } from '../utils/db';
 import { 
   Users, 
   Store, 
@@ -240,7 +240,6 @@ export default function AdminDashboard() {
       return;
     }
     requestNotificationPermission();
-    db.restoreAllLostDeliveries();
     loadData();
 
     const interval = setInterval(() => {
@@ -481,9 +480,8 @@ export default function AdminDashboard() {
 
   const handleRunIntelligentSync = () => {
     const res = db.restoreAllLostDeliveries();
-    const res2 = db.normalizeAndLinkHistoricalDeliveries();
     loadData();
-    alert(`✨ Recuperação & Vinculação Inteligente Concluídas!\n\n• ${res.recoveredCount} corrida(s) recuperadas de 15/08 ou status ocultos.\n• ${res2.updatedCount} corrida(s) re-alinhadas ao turno operacional correspondente.`);
+    alert(`✨ Sincronização concluída!\n\n${res.recoveredCount} corrida(s) sincronizadas.`);
   };
 
   const handleApproveAllPendingDeliveries = () => {
@@ -1148,7 +1146,8 @@ export default function AdminDashboard() {
 
       if (delFilterMode === 'smart_shift') {
         if (!delSmartDate) return true;
-        const isDateMatch = db.isSameDayString(d.date, delSmartDate);
+        const opDate = getDeliveryOperationalDate(d.date, d.time);
+        const isDateMatch = isSameDayString(opDate, delSmartDate);
         if (!isDateMatch) return false;
 
         const [h] = (d.time || '12:00').split(':').map(Number);
@@ -1235,14 +1234,6 @@ export default function AdminDashboard() {
             >
               <Layers className="h-4 w-4 text-white" />
               <span className="hidden sm:inline">Lançamento em Lote</span>
-            </button>
-            <button
-              onClick={handleRunIntelligentSync}
-              className="bg-amber-500 hover:bg-amber-600 text-slate-950 px-3 py-1.5 rounded-lg text-xs font-black flex items-center space-x-1 transition-colors shadow-sm"
-              title="Restaurar Corridas de 15/08 e Corridas Ocultas"
-            >
-              <Sparkles className="h-4 w-4 text-slate-950" />
-              <span className="hidden sm:inline">Recuperar Corridas 15/08</span>
             </button>
             <span className="text-sm text-slate-300 hidden md:inline">Olá, {adminUser?.name}</span>
             <button 
@@ -1436,7 +1427,7 @@ export default function AdminDashboard() {
               <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
                 <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                   <RotateCcw className="h-4 w-4 text-red-600" />
-                  <span>Ações de Manutenção e Recuperação</span>
+                  <span>Ações de Manutenção e Lote</span>
                 </h3>
                 <div className="flex flex-wrap gap-3">
                   <button
@@ -1445,16 +1436,7 @@ export default function AdminDashboard() {
                     title="Lançamento rápido de corridas em lote"
                   >
                     <Layers className="h-4 w-4 text-white" />
-                    <span>LANÇAMENTO EM LOTE (RECUPERAÇÃO)</span>
-                  </button>
-
-                  <button
-                    onClick={handleRunIntelligentSync}
-                    className="flex items-center space-x-2 bg-amber-500 hover:bg-amber-600 text-slate-950 border border-amber-600 px-4 py-3 rounded-xl text-xs font-black transition-all shadow-md"
-                    title="Restaura corridas do dia 15/08 e traz de volta corridas marcadas como perdidas"
-                  >
-                    <Sparkles className="h-4 w-4 text-slate-950" />
-                    <span>RECUPERAR CORRIDAS 15/08 & RETROATIVAS</span>
+                    <span>LANÇAMENTO EM LOTE</span>
                   </button>
 
                   <button
@@ -2064,15 +2046,6 @@ export default function AdminDashboard() {
                   >
                     <Layers className="h-4 w-4 text-white" />
                     <span>Lançamento em Lote</span>
-                  </button>
-
-                  <button
-                    onClick={handleRunIntelligentSync}
-                    className="flex items-center space-x-1 bg-amber-500 hover:bg-amber-600 text-slate-950 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all shadow-md"
-                    title="Restaurar Corridas do dia 15/08"
-                  >
-                    <Sparkles className="h-4 w-4 text-slate-950" />
-                    <span>Recuperar Corridas 15/08</span>
                   </button>
 
                   {pendingDeliveries.length > 0 && (

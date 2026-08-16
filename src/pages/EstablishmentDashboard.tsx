@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { db, Delivery, User, Schedule, RiderLocation, Establishment } from '../utils/db';
+import { db, Delivery, User, Schedule, RiderLocation, Establishment, getDeliveryOperationalDate, isSameDayString } from '../utils/db';
 import { 
   LogOut, 
   Check, 
@@ -145,7 +145,7 @@ export default function EstablishmentDashboard() {
     };
   }, [user, navigate]);
 
-  const todaySchedulesRaw = establishmentSchedules.filter(s => db.isSameDayString(s.date, todayStr));
+  const todaySchedulesRaw = establishmentSchedules.filter(s => isSameDayString(s.date, todayStr));
   
   const todaySchedules: Schedule[] = [];
   const seenRiders = new Set<string>();
@@ -452,7 +452,7 @@ export default function EstablishmentDashboard() {
     );
   }
 
-  const todayDeliveries = deliveries.filter(d => db.isSameDayString(d.date, todayStr));
+  const todayDeliveries = deliveries.filter(d => isSameDayString(d.date, todayStr));
   const todayApprovedDeliveries = todayDeliveries.filter(d => d.status === 'active');
   const todayRevenue = todayApprovedDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
 
@@ -472,7 +472,8 @@ export default function EstablishmentDashboard() {
 
       if (filterMode === 'smart_shift') {
         if (!smartDate) return true;
-        const isDateMatch = db.isSameDayString(d.date, smartDate);
+        const opDate = getDeliveryOperationalDate(d.date, d.time);
+        const isDateMatch = isSameDayString(opDate, smartDate);
         if (!isDateMatch) return false;
 
         const [h] = (d.time || '12:00').split(':').map(Number);
