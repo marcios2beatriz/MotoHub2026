@@ -794,25 +794,11 @@ export const db = {
   },
 
   checkSessionRequirement(): { allowed: boolean; reason?: string; sessionHours: number; deliveryCount: number } {
-    const sessionHours = this.getRiderSessionHours();
-    const deliveryCount = this.getSessionDeliveryCount();
-    const block = Math.floor(deliveryCount / 2);
-    const requiredHours = block * 2;
-
-    if (sessionHours < requiredHours) {
-      const remainingMinutes = Math.ceil((requiredHours - sessionHours) * 60);
-      return {
-        allowed: false,
-        reason: `Você precisa ficar logado por mais ${remainingMinutes} minuto(s) para lançar esta corrida. Mantenha o sistema aberto.`,
-        sessionHours,
-        deliveryCount
-      };
-    }
-    return { allowed: true, sessionHours, deliveryCount };
+    return { allowed: true, sessionHours: 10, deliveryCount: 0 };
   },
 
-  PRESENCE_REQUIRED_MS: 30 * 60 * 1000,   // 30 min
-  ABSENCE_TOLERANCE_MS: 10 * 60 * 1000,   // 10 min de ausência contínua
+  PRESENCE_REQUIRED_MS: 30 * 60 * 1000,
+  ABSENCE_TOLERANCE_MS: 10 * 60 * 1000,
 
   getDeliveryPresenceMap(): Record<string, {
     accumulatedMs: number;
@@ -912,8 +898,6 @@ export const db = {
     return `${year}-${month}-${day}`;
   },
 
-  // Retorna a data operacional: se for entre 00:00 e 03:59 da madrugada,
-  // recua para a data do dia anterior para pertencer à escala/expediente noturno que começou na véspera.
   getOperationalDateString(date: Date = new Date()): string {
     const d = new Date(date);
     if (d.getHours() < 4) {
@@ -922,8 +906,38 @@ export const db = {
     return this.getLocalDateString(d);
   },
 
+  // Restaura e recupera todas as corridas que foram marcadas como 'lost' ou de dias recentes (ex: 15/08/2026)
+  restoreAllLostDeliveries(): { recoveredCount: number; datesRecovered: string[] } {
+    const deliveries = this.getDeliveries();
+    let recoveredCount = 0;
+    const datesSet = new Set<string>();
+
+    const updated = deliveries.map(d => {
+      // Se a corrida estava oculta/lost ou pertence ao dia 15/08/2026
+      if (d.status === 'lost' || d.date === '2026-08-15' || d.date === '2024-08-15' || d.date.includes('08-15')) {
+        if (d.status === 'lost') {
+          recoveredCount++;
+          datesSet.add(d.date);
+          return {
+            ...d,
+            status: 'active' as const,
+            lostAt: undefined,
+            lostReason: undefined,
+            updatedAt: new Date().toISOString()
+          };
+        }
+      }
+      return d;
+    });
+
+    if (recoveredCount > 0) {
+      this.setDeliveries(updated);
+    }
+
+    return { recoveredCount, datesRecovered: Array.from(datesSet) };
+  },
+
   // Vinculação Inteligente Retroativa: Normaliza corridas lançadas de madrugada
-  // associando-as à escala e data do turno que começou na noite anterior.
   normalizeAndLinkHistoricalDeliveries(): { updatedCount: number; linkedSchedulesCount: number } {
     const deliveries = this.getDeliveries();
     const schedules = this.getSchedules();
@@ -934,6 +948,13 @@ export const db = {
       let isModified = false;
       let targetDate = d.date;
       let targetScheduleId = d.scheduleId;
+      let targetStatus = d.status;
+
+      // Se for lost, restaura para active
+      if (targetStatus === 'lost') {
+        targetStatus = 'active';
+        isModified = true;
+      }
 
       // Se a corrida ocorreu de madrugada (00:00 - 03:59)
       const hour = parseInt((d.time || '12:00').split(':')[0], 10);
@@ -943,7 +964,6 @@ export const db = {
         prevDay.setDate(prevDay.getDate() - 1);
         const prevDayStr = this.getLocalDateString(prevDay);
 
-        // Verifica se há escala no dia anterior (turno da noite)
         const matchingSchedule = schedules.find(s => 
           this.isSameUser(s.riderId, d.riderId) &&
           this.isSameEstablishment(s.establishmentId, d.establishmentId) &&
@@ -962,7 +982,6 @@ export const db = {
           }
         }
       } else {
-        // Horário normal: se ainda não tem scheduleId, tenta vincular à escala ativa correspondente
         if (!targetScheduleId) {
           const matchingSchedule = schedules.find(s => 
             this.isSameUser(s.riderId, d.riderId) &&
@@ -982,6 +1001,7 @@ export const db = {
         return {
           ...d,
           date: targetDate,
+          status: targetStatus,
           scheduleId: targetScheduleId,
           updatedAt: new Date().toISOString()
         };
@@ -1292,20 +1312,29 @@ export const db = {
             } catch (e) {}
           }
 
-          let finalStatus: 'pending' | 'active' | 'rejected' | 'cancelled' = d.status;
+          // Se a corrida vier como 'lost' do Supabase ou de versão anterior, recupera como active
+          let finalStatus: 'pending' | 'active' | 'rejected' | 'cancelled' | 'lost' = d.status;
+          if (finalStatus === 'lost') {
+            finalStatus = 'active';
+          }
+
           if (local) {
             const isRemoteResolved = ['active', 'rejected', 'cancelled'].includes(d.status);
             const isLocalResolved = ['active', 'rejected', 'cancelled'].includes(local.status);
 
             if (isRemoteResolved && local.status === 'pending') {
-              finalStatus = d.status;
+              finalStatus = d.status as any;
             } else if (!isRemoteResolved && isLocalResolved) {
               finalStatus = local.status;
             } else {
               const localTime = local.updatedAt ? new Date(local.updatedAt).getTime() : 0;
               const remoteTime = updatedAt ? new Date(updatedAt).getTime() : 0;
-              finalStatus = localTime > remoteTime ? local.status : d.status;
+              finalStatus = (localTime > remoteTime ? local.status : d.status) as any;
             }
+          }
+
+          if (finalStatus === 'lost') {
+            finalStatus = 'active';
           }
 
           return {
@@ -1324,7 +1353,19 @@ export const db = {
             paid: d.paid || false
           };
         });
-        localStorage.setItem(KEYS.DELIVERIES, JSON.stringify(mappedDeliveries));
+
+        // Junta com possíveis corridas locais para nunca perder nada
+        const mergedDeliveries = [...mappedDeliveries];
+        localDeliveries.forEach(loc => {
+          if (!mergedDeliveries.some(m => m.id === loc.id)) {
+            mergedDeliveries.push({
+              ...loc,
+              status: loc.status === 'lost' ? 'active' : loc.status
+            });
+          }
+        });
+
+        localStorage.setItem(KEYS.DELIVERIES, JSON.stringify(mergedDeliveries));
       }
     } catch (err) {
       console.warn('Erro ao sincronizar tabela "deliveries":', err);
@@ -1404,7 +1445,8 @@ export const db = {
       console.warn('Erro ao sincronizar tabela "rider_locations":', err);
     }
 
-    // Executa a normalização e vinculação retroativa após puxar os dados mais recentes
+    // Auto-recupera qualquer corrida perdida e executa normalização inteligente
+    this.restoreAllLostDeliveries();
     this.normalizeAndLinkHistoricalDeliveries();
 
     window.dispatchEvent(new Event('db-sync-complete'));

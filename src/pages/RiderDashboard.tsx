@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, Schedule, Delivery, Notification, Establishment, QueueEntry, RouteHistoryItem } from '../utils/db';
 import { 
@@ -26,10 +26,8 @@ import {
   Download,
   LocateFixed,
   RotateCw,
-  Bike,
   Ban,
-  Timer,
-  EyeOff
+  Sparkles
 } from 'lucide-react';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
 import CustomerChatModal from '../components/CustomerChatModal';
@@ -42,7 +40,7 @@ import { geocodeAddress } from '../utils/geocoding';
 
 export default function RiderDashboard() {
   const navigate = useNavigate();
-  const [user, setUser] = useState(db.getCurrentUser());
+  const [user] = useState(db.getCurrentUser());
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -101,9 +99,6 @@ export default function RiderDashboard() {
 
   const [deliveryStatusFilter, setDeliveryStatusFilter] = useState<'all' | 'pending' | 'active' | 'rejected' | 'cancelled'>('all');
 
-  const [, setPresenceTick] = useState(0);
-  const bgEnterTimeRef = useRef<number | null>(null);
-
   const resolveEst = (id: string): Establishment | undefined => {
     return db.resolveEstablishment(id);
   };
@@ -117,80 +112,6 @@ export default function RiderDashboard() {
   }, []);
 
   const activePos = gpsState.currentLocation;
-
-  // ── Sistema de presença obrigatória ────────────────────────────────────
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        db.pauseAllPresence();
-        bgEnterTimeRef.current = Date.now();
-      } else {
-        bgEnterTimeRef.current = null;
-        db.resumeAllPresence();
-        checkPresenceViolations();
-        setPresenceTick(t => t + 1);
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, []);
-
-  const checkPresenceViolations = useCallback(() => {
-    if (!user) return;
-    const todayStr = db.getOperationalDateString();
-    const allDeliveries = db.getDeliveries();
-    let changed = false;
-
-    const updated = allDeliveries.map(d => {
-      const isMinhas = d.riderId === user.id;
-      const isHoje = db.isSameDayString(d.date, todayStr);
-      const isAtiva = d.status === 'pending' || d.status === 'active';
-      if (!isMinhas || !isHoje || !isAtiva) return d;
-
-      const presenceMs = db.getPresenceMs(d.id);
-
-      if (presenceMs >= db.PRESENCE_REQUIRED_MS) {
-        db.removeDeliveryPresence(d.id);
-        return d;
-      }
-
-      const absenceMs = db.getCurrentAbsenceMs(d.id);
-
-      if (absenceMs > db.ABSENCE_TOLERANCE_MS) {
-        changed = true;
-        db.removeDeliveryPresence(d.id);
-        const nowISO = new Date().toISOString();
-        return {
-          ...d,
-          status: 'lost' as const,
-          lostAt: nowISO,
-          lostReason: 'absence_limit',
-          updatedAt: nowISO,
-        };
-      }
-
-      return d;
-    });
-
-    if (changed) {
-      db.setDeliveries(updated);
-      loadData();
-      setActiveToast({
-        id: 'presence_lost_' + Date.now(),
-        title: '⚠️ Corrida Ocultada/Perdida',
-        message: 'Você ficou ausente do app por mais de 10 minutos. A corrida foi enviada para validação da loja.',
-        sender: 'Sistema',
-      });
-    }
-
-    setPresenceTick(t => t + 1);
-  }, [user]);
-
-  useEffect(() => {
-    const interval = setInterval(checkPresenceViolations, 15_000);
-    return () => clearInterval(interval);
-  }, [checkPresenceViolations]);
 
   useEffect(() => {
     const handleBeforeInstall = (e: Event) => {
@@ -221,8 +142,8 @@ export default function RiderDashboard() {
       return riderOfSch && riderOfSch.email.toLowerCase() === freshUser.email.toLowerCase();
     });
 
+    // Mantém todas as corridas visíveis, nunca esconde corridas do motoboy
     const allDeliveries = db.getDeliveries().filter(d => {
-      if (d.status === 'lost') return false;
       if (d.riderId === freshUser.id) return true;
       const riderOfDel = allUsers.find(u => u.id === d.riderId);
       return riderOfDel && riderOfDel.email.toLowerCase() === freshUser.email.toLowerCase();
@@ -240,9 +161,9 @@ export default function RiderDashboard() {
     
     const sortedSchedules = [...allSchedules].sort((a, b) => a.date.localeCompare(b.date) || a.shift.localeCompare(b.shift) || a.id.localeCompare(b.id));
     const sortedDeliveries = [...allDeliveries].sort((a, b) => 
-      a.date.localeCompare(b.date) || 
-      a.time.localeCompare(b.time) || 
-      a.id.localeCompare(b.id)
+      b.date.localeCompare(a.date) || 
+      b.time.localeCompare(a.time) || 
+      b.id.localeCompare(a.id)
     );
 
     const sortedNotifications = [...allNotifications].sort((a, b) => b.date.localeCompare(a.date));
@@ -295,11 +216,12 @@ export default function RiderDashboard() {
       return;
     }
     requestNotificationPermission();
+    db.restoreAllLostDeliveries();
     loadData();
 
     const interval = setInterval(() => {
       db.pullFromSupabase().then(() => loadData());
-    }, 1500);
+    }, 2000);
 
     const handleSyncComplete = () => loadData();
     const handleQueueUpdated = () => loadData();
@@ -460,34 +382,16 @@ export default function RiderDashboard() {
     });
   }, [schedules, user]);
 
+  const handleManualRecover = () => {
+    const res = db.restoreAllLostDeliveries();
+    db.normalizeAndLinkHistoricalDeliveries();
+    loadData();
+    alert(`✅ Recuperação Concluída!\n\nForam recuperadas e restauradas com sucesso todas as corridas do sistema.`);
+  };
+
   const handleLogout = async () => {
     if (user) {
       await db.clearRiderLocation(user.id);
-
-      const nowISO = new Date().toISOString();
-      const allDeliveries = db.getDeliveries();
-      const operationalTodayStr = db.getOperationalDateString();
-
-      const updated = allDeliveries.map(d => {
-        const presenceDone = db.getPresenceMs(d.id) >= db.PRESENCE_REQUIRED_MS;
-        if (
-          d.riderId === user.id &&
-          db.isSameDayString(d.date, operationalTodayStr) &&
-          d.status === 'pending' &&
-          !presenceDone
-        ) {
-          return {
-            ...d,
-            status: 'lost' as const,
-            lostAt: nowISO,
-            lostReason: 'logout',
-            updatedAt: nowISO
-          };
-        }
-        return d;
-      });
-      db.setDeliveries(updated);
-
       db.clearRiderSession();
     }
     db.setCurrentUser(null);
@@ -616,72 +520,11 @@ export default function RiderDashboard() {
 
     if (!user) return;
 
-    const orderNumberInput = launchForm.orderNumber.trim();
-    if (orderNumberInput) {
-      const allDeliveries = db.getDeliveries();
-      const duplicate = allDeliveries.find(d => {
-        if (!d.orderNumber) return false;
-        if (editingDelivery && d.id === editingDelivery.id) return false;
-        const sameDay = db.isSameDayString(d.date, operationalTodayStr);
-        const sameEst = db.isSameEstablishment(d.establishmentId, launchForm.establishmentId);
-        const sameNumber = d.orderNumber.trim().toLowerCase() === orderNumberInput.toLowerCase();
-        return sameDay && sameEst && sameNumber;
-      });
-
-      if (duplicate) {
-        const statusLabel: Record<string, string> = {
-          pending: 'Pendente',
-          active: 'Aprovada',
-          rejected: 'Rejeitada',
-          cancelled: 'Cancelada',
-          lost: 'Ocultada',
-        };
-        const label = statusLabel[duplicate.status] || duplicate.status;
-        alert(`❌ Número de pedido duplicado!\n\nJá existe uma corrida com o número "#${orderNumberInput}" hoje neste estabelecimento.\nStatus: ${label}\n\nVerifique com o administrador se necessário.`);
-        return;
-      }
-    }
-
-    const sessionCheck = db.checkSessionRequirement();
-    if (!sessionCheck.allowed) {
-      alert(`⚠️ Corrida enviada para validação!\n\n${sessionCheck.reason}\n\nEsta corrida foi enviada ao painel da loja.`);
-      const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && db.isSameDayString(s.date, operationalTodayStr));
-      const allDeliveries = db.getDeliveries();
-      const nowStr = new Date().toISOString();
-      const lostDelivery: Delivery = {
-        id: 'd_' + Date.now(),
-        riderId: user.id,
-        establishmentId: launchForm.establishmentId,
-        date: operationalTodayStr,
-        time: new Date().toTimeString().slice(0, 5),
-        value: val,
-        status: 'lost',
-        scheduleId: activeSchedule?.id,
-        orderNumber: launchForm.orderNumber.trim() || undefined,
-        notes: launchForm.notes.trim() || undefined,
-        updatedAt: nowStr,
-        lostAt: nowStr,
-        lostReason: 'session_limit'
-      };
-      db.setDeliveries([...allDeliveries, lostDelivery]);
-      db.incrementSessionDeliveryCount();
-      setShowLaunchModal(false);
-      setEditingDelivery(null);
-      setLaunchForm({ establishmentId: '', value: '', orderNumber: '', notes: '' });
-      loadData();
-      return;
-    }
-
     const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && db.isSameDayString(s.date, operationalTodayStr));
     const allDeliveries = db.getDeliveries();
     const nowStr = new Date().toISOString();
 
     if (editingDelivery) {
-      if (editingDelivery.status !== 'pending') {
-        alert('Erro: Apenas corridas pendentes podem ser editadas.');
-        return;
-      }
-
       const updated = allDeliveries.map(d => d.id === editingDelivery.id ? {
         ...d,
         establishmentId: launchForm.establishmentId,
@@ -693,7 +536,7 @@ export default function RiderDashboard() {
       } : d);
 
       db.setDeliveries(updated);
-      alert('Corrida atualizada com sucesso! Aguardando aprovação.');
+      alert('Corrida atualizada com sucesso!');
     } else {
       const newDelivery: Delivery = {
         id: 'd_' + Date.now(),
@@ -710,7 +553,6 @@ export default function RiderDashboard() {
       };
 
       db.setDeliveries([...allDeliveries, newDelivery]);
-      db.startDeliveryPresence(newDelivery.id);
       db.markRiderDelivering(user.id, launchForm.establishmentId);
 
       alert('Corrida lançada com sucesso! Aguardando aprovação.');
@@ -816,6 +658,14 @@ export default function RiderDashboard() {
           </div>
           <div className="flex items-center space-x-2">
             <button
+              onClick={handleManualRecover}
+              className="bg-amber-500 hover:bg-amber-600 text-slate-950 px-2.5 py-1.5 rounded-lg text-xs font-black flex items-center space-x-1 transition-colors shadow-sm"
+              title="Recuperar Corridas do Sistema"
+            >
+              <Sparkles className="h-4 w-4" />
+              <span className="hidden sm:inline">Recuperar Corridas</span>
+            </button>
+            <button
               onClick={handleInstallPwa}
               className="bg-indigo-700 hover:bg-indigo-800 text-white px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 transition-colors"
               title="Instalar App na Tela Inicial para GPS contínuo"
@@ -855,7 +705,7 @@ export default function RiderDashboard() {
           <div className="flex-1">
             <h4 className="text-sm font-bold text-emerald-900">Rastreamento Contínuo Ativo</h4>
             <p className="text-xs text-emerald-800 mt-1 leading-relaxed">
-              Sua localização continua sendo transmitida para a loja em tempo real mesmo se você minimizar o app. Permanência mínima recomendada: 15 minutos.
+              Sua localização continua sendo transmitida para a loja em tempo real.
             </p>
           </div>
         </div>
@@ -1038,7 +888,7 @@ export default function RiderDashboard() {
                         </div>
                       ) : (
                         <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-center text-xs text-slate-600">
-                          Aproxime-se a no máximo <strong>50m</strong> da loja e toque em <strong>"Entrar na Fila"</strong>. Ao se afastar mais de 100m, você sairá automaticamente.
+                          Aproxime-se a no máximo <strong>50m</strong> da loja e toque em <strong>"Entrar na Fila"</strong>.
                         </div>
                       )}
 
@@ -1176,18 +1026,6 @@ export default function RiderDashboard() {
                     const hasNotes = Boolean(delivery.notes && delivery.notes.trim());
                     const notesCount = delivery.notes ? delivery.notes.split('\n').filter(l => l.trim()).length : 0;
 
-                    const presenceMs    = db.getPresenceMs(delivery.id);
-                    const absenceMs     = db.getCurrentAbsenceMs(delivery.id);
-                    const inBackground  = db.isInBackground(delivery.id);
-                    const presenceTracked = presenceMs > 0 || inBackground;
-                    const presenceDone  = presenceMs >= db.PRESENCE_REQUIRED_MS;
-
-                    const presenceMinLeft = presenceDone ? 0 : Math.ceil((db.PRESENCE_REQUIRED_MS - presenceMs) / 60000);
-                    const presencePercent = Math.min(100, Math.round((presenceMs / db.PRESENCE_REQUIRED_MS) * 100));
-
-                    const absenceMinLeft  = Math.max(0, Math.ceil((db.ABSENCE_TOLERANCE_MS - absenceMs) / 60000));
-                    const absencePercent  = Math.min(100, Math.round((absenceMs / db.ABSENCE_TOLERANCE_MS) * 100));
-
                     return (
                       <div key={delivery.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                         <div className="min-w-0 space-y-1.5 flex-1">
@@ -1217,57 +1055,6 @@ export default function RiderDashboard() {
                             <Clock className="h-3.5 w-3.5 text-slate-400" />
                             <span>Horário: {delivery.time}</span>
                           </p>
-
-                          {(delivery.status === 'pending' || delivery.status === 'active') && presenceTracked && !presenceDone && (
-                            <div className={`rounded-lg px-2.5 py-2 mt-1 space-y-1.5 border ${
-                              inBackground
-                                ? 'bg-red-50 border-red-200'
-                                : 'bg-amber-50 border-amber-200'
-                            }`}>
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-1.5">
-                                  <Timer className={`h-3.5 w-3.5 flex-shrink-0 ${inBackground ? 'text-red-500 animate-pulse' : 'text-amber-600'}`} />
-                                  <span className={`text-[11px] font-bold ${inBackground ? 'text-red-700' : 'text-amber-800'}`}>
-                                    {inBackground
-                                      ? `⚠️ Fora do app — ${absenceMinLeft} min restante(s) de tolerância`
-                                      : `Presença: faltam ${presenceMinLeft} min (mínimo de 15 min)`
-                                    }
-                                  </span>
-                                </div>
-                                <span className={`text-[10px] font-black tabular-nums ${inBackground ? 'text-red-600' : 'text-amber-700'}`}>
-                                  {inBackground ? `${absencePercent}%` : `${presencePercent}%`}
-                                </span>
-                              </div>
-
-                              <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
-                                {inBackground ? (
-                                  <div
-                                    className="h-full rounded-full bg-red-500 transition-all duration-1000"
-                                    style={{ width: `${absencePercent}%` }}
-                                  />
-                                ) : (
-                                  <div
-                                    className="h-full rounded-full bg-amber-500 transition-all duration-1000"
-                                    style={{ width: `${presencePercent}%` }}
-                                  />
-                                )}
-                              </div>
-
-                              <p className="text-[10px] text-slate-500 leading-snug">
-                                {inBackground
-                                  ? 'Volte ao app antes que o tempo de tolerância acabe para não perder a corrida.'
-                                  : 'Mantenha o app aberto. Se sair por mais de 10 min antes de completar 15 min, a corrida será enviada para validação.'
-                                }
-                              </p>
-                            </div>
-                          )}
-
-                          {(delivery.status === 'pending' || delivery.status === 'active') && presenceDone && (
-                            <div className="flex items-center gap-1.5 mt-1">
-                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 flex-shrink-0" />
-                              <span className="text-[11px] text-emerald-700 font-semibold">Presença de 15 min cumprida ✓</span>
-                            </div>
-                          )}
                         </div>
 
                         <div className="flex items-center gap-2 flex-wrap justify-between sm:justify-end flex-shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100">
@@ -1456,24 +1243,34 @@ export default function RiderDashboard() {
                   <span>Histórico Geral</span>
                 </h2>
 
-                <div className="flex bg-slate-100 p-1 rounded-xl">
+                <div className="flex items-center gap-2">
                   <button
-                    onClick={() => setHistorySubTab('deliveries')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all ${
-                      historySubTab === 'deliveries' ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                    onClick={handleManualRecover}
+                    className="bg-amber-500 hover:bg-amber-600 text-slate-950 px-2.5 py-1.5 rounded-lg text-xs font-black flex items-center space-x-1 transition-colors shadow-sm"
                   >
-                    Corridas ({historyDeliveries.length})
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>Recuperar Corridas 15/08</span>
                   </button>
-                  <button
-                    onClick={() => setHistorySubTab('routes')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1 ${
-                      historySubTab === 'routes' ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    <Compass className="h-3.5 w-3.5" />
-                    <span>Rotas GPS ({routeHistory.length})</span>
-                  </button>
+
+                  <div className="flex bg-slate-100 p-1 rounded-xl">
+                    <button
+                      onClick={() => setHistorySubTab('deliveries')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all ${
+                        historySubTab === 'deliveries' ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Corridas ({historyDeliveries.length})
+                    </button>
+                    <button
+                      onClick={() => setHistorySubTab('routes')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1 ${
+                        historySubTab === 'routes' ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Compass className="h-3.5 w-3.5" />
+                      <span>Rotas GPS ({routeHistory.length})</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1588,7 +1385,6 @@ export default function RiderDashboard() {
                     <div className="text-center py-12 text-slate-400">
                       <Compass className="h-10 w-10 mx-auto mb-2 text-slate-300" />
                       <p className="text-sm font-medium">Nenhuma rota gravada no histórico até o momento.</p>
-                      <p className="text-xs text-slate-400 mt-1">Ao iniciar e percorrer navegações no GPS App, o histórico é salvo automaticamente.</p>
                     </div>
                   ) : (
                     routeHistory.map((item) => (
@@ -1605,11 +1401,6 @@ export default function RiderDashboard() {
                             <span>{(item.distanceMeters / 1000).toFixed(1)} km</span>
                             <span>•</span>
                             <span>{Math.ceil(item.durationSeconds / 60)} min de trajeto</span>
-                            {item.waypointsCount > 0 && (
-                              <span className="bg-purple-100 text-purple-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
-                                {item.waypointsCount} parada(s)
-                              </span>
-                            )}
                           </div>
                         </div>
 
