@@ -175,6 +175,54 @@ const KEYS = {
   MISSING_TABLES: 'delivery_system_missing_tables'
 };
 
+// Contas padrão de segurança caso a máquina esteja sem internet ou o Supabase responda com 402/erro
+const DEFAULT_SEED_USERS: User[] = [
+  {
+    id: 'u_admin_default',
+    name: 'Administrador Geral',
+    email: 'admin@delivery.com',
+    role: 'admin',
+    active: true,
+    phone: '(83) 99999-9999',
+    cpf: '000.000.000-01',
+    passwordHash: 'admin123',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    id: 'u_darwin_rider',
+    name: 'Darwin Cuadros',
+    email: 'cuadrosdarwin818@gmail.com',
+    role: 'rider',
+    active: true,
+    phone: '(83) 98888-8888',
+    cpf: '000.000.000-88',
+    passwordHash: '0610',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+];
+
+const DEFAULT_SEED_ESTS: Establishment[] = [
+  {
+    id: 'e_burgrill_default',
+    name: 'Hamburgueria Burgrill',
+    email: 'burgrill@delivery.com',
+    active: true,
+    phone: '(83) 3333-4444',
+    address: {
+      street: 'Rua Aprígio Veloso',
+      number: '882',
+      neighborhood: 'Bodocongó',
+      city: 'Campina Grande',
+      state: 'PB',
+      zipCode: '58429-900'
+    },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+];
+
 const getMissingColumnsCache = (): Record<string, string[]> => {
   const data = localStorage.getItem(KEYS.MISSING_COLUMNS);
   return data ? JSON.parse(data) : {};
@@ -248,36 +296,40 @@ async function safeUpsert(tableName: string, rawPayload: Record<string, any>): P
   const maxRetries = 10;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    const { error } = await supabase.from(tableName).upsert(payload);
-    
-    if (!error) {
-      return { success: true };
-    }
-
-    const msg = error.message || '';
-    if (msg.includes('Could not find the table') || error.code === 'PGRST205' || (error as any).status === 404) {
-      markTableMissing(tableName);
-      return { success: false, error };
-    }
-
-    const match = msg.match(/Could not find the '([^']+)' column/) || 
-                  msg.match(/column "([^"]+)"/) || 
-                  msg.match(/column '([^']+)'/);
-    
-    if (match && match[1]) {
-      const missingCol = match[1];
-      const currentCache = getMissingColumnsCache();
-      if (!currentCache[tableName]) currentCache[tableName] = [];
-      if (!currentCache[tableName].includes(missingCol)) {
-        currentCache[tableName].push(missingCol);
-        saveMissingColumnsCache(currentCache);
+    try {
+      const { error } = await supabase.from(tableName).upsert(payload);
+      
+      if (!error) {
+        return { success: true };
       }
 
-      delete payload[missingCol];
-      continue;
-    }
+      const msg = error.message || '';
+      if (msg.includes('Could not find the table') || error.code === 'PGRST205' || (error as any).status === 404 || (error as any).status === 402) {
+        markTableMissing(tableName);
+        return { success: false, error };
+      }
 
-    return { success: false, error };
+      const match = msg.match(/Could not find the '([^']+)' column/) || 
+                    msg.match(/column "([^"]+)"/) || 
+                    msg.match(/column '([^']+)'/);
+      
+      if (match && match[1]) {
+        const missingCol = match[1];
+        const currentCache = getMissingColumnsCache();
+        if (!currentCache[tableName]) currentCache[tableName] = [];
+        if (!currentCache[tableName].includes(missingCol)) {
+          currentCache[tableName].push(missingCol);
+          saveMissingColumnsCache(currentCache);
+        }
+
+        delete payload[missingCol];
+        continue;
+      }
+
+      return { success: false, error };
+    } catch (e) {
+      return { success: false, error: e };
+    }
   }
 
   return { success: false, error: 'Limite de tentativas excedido' };
@@ -289,7 +341,23 @@ export const db = {
 
   getUsers(): User[] {
     const data = localStorage.getItem(KEYS.USERS);
-    return data ? JSON.parse(data) : [];
+    if (!data || JSON.parse(data).length === 0) {
+      localStorage.setItem(KEYS.USERS, JSON.stringify(DEFAULT_SEED_USERS));
+      return DEFAULT_SEED_USERS;
+    }
+    const currentList: User[] = JSON.parse(data);
+    // Assegura que os usuários padrão existam na lista
+    let updated = false;
+    DEFAULT_SEED_USERS.forEach(seed => {
+      if (!currentList.some(u => u.email.toLowerCase() === seed.email.toLowerCase())) {
+        currentList.push(seed);
+        updated = true;
+      }
+    });
+    if (updated) {
+      localStorage.setItem(KEYS.USERS, JSON.stringify(currentList));
+    }
+    return currentList;
   },
   setUsers(users: User[]) {
     localStorage.setItem(KEYS.USERS, JSON.stringify(users));
@@ -311,8 +379,10 @@ export const db = {
   },
 
   async fetchUserByEmail(email: string): Promise<User | null> {
+    const cleanEmail = email.trim().toLowerCase();
+    
+    // 1. Tenta consulta ao Supabase caso esteja acessível
     try {
-      const cleanEmail = email.trim().toLowerCase();
       const { data, error } = await supabase
         .from('users')
         .select('*')
@@ -335,21 +405,30 @@ export const db = {
           updatedAt: data.updated_at
         };
 
-        // Atualizar no localStorage local
         const currentUsers = this.getUsers().filter(u => u.id !== user.id && u.email.toLowerCase() !== cleanEmail);
         localStorage.setItem(KEYS.USERS, JSON.stringify([...currentUsers, user]));
 
         return user;
       }
     } catch (e) {
-      console.warn('Erro ao consultar usuário diretamente no Supabase:', e);
+      console.warn('Supabase não respondeu na busca direta. Utilizando dados locais.');
     }
+
+    // 2. Consulta no repositório local
+    const localUsers = this.getUsers();
+    const foundLocal = localUsers.find(u => u.email.toLowerCase() === cleanEmail);
+    if (foundLocal) return foundLocal;
+
     return null;
   },
 
   getEstablishments(): Establishment[] {
     const data = localStorage.getItem(KEYS.ESTABLISHMENTS);
-    return data ? JSON.parse(data) : [];
+    if (!data || JSON.parse(data).length === 0) {
+      localStorage.setItem(KEYS.ESTABLISHMENTS, JSON.stringify(DEFAULT_SEED_ESTS));
+      return DEFAULT_SEED_ESTS;
+    }
+    return JSON.parse(data);
   },
   setEstablishments(ests: Establishment[]) {
     localStorage.setItem(KEYS.ESTABLISHMENTS, JSON.stringify(ests));
@@ -431,7 +510,9 @@ export const db = {
   async clearAllDeliveries() {
     localStorage.setItem(KEYS.DELIVERIES, JSON.stringify([]));
     if (!isTableMissing('deliveries')) {
-      await supabase.from('deliveries').delete().neq('id', '');
+      try {
+        await supabase.from('deliveries').delete().neq('id', '');
+      } catch (e) {}
     }
   },
 
@@ -572,31 +653,41 @@ export const db = {
   async deleteUser(id: string) {
     const users = this.getUsers().filter(u => u.id !== id);
     localStorage.setItem(KEYS.USERS, JSON.stringify(users));
-    await supabase.from('users').delete().eq('id', id);
+    try {
+      await supabase.from('users').delete().eq('id', id);
+    } catch (e) {}
   },
 
   async deleteEstablishment(id: string) {
     const ests = this.getEstablishments().filter(e => e.id !== id);
     localStorage.setItem(KEYS.ESTABLISHMENTS, JSON.stringify(ests));
-    await supabase.from('establishments').delete().eq('id', id);
+    try {
+      await supabase.from('establishments').delete().eq('id', id);
+    } catch (e) {}
   },
 
   async deleteSchedule(id: string) {
     const schedules = this.getSchedules().filter(s => s.id !== id);
     localStorage.setItem(KEYS.SCHEDULES, JSON.stringify(schedules));
-    await supabase.from('schedules').delete().eq('id', id);
+    try {
+      await supabase.from('schedules').delete().eq('id', id);
+    } catch (e) {}
   },
 
   async deletePartnerRequest(id: string) {
     const requests = this.getPartnerRequests().filter(r => r.id !== id);
     localStorage.setItem(KEYS.PARTNER_REQUESTS, JSON.stringify(requests));
-    await supabase.from('partner_requests').delete().eq('id', id);
+    try {
+      await supabase.from('partner_requests').delete().eq('id', id);
+    } catch (e) {}
   },
 
   async deleteDelivery(id: string) {
     const deliveries = this.getDeliveries().filter(d => d.id !== id);
     localStorage.setItem(KEYS.DELIVERIES, JSON.stringify(deliveries));
-    await supabase.from('deliveries').delete().eq('id', id);
+    try {
+      await supabase.from('deliveries').delete().eq('id', id);
+    } catch (e) {}
   },
 
   updateRiderLocation(riderId: string, riderName: string, lat: number, lng: number) {
@@ -634,7 +725,9 @@ export const db = {
     }
     
     if (!isTableMissing('rider_locations')) {
-      await supabase.from('rider_locations').delete().eq('rider_id', riderId);
+      try {
+        await supabase.from('rider_locations').delete().eq('rider_id', riderId);
+      } catch (e) {}
     }
   },
 
@@ -650,8 +743,7 @@ export const db = {
   async pullFromSupabase() {
     try {
       const { data: usersData, error } = await supabase.from('users').select('*');
-      if (error) throw error;
-      if (usersData) {
+      if (!error && usersData && usersData.length > 0) {
         const localUsers = this.getUsers();
         const mappedUsers: User[] = usersData.map(u => {
           const local = localUsers.find(l => l.id === u.id);
@@ -673,13 +765,12 @@ export const db = {
         localStorage.setItem(KEYS.USERS, JSON.stringify(mappedUsers));
       }
     } catch (err) {
-      console.warn('Erro ao sincronizar tabela "users":', err);
+      console.warn('Erro ou limitação de cota na sincronização de usuários:', err);
     }
 
     try {
       const { data: estsData, error } = await supabase.from('establishments').select('*');
-      if (error) throw error;
-      if (estsData) {
+      if (!error && estsData && estsData.length > 0) {
         const localEsts = this.getEstablishments();
         const mappedEsts: Establishment[] = estsData.map(e => {
           let parsedAddress = { street: '', number: '', complement: '', neighborhood: '', city: '', state: '', zipCode: '' };
@@ -694,16 +785,6 @@ export const db = {
               state: e.state || '',
               zipCode: e.zip_code || e.zipCode || ''
             };
-          } else if (e.address) {
-            if (typeof e.address === 'object') {
-              parsedAddress = { ...parsedAddress, ...e.address };
-            } else if (typeof e.address === 'string') {
-              try {
-                let temp = JSON.parse(e.address);
-                if (typeof temp === 'string') temp = JSON.parse(temp);
-                if (temp && typeof temp === 'object') parsedAddress = { ...parsedAddress, ...temp };
-              } catch (err) {}
-            }
           }
 
           const local = localEsts.find(l => l.id === e.id);
@@ -725,13 +806,12 @@ export const db = {
         localStorage.setItem(KEYS.ESTABLISHMENTS, JSON.stringify(mappedEsts));
       }
     } catch (err) {
-      console.warn('Erro ao sincronizar tabela "establishments":', err);
+      console.warn('Erro na sincronização de estabelecimentos:', err);
     }
 
     try {
       const { data: schData, error } = await supabase.from('schedules').select('*');
-      if (error) throw error;
-      if (schData) {
+      if (!error && schData && schData.length > 0) {
         const localSchedules = this.getSchedules();
         const uniqueMap = new Map<string, Schedule>();
         
@@ -775,13 +855,12 @@ export const db = {
         localStorage.setItem(KEYS.SCHEDULES, JSON.stringify(Array.from(uniqueMap.values())));
       }
     } catch (err) {
-      console.warn('Erro ao sincronizar tabela "schedules":', err);
+      console.warn('Erro na sincronização de escalas:', err);
     }
 
     try {
       const { data: delData, error } = await supabase.from('deliveries').select('*');
-      if (error) throw error;
-      if (delData) {
+      if (!error && delData && delData.length > 0) {
         const localDeliveries = this.getDeliveries();
         const mappedDeliveries: Delivery[] = delData.map(d => {
           const local = localDeliveries.find(l => l.id === d.id);
@@ -845,13 +924,12 @@ export const db = {
         localStorage.setItem(KEYS.DELIVERIES, JSON.stringify(mergedDeliveries));
       }
     } catch (err) {
-      console.warn('Erro ao sincronizar tabela "deliveries":', err);
+      console.warn('Erro na sincronização de corridas:', err);
     }
 
     try {
       const { data: reqsData, error } = await supabase.from('partner_requests').select('*');
-      if (error) throw error;
-      if (reqsData) {
+      if (!error && reqsData && reqsData.length > 0) {
         const mappedReqs: PartnerRequest[] = reqsData.map(r => ({
           id: r.id,
           establishmentName: r.establishment_name,
@@ -864,13 +942,12 @@ export const db = {
         localStorage.setItem(KEYS.PARTNER_REQUESTS, JSON.stringify(mappedReqs));
       }
     } catch (err) {
-      console.warn('Erro ao sincronizar tabela "partner_requests":', err);
+      console.warn('Erro na sincronização de partner_requests:', err);
     }
 
     try {
       const { data: locData, error } = await supabase.from('rider_locations').select('*');
-      if (error) throw error;
-      if (locData) {
+      if (!error && locData && locData.length > 0) {
         const mappedLocs: Record<string, RiderLocation> = {};
         locData.forEach(l => {
           const rId = l.rider_id || l.riderId;
@@ -887,7 +964,7 @@ export const db = {
         localStorage.setItem(KEYS.RIDER_LOCATIONS, JSON.stringify(mappedLocs));
       }
     } catch (err) {
-      console.warn('Erro ao sincronizar tabela "rider_locations":', err);
+      console.warn('Erro na sincronização de localizações:', err);
     }
 
     window.dispatchEvent(new Event('db-sync-complete'));
