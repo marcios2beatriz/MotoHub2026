@@ -304,12 +304,47 @@ export const db = {
         cpf: u.cpf,
         password_hash: u.passwordHash,
         must_reset_password: u.mustResetPassword || false,
-        establishment_id: u.establishmentId || null,
-        created_at: u.createdAt || new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        establishment_id: u.establishmentId || null
       };
       safeUpsert('users', rawPayload);
     });
+  },
+
+  async fetchUserByEmail(email: string): Promise<User | null> {
+    try {
+      const cleanEmail = email.trim().toLowerCase();
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .ilike('email', cleanEmail)
+        .maybeSingle();
+
+      if (!error && data) {
+        const user: User = {
+          id: data.id,
+          name: data.name,
+          email: data.email,
+          role: data.role,
+          active: data.active,
+          phone: data.phone || '',
+          cpf: data.cpf || '',
+          passwordHash: data.password_hash || '',
+          mustResetPassword: data.must_reset_password || false,
+          establishmentId: data.establishment_id || undefined,
+          createdAt: data.created_at,
+          updatedAt: data.updated_at
+        };
+
+        // Atualizar no localStorage local
+        const currentUsers = this.getUsers().filter(u => u.id !== user.id && u.email.toLowerCase() !== cleanEmail);
+        localStorage.setItem(KEYS.USERS, JSON.stringify([...currentUsers, user]));
+
+        return user;
+      }
+    } catch (e) {
+      console.warn('Erro ao consultar usuário diretamente no Supabase:', e);
+    }
+    return null;
   },
 
   getEstablishments(): Establishment[] {
@@ -325,16 +360,13 @@ export const db = {
         email: e.email || null,
         active: e.active,
         phone: e.phone || '',
-        address: typeof e.address === 'object' ? JSON.stringify(e.address) : e.address,
         street: e.address?.street || '',
         number: e.address?.number || '',
         complement: e.address?.complement || '',
         neighborhood: e.address?.neighborhood || '',
         city: e.address?.city || '',
         state: e.address?.state || '',
-        zip_code: e.address?.zipCode || '',
-        created_at: e.createdAt || new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        zip_code: e.address?.zipCode || ''
       };
       safeUpsert('establishments', rawPayload);
     });
@@ -361,10 +393,7 @@ export const db = {
         shift: s.shift,
         start_time: s.startTime,
         end_time: s.endTime,
-        chat: s.chat || null,
-        created_by: serializedCreatedBy,
-        created_at: s.createdAt || new Date().toISOString(),
-        updated_at: s.updatedAt || new Date().toISOString()
+        created_by: serializedCreatedBy
       };
       safeUpsert('schedules', rawPayload);
     });
@@ -393,11 +422,7 @@ export const db = {
         value: d.value,
         status: d.status,
         schedule_id: d.scheduleId || null,
-        order_number: serializedOrderNumber,
-        notes: d.notes || null,
-        customer_chat: d.customerChat || null,
-        updated_at: d.updatedAt || new Date().toISOString(),
-        paid: d.paid || false
+        order_number: serializedOrderNumber
       };
       safeUpsert('deliveries', rawPayload);
     });
@@ -480,37 +505,6 @@ export const db = {
 
   getShiftOperationalDate(calendarDateStr: string, _timeStr: string): string {
     return calendarDateStr || this.getLocalDateString();
-  },
-
-  restoreAllLostDeliveries(): { recoveredCount: number; datesRecovered: string[] } {
-    const deliveries = this.getDeliveries();
-    let recoveredCount = 0;
-    const datesSet = new Set<string>();
-
-    const updated = deliveries.map(d => {
-      if (d.status === 'lost') {
-        recoveredCount++;
-        datesSet.add(d.date);
-        return {
-          ...d,
-          status: 'active' as const,
-          lostAt: undefined,
-          lostReason: undefined,
-          updatedAt: new Date().toISOString()
-        };
-      }
-      return d;
-    });
-
-    if (recoveredCount > 0) {
-      this.setDeliveries(updated);
-    }
-
-    return { recoveredCount, datesRecovered: Array.from(datesSet) };
-  },
-
-  normalizeAndLinkHistoricalDeliveries(): { updatedCount: number; linkedSchedulesCount: number } {
-    return { updatedCount: 0, linkedSchedulesCount: 0 };
   },
 
   resolveUser(id: string): User | undefined {
@@ -624,8 +618,6 @@ export const db = {
       rider_name: riderName,
       lat: lat,
       lng: lng,
-      latitude: lat,
-      longitude: lng,
       updated_at: new Date().toISOString()
     };
 
@@ -886,8 +878,8 @@ export const db = {
             mappedLocs[rId] = {
               riderId: rId,
               riderName: l.rider_name || l.riderName || '',
-              lat: parseFloat(l.latitude !== undefined ? l.latitude : l.lat),
-              lng: parseFloat(l.longitude !== undefined ? l.longitude : l.lng),
+              lat: parseFloat(l.lat),
+              lng: parseFloat(l.lng),
               updatedAt: l.updated_at || l.updatedAt || new Date().toISOString()
             };
           }
