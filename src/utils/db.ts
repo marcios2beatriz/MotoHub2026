@@ -186,19 +186,21 @@ export const db = {
 
   async setUsers(users: User[]) {
     memoryUsers = users;
-    for (const u of users) {
-      await supabase.from('users').upsert({
-        id: u.id,
-        name: u.name,
-        email: u.email.toLowerCase().trim(),
-        role: u.role,
-        active: u.active,
-        phone: u.phone,
-        cpf: u.cpf,
-        password_hash: u.passwordHash,
-        must_reset_password: u.mustResetPassword || false,
-        establishment_id: u.establishmentId || null
-      }, { onConflict: 'id' });
+    const payload = users.map(u => ({
+      id: u.id,
+      name: u.name,
+      email: u.email.toLowerCase().trim(),
+      role: u.role,
+      active: u.active,
+      phone: u.phone,
+      cpf: u.cpf,
+      password_hash: u.passwordHash,
+      must_reset_password: u.mustResetPassword || false,
+      establishment_id: u.establishmentId || null
+    }));
+
+    if (payload.length > 0) {
+      await supabase.from('users').upsert(payload, { onConflict: 'id' });
     }
     await this.pullFromSupabase();
   },
@@ -280,21 +282,23 @@ export const db = {
 
   async setEstablishments(ests: Establishment[]) {
     memoryEstablishments = ests;
-    for (const e of ests) {
-      await supabase.from('establishments').upsert({
-        id: e.id,
-        name: e.name,
-        email: e.email || null,
-        active: e.active,
-        phone: e.phone || '',
-        street: e.address?.street || '',
-        number: e.address?.number || '',
-        complement: e.address?.complement || '',
-        neighborhood: e.address?.neighborhood || '',
-        city: e.address?.city || '',
-        state: e.address?.state || '',
-        zip_code: e.address?.zipCode || ''
-      }, { onConflict: 'id' });
+    const payload = ests.map(e => ({
+      id: e.id,
+      name: e.name,
+      email: e.email || null,
+      active: e.active,
+      phone: e.phone || '',
+      street: e.address?.street || '',
+      number: e.address?.number || '',
+      complement: e.address?.complement || '',
+      neighborhood: e.address?.neighborhood || '',
+      city: e.address?.city || '',
+      state: e.address?.state || '',
+      zip_code: e.address?.zipCode || ''
+    }));
+
+    if (payload.length > 0) {
+      await supabase.from('establishments').upsert(payload, { onConflict: 'id' });
     }
     await this.pullFromSupabase();
   },
@@ -305,21 +309,22 @@ export const db = {
     await this.pullFromSupabase();
   },
 
-  // --- ESCALAS ---
+  // --- ESCALAS (SALVAMENTO EM LOTE ULTRA-RÁPIDO) ---
   getSchedules(): Schedule[] {
     return memorySchedules;
   },
 
   async setSchedules(schedules: Schedule[]) {
     memorySchedules = schedules;
-    for (const s of schedules) {
+    
+    const payload = schedules.map(s => {
       const serializedCreatedBy = JSON.stringify({
         createdBy: s.createdBy || '',
         chat: s.chat || '',
         updatedAt: s.updatedAt || new Date().toISOString()
       });
 
-      await supabase.from('schedules').upsert({
+      return {
         id: s.id,
         rider_id: s.riderId,
         establishment_id: s.establishmentId,
@@ -328,7 +333,14 @@ export const db = {
         start_time: s.startTime,
         end_time: s.endTime,
         created_by: serializedCreatedBy
-      }, { onConflict: 'id' });
+      };
+    });
+
+    if (payload.length > 0) {
+      const { error } = await supabase.from('schedules').upsert(payload, { onConflict: 'id' });
+      if (error) {
+        console.error('Erro ao gravar escalas no Supabase:', error);
+      }
     }
     await this.pullFromSupabase();
   },
@@ -339,14 +351,14 @@ export const db = {
     await this.pullFromSupabase();
   },
 
-  // --- CORRIDAS ---
+  // --- CORRIDAS (SALVAMENTO EM LOTE ULTRA-RÁPIDO) ---
   getDeliveries(): Delivery[] {
     return memoryDeliveries;
   },
 
   async setDeliveries(deliveries: Delivery[]) {
     memoryDeliveries = deliveries;
-    for (const d of deliveries) {
+    const payload = deliveries.map(d => {
       const serializedOrderNumber = JSON.stringify({
         orderNumber: d.orderNumber || '',
         notes: d.notes || '',
@@ -354,7 +366,7 @@ export const db = {
         updatedAt: d.updatedAt || new Date().toISOString()
       });
 
-      await supabase.from('deliveries').upsert({
+      return {
         id: d.id,
         rider_id: d.riderId,
         establishment_id: d.establishmentId,
@@ -364,7 +376,14 @@ export const db = {
         status: d.status,
         schedule_id: d.scheduleId || null,
         order_number: serializedOrderNumber
-      }, { onConflict: 'id' });
+      };
+    });
+
+    if (payload.length > 0) {
+      const { error } = await supabase.from('deliveries').upsert(payload, { onConflict: 'id' });
+      if (error) {
+        console.error('Erro ao gravar entregas no Supabase:', error);
+      }
     }
     await this.pullFromSupabase();
   },
@@ -388,15 +407,17 @@ export const db = {
 
   async setNotifications(notifications: Notification[]) {
     memoryNotifications = notifications;
-    for (const n of notifications) {
-      await supabase.from('notifications').upsert({
-        id: n.id,
-        rider_id: n.riderId,
-        title: n.title,
-        message: n.message,
-        date: n.date,
-        read: n.read
-      }, { onConflict: 'id' });
+    const payload = notifications.map(n => ({
+      id: n.id,
+      rider_id: n.riderId,
+      title: n.title,
+      message: n.message,
+      date: n.date,
+      read: n.read
+    }));
+
+    if (payload.length > 0) {
+      await supabase.from('notifications').upsert(payload, { onConflict: 'id' });
     }
     await this.pullFromSupabase();
   },
@@ -408,16 +429,18 @@ export const db = {
 
   async setPartnerRequests(requests: PartnerRequest[]) {
     memoryRequests = requests;
-    for (const r of requests) {
-      await supabase.from('partner_requests').upsert({
-        id: r.id,
-        establishment_name: r.establishmentName,
-        owner_name: r.ownerName,
-        phone: r.phone,
-        address: r.address,
-        status: r.status,
-        created_at: r.createdAt
-      }, { onConflict: 'id' });
+    const payload = requests.map(r => ({
+      id: r.id,
+      establishment_name: r.establishmentName,
+      owner_name: r.ownerName,
+      phone: r.phone,
+      address: r.address,
+      status: r.status,
+      created_at: r.createdAt
+    }));
+
+    if (payload.length > 0) {
+      await supabase.from('partner_requests').upsert(payload, { onConflict: 'id' });
     }
     await this.pullFromSupabase();
   },

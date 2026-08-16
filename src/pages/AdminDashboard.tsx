@@ -98,9 +98,6 @@ export default function AdminDashboard() {
   const [riderLocations, setRiderLocations] = useState<RiderLocation[]>([]);
   const [activeToast, setActiveToast] = useState<ChatToast | null>(null);
 
-  const prevNotesRef = useRef<Record<string, string>>({});
-  const prevScheduleChatRef = useRef<Record<string, string>>({});
-
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [roleFilter, setRoleFilter] = useState<'all' | 'admin' | 'rider' | 'establishment'>('all');
@@ -183,20 +180,6 @@ export default function AdminDashboard() {
   const markersRef = useRef<{ [key: string]: L.Marker }>({});
   const hasSetInitialAdminMapBoundsRef = useRef(false);
   const [isMapExpanded, setIsMapExpanded] = useState(false);
-
-  useEffect(() => {
-    if (activeTab !== 'map') {
-      hasSetInitialAdminMapBoundsRef.current = false;
-    }
-  }, [activeTab]);
-
-  useEffect(() => {
-    if (mapRef.current && activeTab === 'map') {
-      setTimeout(() => {
-        mapRef.current?.invalidateSize();
-      }, 100);
-    }
-  }, [isMapExpanded, activeTab]);
 
   const loadData = () => {
     const currentUsers = db.getUsers();
@@ -296,10 +279,8 @@ export default function AdminDashboard() {
     const currentMap = mapRef.current;
     const points: L.LatLngExpression[] = [];
 
-    // Identificadores de motoboys permitidos no mapa (estritamente ONLINE)
     const validIds = new Set(onlineRiderLocations.map(r => r.riderId));
 
-    // Remove qualquer marcador de motoboy que ficou offline
     Object.keys(markersRef.current).forEach(markerId => {
       if (!validIds.has(markerId)) {
         currentMap.removeLayer(markersRef.current[markerId]);
@@ -369,7 +350,7 @@ export default function AdminDashboard() {
     setShowScheduleModal(true);
   };
 
-  const handleQuickResetPassword = (userToReset: User) => {
+  const handleQuickResetPassword = async (userToReset: User) => {
     const newPass = prompt(`Digite a nova senha para ${userToReset.name}:`, 'moto123');
     if (newPass !== null && newPass.trim() !== '') {
       const allUsers = db.getUsers();
@@ -379,13 +360,13 @@ export default function AdminDashboard() {
         must_reset_password: true,
         updatedAt: new Date().toISOString()
       } : u);
-      db.setUsers(updated);
+      await db.setUsers(updated);
       loadData();
       alert(`Senha alterada com sucesso para: ${newPass.trim()}`);
     }
   };
 
-  const handleApproveAllPendingDeliveries = () => {
+  const handleApproveAllPendingDeliveries = async () => {
     const pendingDels = deliveries.filter(d => d.status === 'pending');
     if (pendingDels.length === 0) {
       alert('Não há corridas pendentes para aprovar no momento.');
@@ -401,7 +382,7 @@ export default function AdminDashboard() {
         updatedAt: new Date().toISOString()
       } : d);
 
-      db.setDeliveries(updated);
+      await db.setDeliveries(updated);
       loadData();
       alert(`${pendingDels.length} corridas aprovadas com sucesso!`);
     }
@@ -417,7 +398,7 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleSaveUser = (e: React.FormEvent) => {
+  const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
     const allUsers = db.getUsers();
     const allEsts = db.getEstablishments();
@@ -461,7 +442,7 @@ export default function AdminDashboard() {
           },
           updatedAt: nowStr
         };
-        db.setEstablishments([...allEsts, newEst]);
+        await db.setEstablishments([...allEsts, newEst]);
         finalEstId = newEstId;
       }
     }
@@ -479,7 +460,7 @@ export default function AdminDashboard() {
         mustResetPassword: userForm.password ? true : u.mustResetPassword,
         updatedAt: nowStr
       } : u);
-      db.setUsers(updated);
+      await db.setUsers(updated);
     } else {
       const newUser: User = {
         id: 'u_' + Date.now(),
@@ -493,7 +474,7 @@ export default function AdminDashboard() {
         establishmentId: userForm.role === 'establishment' ? finalEstId : undefined,
         updatedAt: nowStr
       };
-      db.setUsers([...allUsers, newUser]);
+      await db.setUsers([...allUsers, newUser]);
     }
 
     setShowUserModal(false);
@@ -512,22 +493,22 @@ export default function AdminDashboard() {
     }
   };
 
-  const toggleUserStatus = (id: string) => {
+  const toggleUserStatus = async (id: string) => {
     const allUsers = db.getUsers();
     const updated = allUsers.map(u => u.id === id ? { ...u, active: !u.active, updatedAt: new Date().toISOString() } : u);
-    db.setUsers(updated);
+    await db.setUsers(updated);
     loadData();
   };
 
-  const handleApproveRider = (id: string) => {
+  const handleApproveRider = async (id: string) => {
     const allUsers = db.getUsers();
     const updatedUsers = allUsers.map(u => u.id === id ? { ...u, active: true, updatedAt: new Date().toISOString() } : u);
-    db.setUsers(updatedUsers);
+    await db.setUsers(updatedUsers);
     loadData();
     alert('Usuário aprovado com sucesso!');
   };
 
-  const handleSaveEst = (e: React.FormEvent) => {
+  const handleSaveEst = async (e: React.FormEvent) => {
     e.preventDefault();
     const allEst = db.getEstablishments();
 
@@ -557,7 +538,7 @@ export default function AdminDashboard() {
         },
         updatedAt: nowStr
       } : es);
-      db.setEstablishments(updated);
+      await db.setEstablishments(updated);
     } else {
       const newEst: Establishment = {
         id: estId,
@@ -576,7 +557,7 @@ export default function AdminDashboard() {
         },
         updatedAt: nowStr
       };
-      db.setEstablishments([...allEst, newEst]);
+      await db.setEstablishments([...allEst, newEst]);
     }
 
     setShowEstModal(false);
@@ -591,14 +572,14 @@ export default function AdminDashboard() {
     }
   };
 
-  const toggleEstStatus = (id: string) => {
+  const toggleEstStatus = async (id: string) => {
     const allEst = db.getEstablishments();
     const updated = allEst.map(es => es.id === id ? { ...es, active: !es.active, updatedAt: new Date().toISOString() } : es);
-    db.setEstablishments(updated);
+    await db.setEstablishments(updated);
     loadData();
   };
 
-  const handleSaveSchedule = (e: React.FormEvent) => {
+  const handleSaveSchedule = async (e: React.FormEvent) => {
     e.preventDefault();
 
     const riderIdsToSchedule = selectedRiderIds.length > 0 
@@ -615,12 +596,13 @@ export default function AdminDashboard() {
       return;
     }
 
+    const currentAllSchedules = db.getSchedules();
     const newSchedules: Schedule[] = [];
     const conflicts: string[] = [];
 
     riderIdsToSchedule.forEach(rId => {
       const rider = users.find(r => r.id === rId);
-      const conflict = schedules.find(s => s.riderId === rId && s.date === scheduleForm.date && s.shift === scheduleForm.shift);
+      const conflict = currentAllSchedules.find(s => s.riderId === rId && s.date === scheduleForm.date && s.shift === scheduleForm.shift);
       
       if (conflict) {
         const est = establishments.find(es => es.id === conflict.establishmentId);
@@ -646,7 +628,7 @@ export default function AdminDashboard() {
       return;
     }
 
-    db.setSchedules([...schedules, ...newSchedules]);
+    await db.setSchedules([...currentAllSchedules, ...newSchedules]);
 
     setShowScheduleModal(false);
     setSelectedRiderIds([]);
@@ -694,7 +676,7 @@ export default function AdminDashboard() {
     setWeeklyStep('preview');
   };
 
-  const handleSaveWeeklySchedule = () => {
+  const handleSaveWeeklySchedule = async () => {
     const allSchedules = db.getSchedules();
     const newSchedules: Schedule[] = [];
 
@@ -715,7 +697,7 @@ export default function AdminDashboard() {
         if (hasConflict) {
           conflictCount++;
         } else {
-          const id = 's_' + Date.now() + '_' + rId.slice(-4) + '_' + day.date;
+          const id = 's_' + Date.now() + '_' + rId.slice(-4) + '_' + day.date + '_' + Math.random().toString(36).substring(2, 5);
           newSchedules.push({
             id,
             riderId: rId,
@@ -734,7 +716,7 @@ export default function AdminDashboard() {
     });
 
     if (newSchedules.length > 0) {
-      db.setSchedules([...allSchedules, ...newSchedules]);
+      await db.setSchedules([...allSchedules, ...newSchedules]);
     }
 
     setShowWeeklyModal(false);
@@ -745,7 +727,7 @@ export default function AdminDashboard() {
     alert(`${createdCount} escala(s) criada(s) com sucesso para ${targetRiders.length} motoboy(s)!${conflictCount > 0 ? ` (${conflictCount} ignoradas por conflito)` : ''}`);
   };
 
-  const handleSaveDelivery = (e: React.FormEvent) => {
+  const handleSaveDelivery = async (e: React.FormEvent) => {
     e.preventDefault();
     const val = parseFloat(deliveryForm.value);
     if (isNaN(val) || val <= 0) {
@@ -769,7 +751,7 @@ export default function AdminDashboard() {
         notes: deliveryForm.notes.trim() || undefined,
         updatedAt: nowStr
       } : d);
-      db.setDeliveries(updated);
+      await db.setDeliveries(updated);
     } else {
       const newDelivery: Delivery = {
         id: 'd_' + Date.now(),
@@ -785,7 +767,7 @@ export default function AdminDashboard() {
         updatedAt: nowStr,
         paid: false
       };
-      db.setDeliveries([...deliveries, newDelivery]);
+      await db.setDeliveries([...deliveries, newDelivery]);
     }
 
     setShowDeliveryModal(false);
@@ -800,17 +782,17 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleApproveDelivery = (id: string) => {
+  const handleApproveDelivery = async (id: string) => {
     const updated = deliveries.map(d => d.id === id ? { ...d, status: 'active' as const, updatedAt: new Date().toISOString() } : d);
-    db.setDeliveries(updated);
+    await db.setDeliveries(updated);
     loadData();
   };
 
-  const handleRejectDelivery = (id: string) => {
+  const handleRejectDelivery = async (id: string) => {
     const reason = prompt('Digite o motivo da rejeição:');
     if (reason !== null) {
       const updated = deliveries.map(d => d.id === id ? { ...d, status: 'rejected' as const, notes: reason, updatedAt: new Date().toISOString() } : d);
-      db.setDeliveries(updated);
+      await db.setDeliveries(updated);
       loadData();
     }
   };
@@ -822,12 +804,12 @@ export default function AdminDashboard() {
     window.open(`https://wa.me/${formattedPhone}?text=${message}`, '_blank');
   };
 
-  const handleApproveRequest = (req: PartnerRequest) => {
+  const handleApproveRequest = async (req: PartnerRequest) => {
     const allEsts = db.getEstablishments();
     const est = allEsts.find(e => e.name.toLowerCase().trim() === req.establishmentName.toLowerCase().trim());
     if (est) {
       const updatedEsts = allEsts.map(e => e.id === est.id ? { ...e, active: true, updatedAt: new Date().toISOString() } : e);
-      db.setEstablishments(updatedEsts);
+      await db.setEstablishments(updatedEsts);
       loadData();
       alert('Solicitação aprovada com sucesso!');
     } else {
@@ -842,42 +824,52 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleSettleRiderDeliveries = (riderId: string) => {
+  const handleSettleRiderDeliveries = async (riderId: string) => {
     if (confirm('Deseja realmente dar baixa e marcar todas as corridas ativas deste motoboy como pagas?')) {
       const updated = deliveries.map(d => d.riderId === riderId && d.status === 'active' ? { ...d, paid: true, updatedAt: new Date().toISOString() } : d);
-      db.setDeliveries(updated);
+      await db.setDeliveries(updated);
       loadData();
     }
   };
 
-  const handleSettleEstDeliveries = (estId: string) => {
+  const handleSettleEstDeliveries = async (estId: string) => {
     if (confirm('Deseja realmente dar baixa e marcar todas as corridas ativas deste estabelecimento como pagas?')) {
       const updated = deliveries.map(d => d.establishmentId === estId && d.status === 'active' ? { ...d, paid: true, updatedAt: new Date().toISOString() } : d);
-      db.setDeliveries(updated);
+      await db.setDeliveries(updated);
       loadData();
     }
   };
 
-  const handleSaveNotes = (deliveryId: string, updatedNotes: string) => {
+  const handleSaveNotes = async (deliveryId: string, updatedNotes: string) => {
     const allDeliveries = db.getDeliveries();
     const updated = allDeliveries.map(d => d.id === deliveryId ? {
       ...d,
       notes: updatedNotes,
       updatedAt: new Date().toISOString()
     } : d);
-    db.setDeliveries(updated);
+    await db.setDeliveries(updated);
     loadData();
   };
 
-  const handleSaveScheduleChat = (scheduleId: string, updatedChat: string) => {
+  const handleSaveScheduleChat = async (scheduleId: string, updatedChat: string) => {
     const allSchedules = db.getSchedules();
     const updated = allSchedules.map(s => s.id === scheduleId ? {
       ...s,
       chat: updatedChat,
       updatedAt: new Date().toISOString()
     } : s);
-    db.setSchedules(updated);
+    await db.setSchedules(updated);
     loadData();
+  };
+
+  const setDelSmartDateToToday = () => {
+    setDelSmartDate(db.getOperationalDateString());
+  };
+
+  const setDelSmartDateToYesterday = () => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    setDelSmartDate(db.getOperationalDateString(d));
   };
 
   const getFilteredReportData = () => {
@@ -1075,10 +1067,6 @@ export default function AdminDashboard() {
       }
       return 0;
     });
-
-  const totalFilteredRevenue = filteredAndSortedDeliveries
-    .filter(d => d.status === 'active')
-    .reduce((sum, d) => sum + Number(d.value || 0), 0);
 
   const pendingRequestsCount = partnerRequests.filter(r => r.status === 'pending').length;
   const pendingUsersCount = users.filter(u => !u.active).length;
