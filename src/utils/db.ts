@@ -60,7 +60,7 @@ export interface Delivery {
   id: string;
   riderId: string;
   establishmentId: string;
-  date: string; // YYYY-MM-DD (Data real gravada)
+  date: string; // YYYY-MM-DD (Data exata em que ocorreu)
   time: string; // HH:MM
   value: number;
   status: 'pending' | 'active' | 'rejected' | 'cancelled' | 'lost';
@@ -118,11 +118,11 @@ export interface RouteHistoryItem {
   createdAt: string;
 }
 
-// Helper para comparação de datas flexível
+// Helper para comparação exata de datas YYYY-MM-DD
 export function isSameDayString(d1?: string, d2?: string): boolean {
   if (!d1 || !d2) return false;
-  const clean1 = d1.split('T')[0].split(' ')[0];
-  const clean2 = d2.split('T')[0].split(' ')[0];
+  const clean1 = d1.split('T')[0].split(' ')[0].trim();
+  const clean2 = d2.split('T')[0].split(' ')[0].trim();
   return clean1 === clean2;
 }
 
@@ -257,7 +257,7 @@ async function safeUpsert(tableName: string, rawPayload: Record<string, any>): P
     return { success: false, error };
   }
 
-  return { success: false, error: 'Limite de tentativas de auto-cura excedido' };
+  return { success: false, error: 'Limite de tentativas excedido' };
 }
 
 export const db = {
@@ -443,6 +443,7 @@ export const db = {
     }
   },
 
+  // Retorna a data no formato YYYY-MM-DD estritamente sem nenhuma alteração
   getLocalDateString(date: Date = new Date()): string {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -486,7 +487,6 @@ export const db = {
   },
 
   normalizeAndLinkHistoricalDeliveries(): { updatedCount: number; linkedSchedulesCount: number } {
-    // Não altera as datas gravadas das entregas para preservar integridade histórica
     return { updatedCount: 0, linkedSchedulesCount: 0 };
   },
 
