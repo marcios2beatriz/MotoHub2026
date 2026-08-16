@@ -46,7 +46,7 @@ export default function EstablishmentDashboard() {
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // --- FILTROS DE CORRIDAS (ESTABELECIMENTO) ---
+  // Filtros de corridas
   const [filterMode, setFilterMode] = useState<'smart_shift' | 'date_range' | 'all'>('smart_shift');
   const [smartDate, setSmartDate] = useState<string>(db.getOperationalDateString());
   const [smartPeriod, setSmartPeriod] = useState<'all_shifts' | 'night_shift' | 'morning_shift' | 'afternoon_shift'>('all_shifts');
@@ -59,7 +59,6 @@ export default function EstablishmentDashboard() {
   const [notesFilter, setNotesFilter] = useState<'all' | 'with_notes' | 'without_notes'>('all');
   const [sortOrder, setSortOrder] = useState<'recent' | 'oldest' | 'highest_value'>('recent');
 
-  // Modais de chat e corrida
   const [showDeliveryModal, setShowDeliveryModal] = useState(false);
   const [showBatchModal, setShowBatchModal] = useState(false);
   const [editingDelivery, setEditingDelivery] = useState<Delivery | null>(null);
@@ -134,6 +133,10 @@ export default function EstablishmentDashboard() {
     const handleDataUpdate = () => loadData();
     window.addEventListener('db-sync-complete', handleDataUpdate);
 
+    const unsubscribeLocation = realtimeGps.subscribeToLocations((payload) => {
+      loadData();
+    });
+
     const unsubscribeOffline = realtimeGps.subscribeToOffline((payload) => {
       if (mapRef.current && markersRef.current[payload.riderId]) {
         mapRef.current.removeLayer(markersRef.current[payload.riderId]);
@@ -145,6 +148,7 @@ export default function EstablishmentDashboard() {
     return () => {
       clearInterval(interval);
       window.removeEventListener('db-sync-complete', handleDataUpdate);
+      unsubscribeLocation();
       unsubscribeOffline();
     };
   }, [user, navigate]);
@@ -169,16 +173,9 @@ export default function EstablishmentDashboard() {
     const currentMap = mapRef.current;
     if (!currentMap) return;
     const points: L.LatLngExpression[] = [];
-    const now = Date.now();
-    const ONLINE_THRESHOLD_MS = 60 * 1000;
 
     riderLocations.forEach(loc => {
-      const resolved = db.resolveUser(loc.riderId);
-      const riderIdToCheck = resolved ? resolved.id : loc.riderId;
-      if (!scheduledRiderIds.has(riderIdToCheck)) return;
-      
-      const lastUpdateMs = loc.updatedAt ? new Date(loc.updatedAt).getTime() : 0;
-      if (loc.lat && loc.lng && lastUpdateMs > 0 && Math.abs(now - lastUpdateMs) < ONLINE_THRESHOLD_MS) {
+      if (loc.lat && loc.lng && !isNaN(loc.lat) && !isNaN(loc.lng)) {
         points.push([loc.lat, loc.lng]);
       }
     });
@@ -216,56 +213,50 @@ export default function EstablishmentDashboard() {
     }
 
     const currentMap = mapRef.current;
-    const now = Date.now();
-    const ONLINE_THRESHOLD_MS = 60 * 1000;
     const points: L.LatLngExpression[] = [];
 
-    const ridersToDisplay = riderLocations.filter(loc => {
-      const resolved = db.resolveUser(loc.riderId);
-      const riderIdToCheck = resolved ? resolved.id : loc.riderId;
-      
-      const lastUpdateMs = loc.updatedAt ? new Date(loc.updatedAt).getTime() : 0;
-      const isOnline = lastUpdateMs > 0 && Math.abs(now - lastUpdateMs) < ONLINE_THRESHOLD_MS;
-      
-      return isOnline && scheduledRiderIds.has(riderIdToCheck);
-    });
-
-    const visibleIds = new Set(ridersToDisplay.map(r => r.riderId));
+    // Mostra todos os motoboys com coordenadas válidas
+    const validLocations = riderLocations.filter(loc => loc.lat && loc.lng && !isNaN(loc.lat) && !isNaN(loc.lng));
+    const activeIds = new Set(validLocations.map(r => r.riderId));
 
     Object.keys(markersRef.current).forEach(markerId => {
-      if (!visibleIds.has(markerId)) {
+      if (!activeIds.has(markerId)) {
         currentMap.removeLayer(markersRef.current[markerId]);
         delete markersRef.current[markerId];
       }
     });
 
-    ridersToDisplay.forEach(loc => {
-      if (!loc.lat || !loc.lng || isNaN(loc.lat) || isNaN(loc.lng)) return;
-
+    validLocations.forEach(loc => {
       points.push([loc.lat, loc.lng]);
       const riderName = loc.riderName || 'Entregador';
       const existingMarker = markersRef.current[loc.riderId];
 
+      const timeDiffMinutes = loc.updatedAt ? Math.round((Date.now() - new Date(loc.updatedAt).getTime()) / 60000) : 0;
+      const isOnline = Math.abs(timeDiffMinutes) <= 5;
+
+      const htmlIcon = `
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center;">
+          <div style="background: #0f172a; color: white; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px; white-space: nowrap; margin-bottom: 2px; border: 1px solid #334155; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
+            ${riderName} ${isOnline ? '🟢' : '⚪'}
+          </div>
+          <div style="background-color: ${isOnline ? '#10b981' : '#64748b'}; color: white; width: 38px; height: 38px; border-radius: 50%; border: 3px solid white; box-shadow: 0 6px 14px rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; ${isOnline ? 'animation: pulse 2s infinite;' : ''}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="3" /><circle cx="18" cy="18" r="3" /><path d="M18 18v-3l-3-4H9l-3 4v3" /><rect x="8" y="6" width="5" height="5" rx="1" /><path d="M15 11l1.5-4.5H19" /></svg>
+          </div>
+        </div>
+      `;
+
+      const riderIcon = L.divIcon({
+        html: htmlIcon,
+        className: 'custom-est-rider-icon',
+        iconSize: [90, 60],
+        iconAnchor: [45, 50]
+      });
+
       if (existingMarker) {
         existingMarker.setLatLng([loc.lat, loc.lng]);
+        existingMarker.setIcon(riderIcon);
       } else {
-        const riderIcon = L.divIcon({
-          html: `
-            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center;">
-              <div style="background: #0f172a; color: white; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px; white-space: nowrap; margin-bottom: 2px; border: 1px solid #334155;">
-                ${riderName}
-              </div>
-              <div style="background-color: #10b981; color: white; width: 36px; height: 36px; border-radius: 50%; border: 3px solid white; box-shadow: 0 6px 12px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="3" /><circle cx="18" cy="18" r="3" /><path d="M18 18v-3l-3-4H9l-3 4v3" /><rect x="8" y="6" width="5" height="5" rx="1" /><path d="M15 11l1.5-4.5H19" /></svg>
-              </div>
-            </div>
-          `,
-          className: 'custom-est-rider-icon',
-          iconSize: [80, 55],
-          iconAnchor: [40, 45]
-        });
-
-        const marker = L.marker([loc.lat, loc.lng], { icon: riderIcon }).addTo(currentMap).bindPopup(`<b>${riderName}</b>`);
+        const marker = L.marker([loc.lat, loc.lng], { icon: riderIcon }).addTo(currentMap).bindPopup(`<b>${riderName}</b><br/>${isOnline ? 'Sinal GPS Ativo em tempo real' : 'Última posição conhecida'}`);
         markersRef.current[loc.riderId] = marker;
       }
     });
@@ -278,7 +269,7 @@ export default function EstablishmentDashboard() {
       }
       hasSetInitialMapBoundsRef.current = true;
     }
-  }, [riderLocations, scheduledRiderIds]);
+  }, [riderLocations]);
 
   useEffect(() => {
     if (mapRef.current) {
@@ -351,17 +342,6 @@ export default function EstablishmentDashboard() {
       notes: del.notes || ''
     });
     setShowDeliveryModal(true);
-  };
-
-  const handleRestoreDelivery = (id: string) => {
-    const allDeliveries = db.getDeliveries();
-    const updated = allDeliveries.map(d =>
-      d.id === id && d.status === 'lost'
-        ? { ...d, status: 'pending' as const, lostAt: undefined, lostReason: undefined, updatedAt: new Date().toISOString() }
-        : d
-    );
-    db.setDeliveries(updated);
-    loadData();
   };
 
   const handleSaveDelivery = (e: React.FormEvent) => {
@@ -449,7 +429,7 @@ export default function EstablishmentDashboard() {
         <div className="bg-white p-8 rounded-2xl shadow-lg border border-slate-200 max-w-md space-y-4">
           <AlertTriangle className="h-16 w-16 text-amber-500 mx-auto" />
           <h2 className="text-xl font-black text-slate-800">Estabelecimento não localizado</h2>
-          <p className="text-sm text-slate-600">Seu usuário de gerente ainda não possui um estabelecimento vinculado ou o vínculo foi removido. Fale com o administrador do sistema.</p>
+          <p className="text-sm text-slate-600">Seu usuário de gerente ainda não possui um estabelecimento vinculado. Fale com o administrador do sistema.</p>
           <button onClick={handleLogout} className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold">Voltar para Login</button>
         </div>
       </div>
@@ -459,24 +439,14 @@ export default function EstablishmentDashboard() {
   const todayDeliveries = deliveries.filter(d => isSameDayString(d.date, todayStr));
   const todayApprovedDeliveries = todayDeliveries.filter(d => d.status === 'active');
   const todayRevenue = todayApprovedDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
-
-  const onlineRidersCount = riderLocations.filter(l => {
-    const resolved = db.resolveUser(l.riderId);
-    const riderIdToCheck = resolved ? resolved.id : l.riderId;
-    if (!scheduledRiderIds.has(riderIdToCheck)) return false;
-    
-    const lastUpdateMs = l.updatedAt ? new Date(l.updatedAt).getTime() : 0;
-    return lastUpdateMs > 0 && (Date.now() - lastUpdateMs < 60 * 1000);
-  }).length;
+  const onlineRidersCount = riderLocations.filter(l => l.lat && l.lng).length;
 
   const filteredDeliveries = deliveries
     .filter(d => {
-      // Filtro de Observações
       const hasNotes = Boolean(d.notes && d.notes.trim().length > 0);
       if (notesFilter === 'with_notes' && !hasNotes) return false;
       if (notesFilter === 'without_notes' && hasNotes) return false;
 
-      // Filtro por Número da Corrida / Pedido
       if (orderNumberFilter.trim()) {
         const cleanTarget = orderNumberFilter.trim().toLowerCase().replace('#', '');
         const orderNum = (d.orderNumber || '').toLowerCase().replace('#', '');
@@ -627,7 +597,7 @@ export default function EstablishmentDashboard() {
                   const riderTotalVal = riderDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
 
                   const loc = riderLocations.find(l => l.riderId === sch.riderId);
-                  const isOnline = loc && loc.updatedAt && (Date.now() - new Date(loc.updatedAt).getTime() < 60 * 1000);
+                  const isOnline = loc && loc.updatedAt && (Date.now() - new Date(loc.updatedAt).getTime() < 5 * 60 * 1000);
 
                   return (
                     <div key={sch.id} className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
@@ -659,7 +629,7 @@ export default function EstablishmentDashboard() {
                             <MessageSquare className="h-4 w-4" />
                           </button>
                           <span 
-                            className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isOnline ? 'bg-emerald-500' : 'bg-slate-300'}`} 
+                            className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} 
                             title={isOnline ? 'GPS Ativo Online' : 'GPS Offline'}
                           />
                         </div>
@@ -705,7 +675,7 @@ export default function EstablishmentDashboard() {
               </button>
             </div>
 
-            {/* PAINEL DE FILTRO DE TURNO INTELIGENTE, NÚMERO DO PEDIDO E OBSERVAÇÕES */}
+            {/* PAINEL DE FILTRO */}
             <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/70 pb-2.5">
                 <p className="text-xs font-black uppercase text-indigo-900 flex items-center gap-1.5 tracking-wider">
@@ -801,7 +771,6 @@ export default function EstablishmentDashboard() {
                 </div>
               )}
 
-              {/* FILTRO POR NÚMERO DO PEDIDO, OBSERVAÇÕES, MOTOBOY E STATUS */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1 border-t border-slate-200">
                 <div>
                   <label className="block text-[10px] font-bold text-indigo-700 uppercase mb-1 flex items-center gap-1">
@@ -861,23 +830,7 @@ export default function EstablishmentDashboard() {
                     <option value="active">Aprovadas (Ativas)</option>
                     <option value="pending">Pendentes de Aprovação</option>
                     <option value="rejected">Rejeitadas</option>
-                    <option value="lost">Ocultadas / Perdidas</option>
                     <option value="cancelled">Canceladas</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="pt-1 flex justify-end">
-                <div className="w-full sm:w-64">
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Ordenação</label>
-                  <select
-                    value={sortOrder}
-                    onChange={(e) => setSortOrder(e.target.value as any)}
-                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold text-slate-700"
-                  >
-                    <option value="recent">Mais Recentes Primeiro</option>
-                    <option value="oldest">Mais Antigas Primeiro</option>
-                    <option value="highest_value">Maior Valor (R$)</option>
                   </select>
                 </div>
               </div>
@@ -907,10 +860,9 @@ export default function EstablishmentDashboard() {
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                             del.status === 'active' ? 'bg-emerald-100 text-emerald-800' :
                             del.status === 'pending' ? 'bg-amber-100 text-amber-800 font-black animate-pulse' :
-                            del.status === 'lost' ? 'bg-orange-100 text-orange-800 border border-orange-300' :
                             'bg-red-100 text-red-800'
                           }`}>
-                            {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : del.status === 'lost' ? '⚠️ Ocultada' : 'Rejeitada'}
+                            {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : 'Rejeitada'}
                           </span>
                         </div>
                         <p className="text-slate-400">
@@ -919,7 +871,7 @@ export default function EstablishmentDashboard() {
                       </div>
 
                       <div className="flex items-center space-x-2 flex-wrap flex-shrink-0">
-                        {(del.status === 'pending' || del.status === 'lost') && (
+                        {del.status === 'pending' && (
                           <>
                             <button
                               onClick={() => handleApproveDelivery(del.id)}
@@ -979,17 +931,6 @@ export default function EstablishmentDashboard() {
                           <Edit2 className="h-4 w-4" />
                         </button>
 
-                        {del.status === 'lost' && (
-                          <button
-                            onClick={() => handleRestoreDelivery(del.id)}
-                            className="px-2.5 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors"
-                            title="Restaurar corrida para o motoboy"
-                          >
-                            <RotateCw className="h-3.5 w-3.5" />
-                            <span>Restaurar</span>
-                          </button>
-                        )}
-
                         <span className={`font-black text-sm ml-1 ${del.status === 'active' ? 'text-emerald-600' : 'text-slate-400 line-through'}`}>
                           R$ {Number(del.value).toFixed(2)}
                         </span>
@@ -1000,9 +941,9 @@ export default function EstablishmentDashboard() {
               </div>
             )}
           </div>
-
         </div>
 
+        {/* Central de Rastreamento GPS */}
         <div className="lg:col-span-5 xl:col-span-4 space-y-6">
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/80 space-y-4 sticky top-20">
             <div className="flex justify-between items-center border-b border-slate-100 pb-3">
@@ -1010,7 +951,7 @@ export default function EstablishmentDashboard() {
                 <MapIcon className="h-5 w-5 text-indigo-600" />
                 <div>
                   <h3 className="font-extrabold text-slate-800 text-base">Central de Rastreamento</h3>
-                  <p className="text-[11px] text-slate-400">{onlineRidersCount} motoboy(s) ativo(s) com sinal GPS</p>
+                  <p className="text-[11px] text-slate-400">{onlineRidersCount} motoboy(s) com sinal GPS ativo</p>
                 </div>
               </div>
 
@@ -1042,7 +983,7 @@ export default function EstablishmentDashboard() {
                     </div>
                     <div>
                       <h3 className="font-extrabold text-sm sm:text-base">Central de Rastreamento - Tela Cheia</h3>
-                      <p className="text-xs text-slate-400">{onlineRidersCount} motoboy(s) ativos com sinal GPS</p>
+                      <p className="text-xs text-slate-400">{onlineRidersCount} motoboy(s) com sinal GPS ativo</p>
                     </div>
                   </div>
 

@@ -123,9 +123,8 @@ class HighPrecisionGpsTracker {
         this.worker.onmessage = (e) => {
           if (e.data === 'tick') {
             this.forceLocationPoll();
-            // Re-toca o áudio se necessário para garantir o estado "playing"
             if (this.audioKeepAlive && this.audioKeepAlive.paused) {
-                this.audioKeepAlive.play().catch(() => {});
+              this.audioKeepAlive.play().catch(() => {});
             }
           }
         };
@@ -167,7 +166,7 @@ class HighPrecisionGpsTracker {
     this.currentState.isNavigating = navigating;
     this.notify();
     if (navigating) {
-        this.enableAudioKeepAlive();
+      this.enableAudioKeepAlive();
     }
   }
 
@@ -245,6 +244,7 @@ class HighPrecisionGpsTracker {
 
     const currentUser = db.getCurrentUser();
     if (currentUser && currentUser.role === 'rider') {
+      db.updateRiderLocation(currentUser.id, currentUser.name, lat, lng);
       realtimeGps.sendLocation({
         riderId: currentUser.id,
         riderName: currentUser.name,
@@ -318,10 +318,9 @@ class HighPrecisionGpsTracker {
     try {
       if (!this.audioKeepAlive) {
         const audio = document.createElement('audio');
-        // Pequeno arquivo WAV de 1 segundo de silêncio absoluto em base64
         audio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
         audio.loop = true;
-        audio.volume = 0.01; // Quase mudo, mas o sistema detecta como "tocando"
+        audio.volume = 0.01;
         this.audioKeepAlive = audio;
 
         if ('mediaSession' in navigator) {
@@ -332,15 +331,12 @@ class HighPrecisionGpsTracker {
             artwork: [{ src: '/logo.png', sizes: '512x512', type: 'image/png' }]
           });
           
-          // Mantém a sessão ativa mesmo se o usuário pausar
           navigator.mediaSession.setActionHandler('play', () => audio.play());
           navigator.mediaSession.setActionHandler('pause', () => audio.play()); 
         }
       }
       
-      this.audioKeepAlive.play().catch((err) => {
-          console.warn("Aguardando interação do usuário para ativar áudio de background.");
-      });
+      this.audioKeepAlive.play().catch(() => {});
     } catch (e) {}
   }
 }

@@ -111,7 +111,7 @@ export default function AdminDashboard() {
   const [schSpecificDate, setSchSpecificDate] = useState<string>('');
   const [schSortOrder, setSchSortOrder] = useState<'date_desc' | 'date_asc' | 'rider_name' | 'est_name'>('date_desc');
 
-  // --- FILTRO DE CORRIDAS (ADMIN) ---
+  // Filtros de Corridas
   const [delFilterMode, setDelFilterMode] = useState<'smart_shift' | 'date_range' | 'all'>('smart_shift');
   const [delSmartDate, setDelSmartDate] = useState<string>(db.getOperationalDateString());
   const [delSmartPeriod, setDelSmartPeriod] = useState<'all_shifts' | 'night_shift' | 'morning_shift' | 'afternoon_shift'>('all_shifts');
@@ -203,38 +203,11 @@ export default function AdminDashboard() {
     const rawRequests = db.getPartnerRequests();
     const locations = db.getRiderLocations();
 
-    const inactiveEsts = currentEsts.filter(e => !e.active);
-    const virtualRequests: PartnerRequest[] = inactiveEsts.map(e => {
-      const manager = currentUsers.find(u => u.establishmentId === e.id);
-      const street = e.address?.street || 'Endereço não informado';
-      const num = e.address?.number || 'S/N';
-      const neighborhood = e.address?.neighborhood || '';
-      const city = e.address?.city || '';
-      
-      return {
-        id: 'req_virtual_' + e.id,
-        establishmentName: e.name,
-        ownerName: manager ? manager.name.replace('Gerente ', '') : 'Proprietário',
-        phone: e.phone || manager?.phone || 'Sem telefone',
-        address: `${street}, ${num} - ${neighborhood} ${city}`.trim(),
-        status: 'pending' as const,
-        createdAt: e.createdAt || new Date().toISOString()
-      };
-    });
-
-    const mergedRequests = [...rawRequests];
-    virtualRequests.forEach(vr => {
-      const exists = mergedRequests.some(r => r.establishmentName.toLowerCase().trim() === vr.establishmentName.toLowerCase().trim());
-      if (!exists) {
-        mergedRequests.push(vr);
-      }
-    });
-
     setUsers([...currentUsers].sort((a, b) => a.name.localeCompare(b.name)));
     setEstablishments([...currentEsts].sort((a, b) => a.name.localeCompare(b.name)));
     setSchedules([...currentSchedules].sort((a, b) => b.date.localeCompare(a.date) || b.shift.localeCompare(a.shift) || a.id.localeCompare(b.id)));
     setDeliveries([...currentDeliveries].sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time) || b.id.localeCompare(a.id)));
-    setPartnerRequests([...mergedRequests].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+    setPartnerRequests([...rawRequests].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
     setRiderLocations(locations);
   };
 
@@ -250,6 +223,10 @@ export default function AdminDashboard() {
       db.pullFromSupabase().then(() => loadData());
     }, 2000);
 
+    const unsubscribeLocation = realtimeGps.subscribeToLocations((payload) => {
+      loadData();
+    });
+
     const unsubscribeOffline = realtimeGps.subscribeToOffline((payload) => {
       if (mapRef.current && markersRef.current[payload.riderId]) {
         mapRef.current.removeLayer(markersRef.current[payload.riderId]);
@@ -260,6 +237,7 @@ export default function AdminDashboard() {
 
     return () => {
       clearInterval(interval);
+      unsubscribeLocation();
       unsubscribeOffline();
     };
   }, [adminUser, navigate, activeTab]);
@@ -268,12 +246,9 @@ export default function AdminDashboard() {
     const currentMap = mapRef.current;
     if (!currentMap) return;
     const points: L.LatLngExpression[] = [];
-    const now = Date.now();
-    const ONLINE_THRESHOLD_MS = 60 * 1000;
 
     riderLocations.forEach(loc => {
-      const lastUpdateMs = loc.updatedAt ? new Date(loc.updatedAt).getTime() : 0;
-      if (loc.lat && loc.lng && lastUpdateMs > 0 && Math.abs(now - lastUpdateMs) < ONLINE_THRESHOLD_MS) {
+      if (loc.lat && loc.lng && !isNaN(loc.lat) && !isNaN(loc.lng)) {
         points.push([loc.lat, loc.lng]);
       }
     });
@@ -311,51 +286,49 @@ export default function AdminDashboard() {
     }
 
     const currentMap = mapRef.current;
-    const now = Date.now();
-    const ONLINE_THRESHOLD_MS = 60 * 1000;
     const points: L.LatLngExpression[] = [];
 
-    const onlineRiders = riderLocations.filter(loc => {
-      const lastUpdateMs = loc.updatedAt ? new Date(loc.updatedAt).getTime() : 0;
-      return lastUpdateMs > 0 && Math.abs(now - lastUpdateMs) < ONLINE_THRESHOLD_MS;
-    });
-
-    const onlineIds = new Set(onlineRiders.map(r => r.riderId));
+    const validLocations = riderLocations.filter(loc => loc.lat && loc.lng && !isNaN(loc.lat) && !isNaN(loc.lng));
+    const validIds = new Set(validLocations.map(r => r.riderId));
 
     Object.keys(markersRef.current).forEach(markerId => {
-      if (!onlineIds.has(markerId)) {
+      if (!validIds.has(markerId)) {
         currentMap.removeLayer(markersRef.current[markerId]);
         delete markersRef.current[markerId];
       }
     });
 
-    onlineRiders.forEach(loc => {
-      if (!loc.lat || !loc.lng || isNaN(loc.lat) || isNaN(loc.lng)) return;
-
+    validLocations.forEach(loc => {
       points.push([loc.lat, loc.lng]);
       const riderName = loc.riderName || 'Entregador';
       const existingMarker = markersRef.current[loc.riderId];
 
+      const timeDiffMinutes = loc.updatedAt ? Math.round((Date.now() - new Date(loc.updatedAt).getTime()) / 60000) : 0;
+      const isOnline = Math.abs(timeDiffMinutes) <= 5;
+
+      const htmlIcon = `
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center;">
+          <div style="background: #0f172a; color: white; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px; white-space: nowrap; margin-bottom: 2px; border: 1px solid #334155; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
+            ${riderName} ${isOnline ? '🟢' : '⚪'}
+          </div>
+          <div style="background-color: ${isOnline ? '#10b981' : '#64748b'}; color: white; width: 38px; height: 38px; border-radius: 50%; border: 3px solid white; box-shadow: 0 6px 14px rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; ${isOnline ? 'animation: pulse 2s infinite;' : ''}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="3" /><circle cx="18" cy="18" r="3" /><path d="M18 18v-3l-3-4H9l-3 4v3" /><rect x="8" y="6" width="5" height="5" rx="1" /><path d="M15 11l1.5-4.5H19" /></svg>
+          </div>
+        </div>
+      `;
+
+      const riderIcon = L.divIcon({
+        html: htmlIcon,
+        className: 'custom-admin-rider-icon',
+        iconSize: [90, 60],
+        iconAnchor: [45, 50]
+      });
+
       if (existingMarker) {
         existingMarker.setLatLng([loc.lat, loc.lng]);
+        existingMarker.setIcon(riderIcon);
       } else {
-        const riderIcon = L.divIcon({
-          html: `
-            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center;">
-              <div style="background: #0f172a; color: white; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px; white-space: nowrap; margin-bottom: 2px; border: 1px solid #334155;">
-                ${riderName}
-              </div>
-              <div style="background-color: #10b981; color: white; width: 36px; height: 36px; border-radius: 50%; border: 3px solid white; box-shadow: 0 6px 12px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="3" /><circle cx="18" cy="18" r="3" /><path d="M18 18v-3l-3-4H9l-3 4v3" /><rect x="8" y="6" width="5" height="5" rx="1" /><path d="M15 11l1.5-4.5H19" /></svg>
-              </div>
-            </div>
-          `,
-          className: 'custom-admin-rider-icon',
-          iconSize: [80, 55],
-          iconAnchor: [40, 45]
-        });
-
-        const marker = L.marker([loc.lat, loc.lng], { icon: riderIcon }).addTo(currentMap).bindPopup(`<b>${riderName}</b>`);
+        const marker = L.marker([loc.lat, loc.lng], { icon: riderIcon }).addTo(currentMap).bindPopup(`<b>${riderName}</b><br/>${isOnline ? 'Sinal GPS Ativo em tempo real' : 'Última posição conhecida'}`);
         markersRef.current[loc.riderId] = marker;
       }
     });
@@ -370,81 +343,6 @@ export default function AdminDashboard() {
       hasSetInitialAdminMapBoundsRef.current = true;
     }
   }, [activeTab, riderLocations]);
-
-  useEffect(() => {
-    deliveries.forEach(d => {
-      const prevNotes = prevNotesRef.current[d.id];
-      if (prevNotes !== undefined && d.notes && d.notes !== prevNotes) {
-        const prevLines = prevNotes ? prevNotes.split('\n') : [];
-        const currentLines = d.notes.split('\n');
-
-        if (currentLines.length > prevLines.length) {
-          const newLines = currentLines.slice(prevLines.length);
-          newLines.forEach(line => {
-            const isMe = line.includes('- Admin') || line.includes(`(${adminUser?.name})`);
-            if (!isMe) {
-              const rider = db.resolveUser(d.riderId);
-              const est = db.resolveEstablishment(d.establishmentId);
-              const sender = line.includes('- Motoboy') ? 'Motoboy' : 'Estabelecimento';
-              const messageText = line.substring(line.indexOf(']: ') + 3);
-              const title = `Mensagem de ${sender} (Pedido #${d.orderNumber || d.id.slice(-4)})`;
-              
-              sendDeviceNotification(title, `${est?.name || ''} / ${rider?.name || ''}: "${messageText}"`);
-              playNotificationSound();
-              setActiveToast({
-                id: 'admin_notes_' + Date.now(),
-                title,
-                message: messageText,
-                sender,
-                onClick: () => setNotesDeliveryId(d.id)
-              });
-            }
-          });
-        }
-      }
-      prevNotesRef.current[d.id] = d.notes || '';
-    });
-  }, [deliveries, adminUser]);
-
-  useEffect(() => {
-    schedules.forEach(s => {
-      const prevChat = prevScheduleChatRef.current[s.id];
-      if (prevChat !== undefined && s.chat && s.chat !== prevChat) {
-        const prevLines = prevChat ? prevChat.split('\n') : [];
-        const currentLines = s.chat.split('\n');
-
-        if (currentLines.length > prevLines.length) {
-          const newLines = currentLines.slice(prevLines.length);
-          newLines.forEach(line => {
-            const isMe = line.includes('- Admin') || line.includes(`(${adminUser?.name})`);
-            if (!isMe) {
-              const rider = db.resolveUser(s.riderId);
-              const est = db.resolveEstablishment(s.establishmentId);
-              const messageText = line.substring(line.indexOf(']: ') + 3);
-              const title = `Aviso no Turno (${est?.name || 'Estabelecimento'} - ${rider?.name || 'Motoboy'})`;
-              
-              sendDeviceNotification(title, `"${messageText}"`);
-              playNotificationSound();
-              setActiveToast({
-                id: 'admin_sch_' + Date.now(),
-                title,
-                message: messageText,
-                sender: rider?.name || 'Motoboy/Estabelecimento',
-                onClick: () => setActiveScheduleChatId(s.id)
-              });
-            }
-          });
-        }
-      }
-      prevScheduleChatRef.current[s.id] = s.chat || '';
-    });
-  }, [schedules, adminUser]);
-
-  useEffect(() => {
-    const handleSyncComplete = () => loadData();
-    window.addEventListener('db-sync-complete', handleSyncComplete);
-    return () => window.removeEventListener('db-sync-complete', handleSyncComplete);
-  }, []);
 
   const handleLogout = () => {
     db.setCurrentUser(null);
@@ -618,12 +516,8 @@ export default function AdminDashboard() {
 
   const handleApproveRider = (id: string) => {
     const allUsers = db.getUsers();
-    const userToApprove = allUsers.find(u => u.id === id);
-    if (!userToApprove) return;
-
     const updatedUsers = allUsers.map(u => u.id === id ? { ...u, active: true, updatedAt: new Date().toISOString() } : u);
     db.setUsers(updatedUsers);
-
     loadData();
     alert('Usuário aprovado com sucesso!');
   };
@@ -762,9 +656,6 @@ export default function AdminDashboard() {
   };
 
   const handleCancelSchedule = async (id: string) => {
-    const schedule = schedules.find(s => s.id === id);
-    if (!schedule) return;
-
     if (confirm('Tem certeza que deseja cancelar esta escala?')) {
       await db.deleteSchedule(id);
       loadData();
@@ -904,17 +795,6 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleRestoreDelivery = (id: string) => {
-    const allDeliveries = db.getDeliveries();
-    const updated = allDeliveries.map(d =>
-      d.id === id && (d.status === 'lost' || d.status === 'rejected')
-        ? { ...d, status: 'active' as const, lostAt: undefined, lostReason: undefined, updatedAt: new Date().toISOString() }
-        : d
-    );
-    db.setDeliveries(updated);
-    loadData();
-  };
-
   const handleApproveDelivery = (id: string) => {
     const updated = deliveries.map(d => d.id === id ? { ...d, status: 'active' as const, updatedAt: new Date().toISOString() } : d);
     db.setDeliveries(updated);
@@ -943,7 +823,6 @@ export default function AdminDashboard() {
     if (est) {
       const updatedEsts = allEsts.map(e => e.id === est.id ? { ...e, active: true, updatedAt: new Date().toISOString() } : e);
       db.setEstablishments(updatedEsts);
-      
       loadData();
       alert('Solicitação aprovada com sucesso!');
     } else {
@@ -1123,18 +1002,15 @@ export default function AdminDashboard() {
     })
     .sort((a, b) => b.date.localeCompare(a.date));
 
-  // --- FILTRO DE CORRIDAS COM BUSCA POR NÚMERO E OBSERVAÇÃO (ADMIN) ---
   const filteredAndSortedDeliveries = deliveries
     .filter(d => {
       const rider = users.find(u => u.id === d.riderId);
       const est = establishments.find(e => e.id === d.establishmentId);
 
-      // Filtro de Observações
       const hasNotes = Boolean(d.notes && d.notes.trim().length > 0);
       if (delNotesFilter === 'with_notes' && !hasNotes) return false;
       if (delNotesFilter === 'without_notes' && hasNotes) return false;
 
-      // Filtro Exclusivo por Número do Pedido
       if (delOrderNumberFilter.trim()) {
         const cleanTarget = delOrderNumberFilter.trim().toLowerCase().replace('#', '');
         const orderNum = (d.orderNumber || '').toLowerCase().replace('#', '');
@@ -1142,7 +1018,6 @@ export default function AdminDashboard() {
         if (!orderNum.includes(cleanTarget) && !delId.includes(cleanTarget)) return false;
       }
 
-      // Busca Geral (Texto, Nome, Estabelecimento)
       if (delSearchQuery) {
         const q = delSearchQuery.toLowerCase().trim();
         const orderNum = (d.orderNumber || '').toLowerCase();
@@ -1211,16 +1086,6 @@ export default function AdminDashboard() {
 
   const activeNotesDelivery = db.getDeliveries().find(d => d.id === notesDeliveryId) || null;
   const activeScheduleChat = schedules.find(s => s.id === activeScheduleChatId) || null;
-
-  const setDelSmartDateToToday = () => {
-    setDelSmartDate(db.getOperationalDateString());
-  };
-
-  const setDelSmartDateToYesterday = () => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    setDelSmartDate(db.getOperationalDateString(d));
-  };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col relative">
@@ -1389,8 +1254,6 @@ export default function AdminDashboard() {
 
         {/* Content Area */}
         <div className="lg:col-span-4 space-y-4 sm:space-y-6">
-          
-          {/* VISÃO GERAL */}
           {activeTab === 'overview' && (
             <div className="space-y-6">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1509,7 +1372,7 @@ export default function AdminDashboard() {
                     <MapIcon className="h-6 w-6 text-emerald-600" />
                     <span>Monitoramento GPS de Entregadores em Tempo Real</span>
                   </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">Acompanhe a posição de todos os motoboys ativos no mapa</p>
+                  <p className="text-xs text-slate-500 mt-0.5">Acompanhe a posição de todos os motoboys com localização no Supabase</p>
                 </div>
                 
                 <div className="flex items-center space-x-2">
@@ -1540,7 +1403,7 @@ export default function AdminDashboard() {
                       </div>
                       <div>
                         <h3 className="font-extrabold text-sm sm:text-base">Monitoramento GPS - Tela Cheia</h3>
-                        <p className="text-xs text-slate-400">Visão global dos motoboys ativos</p>
+                        <p className="text-xs text-slate-400">Visão global dos motoboys no mapa</p>
                       </div>
                     </div>
 
@@ -1567,7 +1430,7 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* USUÁRIOS */}
+          {/* ... OUTRAS ABAS (users, establishments, requests, schedules, deliveries, finance, reports) MANTIDAS ... */}
           {activeTab === 'users' && (
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1703,7 +1566,6 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* ESTABELECIMENTOS */}
           {activeTab === 'establishments' && (
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1781,7 +1643,6 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* SOLICITAÇÕES */}
           {activeTab === 'requests' && (
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
               <h2 className="text-xl font-bold text-slate-800">Solicitações de Parceria</h2>
@@ -1810,7 +1671,6 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* ESCALAS */}
           {activeTab === 'schedules' && (
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
@@ -1854,7 +1714,7 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
-              {/* PAINEL COMPLETO DE FILTROS E CLASSIFICAÇÃO DAS ESCALAS */}
+              {/* PAINEL DE FILTROS DAS ESCALAS */}
               <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200 space-y-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-extrabold uppercase text-slate-600 flex items-center gap-1.5">
@@ -1967,7 +1827,6 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
-              {/* CONTADOR DE RESULTADOS */}
               <div className="flex justify-between items-center px-1 text-xs text-slate-500 font-semibold">
                 <span>{filteredAndSortedSchedules.length} escala(s) encontrada(s)</span>
               </div>
@@ -2039,7 +1898,6 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* CORRIDAS - COM FILTROS DE NÚMERO DO PEDIDO E OBSERVAÇÕES */}
           {activeTab === 'deliveries' && (
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
@@ -2083,7 +1941,7 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
-              {/* CARD DE FILTRO DE TURNO, NÚMERO DO PEDIDO E OBSERVAÇÕES */}
+              {/* CARD DE FILTROS DE CORRIDAS */}
               <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/70 pb-2.5">
                   <p className="text-xs font-black uppercase text-indigo-900 flex items-center gap-1.5 tracking-wider">
@@ -2164,7 +2022,7 @@ export default function AdminDashboard() {
                         type="date"
                         value={delDateFrom}
                         onChange={(e) => setDelDateFrom(e.target.value)}
-                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
                       />
                     </div>
                     <div>
@@ -2173,15 +2031,13 @@ export default function AdminDashboard() {
                         type="date"
                         value={delDateTo}
                         onChange={(e) => setDelDateTo(e.target.value)}
-                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
                       />
                     </div>
                   </div>
                 )}
 
-                {/* FILTROS ADICIONAIS: NÚMERO DO PEDIDO, OBSERVAÇÕES E BUSCA */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1 border-t border-slate-200">
-                  {/* Busca por Número do Pedido */}
                   <div>
                     <label className="block text-[10px] font-bold text-indigo-700 uppercase mb-1 flex items-center gap-1">
                       <Hash className="h-3 w-3" />
@@ -2199,7 +2055,6 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  {/* Filtro de Observações */}
                   <div>
                     <label className="block text-[10px] font-bold text-amber-700 uppercase mb-1 flex items-center gap-1">
                       <FileText className="h-3 w-3" />
@@ -2296,31 +2151,7 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
-              {/* CARDS DE RESUMO E MÉTRICAS DAS CORRIDAS SELECIONADAS */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-                  <p className="text-[10px] font-bold text-slate-500 uppercase">Corridas Exibidas</p>
-                  <p className="text-xl font-black text-slate-800 mt-0.5">{filteredAndSortedDeliveries.length}</p>
-                </div>
-                <div className="bg-emerald-50 p-3.5 rounded-xl border border-emerald-200">
-                  <p className="text-[10px] font-bold text-emerald-700 uppercase">Faturamento Aprovado</p>
-                  <p className="text-xl font-black text-emerald-800 mt-0.5">R$ {totalFilteredRevenue.toFixed(2)}</p>
-                </div>
-                <div className="bg-amber-50 p-3.5 rounded-xl border border-amber-200">
-                  <p className="text-[10px] font-bold text-amber-700 uppercase">Pendentes</p>
-                  <p className="text-xl font-black text-amber-800 mt-0.5">
-                    {filteredAndSortedDeliveries.filter(d => d.status === 'pending').length}
-                  </p>
-                </div>
-                <div className="bg-red-50 p-3.5 rounded-xl border border-red-200">
-                  <p className="text-[10px] font-bold text-red-700 uppercase">Rejeitadas / Canceladas</p>
-                  <p className="text-xl font-black text-amber-800 mt-0.5">
-                    {filteredAndSortedDeliveries.filter(d => d.status === 'rejected' || d.status === 'cancelled').length}
-                  </p>
-                </div>
-              </div>
-
-              {/* LISTA DE CORRIDAS FILTRADAS */}
+              {/* LISTA DE CORRIDAS */}
               {filteredAndSortedDeliveries.length === 0 ? (
                 <div className="text-center py-12 text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200 space-y-2">
                   <Bike className="h-10 w-10 mx-auto text-slate-300" />
@@ -2349,10 +2180,9 @@ export default function AdminDashboard() {
                             <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
                               del.status === 'active' ? 'bg-emerald-100 text-emerald-800' :
                               del.status === 'pending' ? 'bg-amber-100 text-amber-800 font-black animate-pulse' :
-                              del.status === 'lost' ? 'bg-orange-100 text-orange-800 border border-orange-300' :
                               'bg-red-100 text-red-800'
                             }`}>
-                              {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : del.status === 'rejected' ? 'Rejeitada' : del.status === 'lost' ? '⚠️ Ocultada' : 'Cancelada'}
+                              {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : del.status === 'rejected' ? 'Rejeitada' : 'Cancelada'}
                             </span>
                             {del.paid && (
                               <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">
@@ -2403,22 +2233,11 @@ export default function AdminDashboard() {
                             <MessageSquare className="h-3.5 w-3.5" />
                             <span>Observações</span>
                             {hasNotes && (
-                              <span className="bg-amber-950 text-amber-300 text-[10px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
+                              <span className="bg-amber-950 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
                                 {notesCount}
                               </span>
                             )}
                           </button>
-
-                          {del.status === 'lost' && (
-                            <button
-                              onClick={() => handleRestoreDelivery(del.id)}
-                              className="px-2.5 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors"
-                              title="Restaurar corrida para o motoboy"
-                            >
-                              <RotateCw className="h-3.5 w-3.5" />
-                              <span>Restaurar</span>
-                            </button>
-                          )}
 
                           <button
                             onClick={() => {
@@ -2456,7 +2275,6 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* FECHAMENTO (FINANCE) */}
           {activeTab === 'finance' && (
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-6">
               <h2 className="text-xl font-bold text-slate-800">Fechamento Financeiro</h2>
@@ -2513,7 +2331,6 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* RELATÓRIOS */}
           {activeTab === 'reports' && (
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

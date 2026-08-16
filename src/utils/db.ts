@@ -144,10 +144,10 @@ export function getDeliveryOperationalDate(dateStr: string, timeStr: string = '1
   return cleanDate;
 }
 
-// Chave unicamente para persistir a sessão de login
+// Chave unicamente para persistir a sessão de login no navegador
 const SESSION_USER_KEY = 'motohub_session_user';
 
-// Cache em memória de tempo de execução sincronizado em tempo real com o Supabase
+// Cache em memória de tempo de execução sincronizado com o Supabase
 let memoryUsers: User[] = [];
 let memoryEstablishments: Establishment[] = [];
 let memorySchedules: Schedule[] = [];
@@ -198,7 +198,7 @@ export const db = {
         password_hash: u.passwordHash,
         must_reset_password: u.mustResetPassword || false,
         establishment_id: u.establishmentId || null
-      });
+      }, { onConflict: 'id' });
     }
     await this.pullFromSupabase();
   },
@@ -206,7 +206,6 @@ export const db = {
   async fetchUserByEmail(email: string): Promise<User | null> {
     const cleanEmail = email.trim().toLowerCase();
     
-    // Consulta direta no banco de dados do Supabase
     const { data, error } = await supabase
       .from('users')
       .select('*')
@@ -229,7 +228,6 @@ export const db = {
         updatedAt: data.updated_at
       };
 
-      // Atualiza na memória
       const existingIdx = memoryUsers.findIndex(u => u.id === user.id);
       if (existingIdx >= 0) {
         memoryUsers[existingIdx] = user;
@@ -240,7 +238,6 @@ export const db = {
       return user;
     }
 
-    // Se for o admin padrão e ainda não existir no banco do Supabase, insere diretamente no Supabase
     if (cleanEmail === 'admin@delivery.com') {
       const adminDefault: User = {
         id: 'u_admin_default',
@@ -262,7 +259,7 @@ export const db = {
         phone: adminDefault.phone,
         cpf: adminDefault.cpf,
         password_hash: adminDefault.passwordHash
-      });
+      }, { onConflict: 'id' });
 
       return adminDefault;
     }
@@ -297,7 +294,7 @@ export const db = {
         city: e.address?.city || '',
         state: e.address?.state || '',
         zip_code: e.address?.zipCode || ''
-      });
+      }, { onConflict: 'id' });
     }
     await this.pullFromSupabase();
   },
@@ -331,7 +328,7 @@ export const db = {
         start_time: s.startTime,
         end_time: s.endTime,
         created_by: serializedCreatedBy
-      });
+      }, { onConflict: 'id' });
     }
     await this.pullFromSupabase();
   },
@@ -367,7 +364,7 @@ export const db = {
         status: d.status,
         schedule_id: d.scheduleId || null,
         order_number: serializedOrderNumber
-      });
+      }, { onConflict: 'id' });
     }
     await this.pullFromSupabase();
   },
@@ -399,7 +396,7 @@ export const db = {
         message: n.message,
         date: n.date,
         read: n.read
-      });
+      }, { onConflict: 'id' });
     }
     await this.pullFromSupabase();
   },
@@ -420,7 +417,7 @@ export const db = {
         address: r.address,
         status: r.status,
         created_at: r.createdAt
-      });
+      }, { onConflict: 'id' });
     }
     await this.pullFromSupabase();
   },
@@ -459,22 +456,30 @@ export const db = {
   },
 
   async updateRiderLocation(riderId: string, riderName: string, lat: number, lng: number) {
+    if (!riderId || !lat || !lng || isNaN(lat) || isNaN(lng)) return;
+
     const updatedAt = new Date().toISOString();
     memoryLocations[riderId] = { riderId, riderName, lat, lng, updatedAt };
 
-    await supabase.from('rider_locations').upsert({
-      rider_id: riderId,
-      rider_name: riderName,
-      lat: lat,
-      lng: lng,
-      updated_at: updatedAt
-    });
+    try {
+      await supabase.from('rider_locations').upsert({
+        rider_id: riderId,
+        rider_name: riderName,
+        lat: lat,
+        lng: lng,
+        updated_at: updatedAt
+      }, { onConflict: 'rider_id' });
+    } catch (e) {
+      console.warn('Erro ao atualizar rider_locations:', e);
+    }
   },
 
   async clearRiderLocation(riderId: string) {
     realtimeGps.sendOffline(riderId);
     delete memoryLocations[riderId];
-    await supabase.from('rider_locations').delete().eq('rider_id', riderId);
+    try {
+      await supabase.from('rider_locations').delete().eq('rider_id', riderId);
+    } catch (e) {}
   },
 
   // --- RESOLVERS & HELPERS ---
@@ -679,7 +684,7 @@ export const db = {
         const mappedLocs: Record<string, RiderLocation> = {};
         locData.forEach(l => {
           const rId = l.rider_id;
-          if (rId) {
+          if (rId && l.lat && l.lng) {
             mappedLocs[rId] = {
               riderId: rId,
               riderName: l.rider_name || '',
