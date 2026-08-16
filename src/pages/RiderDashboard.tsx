@@ -23,7 +23,8 @@ import {
   Compass,
   Download,
   RotateCw,
-  Sparkles
+  Sparkles,
+  Filter
 } from 'lucide-react';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
 import CustomerChatModal from '../components/CustomerChatModal';
@@ -85,6 +86,11 @@ export default function RiderDashboard() {
   const [scheduleEstFilter, setScheduleEstFilter] = useState('');
   const [scheduleDateFilter, setScheduleDateFilter] = useState('');
 
+  // --- FILTROS DE TURNO INTELIGENTE NO HISTÓRICO ---
+  const [filterMode, setFilterMode] = useState<'smart_shift' | 'date_range' | 'all'>('smart_shift');
+  const [smartDate, setSmartDate] = useState<string>(db.getOperationalDateString());
+  const [smartPeriod, setSmartPeriod] = useState<'all_shifts' | 'night_shift' | 'morning_shift' | 'afternoon_shift'>('all_shifts');
+  
   const [historyEstFilter, setHistoryEstFilter] = useState('');
   const [historyDateFrom, setHistoryDateFrom] = useState('');
   const [historyDateTo, setHistoryDateTo] = useState('');
@@ -529,14 +535,39 @@ export default function RiderDashboard() {
     return d.status === deliveryStatusFilter;
   });
 
+  // Filtro Inteligente do Histórico
   const historyDeliveries = deliveries.filter(d => {
     let matchesEst = true;
     if (historyEstFilter) {
       matchesEst = db.isSameEstablishment(d.establishmentId, historyEstFilter);
     }
-    const matchesFrom = historyDateFrom ? d.date >= historyDateFrom : true;
-    const matchesTo = historyDateTo ? d.date <= historyDateTo : true;
-    return matchesEst && matchesFrom && matchesTo;
+    if (!matchesEst) return false;
+
+    if (filterMode === 'smart_shift') {
+      if (!smartDate) return true;
+      const isDateMatch = db.isSameDayString(d.date, smartDate);
+      if (!isDateMatch) return false;
+
+      const [h] = (d.time || '12:00').split(':').map(Number);
+
+      if (smartPeriod === 'night_shift') {
+        // Noite e Madrugada: >= 18h ou < 03h
+        return h >= 18 || h < 3;
+      } else if (smartPeriod === 'morning_shift') {
+        // Manhã: 06h às 11h59
+        return h >= 6 && h < 12;
+      } else if (smartPeriod === 'afternoon_shift') {
+        // Tarde: 12h às 17h59
+        return h >= 12 && h < 18;
+      }
+      return true;
+    } else if (filterMode === 'date_range') {
+      const matchesFrom = historyDateFrom ? d.date >= historyDateFrom : true;
+      const matchesTo = historyDateTo ? d.date <= historyDateTo : true;
+      return matchesFrom && matchesTo;
+    }
+
+    return true;
   });
 
   const historyTotalEarnings = historyDeliveries
@@ -546,6 +577,16 @@ export default function RiderDashboard() {
   const activeNotesDelivery = deliveries.find(d => d.id === notesDeliveryId) || null;
   const activeCustomerChatDelivery = deliveries.find(d => d.id === customerChatDeliveryId) || null;
   const activeScheduleChat = schedules.find(s => s.id === activeScheduleChatId) || null;
+
+  const setSmartDateToToday = () => {
+    setSmartDate(db.getOperationalDateString());
+  };
+
+  const setSmartDateToYesterday = () => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    setSmartDate(db.getOperationalDateString(d));
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 pb-16 relative">
@@ -1000,14 +1041,6 @@ export default function RiderDashboard() {
                 </h2>
 
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleManualRecover}
-                    className="bg-amber-500 hover:bg-amber-600 text-slate-950 px-2.5 py-1.5 rounded-lg text-xs font-black flex items-center space-x-1 transition-colors shadow-sm"
-                  >
-                    <Sparkles className="h-3.5 w-3.5" />
-                    <span>Recuperar Corridas 15/08</span>
-                  </button>
-
                   <div className="flex bg-slate-100 p-1 rounded-xl">
                     <button
                       onClick={() => setHistorySubTab('deliveries')}
@@ -1032,37 +1065,114 @@ export default function RiderDashboard() {
 
               {historySubTab === 'deliveries' ? (
                 <>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Estabelecimento</label>
+                  {/* CARD DE FILTRO DE TURNO E PERÍODO (EXATAMENTE CONFORME O DESIGN) */}
+                  <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/70 pb-2.5">
+                      <p className="text-xs font-black uppercase text-indigo-900 flex items-center gap-1.5 tracking-wider">
+                        <Sparkles className="h-4 w-4 text-indigo-600" />
+                        <span>FILTRO DE TURNO E PERÍODO</span>
+                      </p>
+
+                      <div className="flex items-center space-x-2">
+                        <select
+                          value={filterMode}
+                          onChange={(e) => setFilterMode(e.target.value as any)}
+                          className="px-3 py-1.5 bg-white border border-indigo-200 text-indigo-900 rounded-xl text-xs font-extrabold shadow-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        >
+                          <option value="smart_shift">✨ Turno Inteligente por Data</option>
+                          <option value="date_range">📅 Intervalo de Datas</option>
+                          <option value="all">🌐 Todas as Corridas</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {filterMode === 'smart_shift' && (
+                      <div className="bg-indigo-50/40 border border-indigo-100 rounded-xl p-3.5 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-indigo-950 uppercase">
+                            Selecione o Turno:
+                          </label>
+                          <div className="flex items-center space-x-1.5">
+                            <button
+                              type="button"
+                              onClick={setSmartDateToToday}
+                              className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-colors shadow-sm"
+                            >
+                              Hoje
+                            </button>
+                            <button
+                              type="button"
+                              onClick={setSmartDateToYesterday}
+                              className="px-3 py-1 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 rounded-lg text-xs font-bold transition-colors"
+                            >
+                              Ontem
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">DATA BASE</label>
+                            <input
+                              type="date"
+                              value={smartDate}
+                              onChange={(e) => setSmartDate(e.target.value)}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">PERÍODO / EXPEDIENTE</label>
+                            <select
+                              value={smartPeriod}
+                              onChange={(e) => setSmartPeriod(e.target.value as any)}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            >
+                              <option value="all_shifts">Turno Completo (Manhã + Tarde + Noite/Madrugada)</option>
+                              <option value="night_shift">Turno Noite / Madrugada (18h00 às 02h59)</option>
+                              <option value="morning_shift">Turno Manhã (06h00 às 11h59)</option>
+                              <option value="afternoon_shift">Turno Tarde (12h00 às 17h59)</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {filterMode === 'date_range' && (
+                      <div className="grid grid-cols-2 gap-3 pt-1">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">De (Data Inicial)</label>
+                          <input
+                            type="date"
+                            value={historyDateFrom}
+                            onChange={(e) => setHistoryDateFrom(e.target.value)}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Até (Data Final)</label>
+                          <input
+                            type="date"
+                            value={historyDateTo}
+                            onChange={(e) => setHistoryDateTo(e.target.value)}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="pt-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Filtrar por Estabelecimento</label>
                       <select
                         value={historyEstFilter}
                         onChange={(e) => setHistoryEstFilter(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
                       >
-                        <option value="">Todos</option>
+                        <option value="">Todos os Estabelecimentos</option>
                         {establishments.map(est => (
                           <option key={est.id} value={est.id}>{est.name}</option>
                         ))}
                       </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">De</label>
-                      <input
-                        type="date"
-                        value={historyDateFrom}
-                        onChange={(e) => setHistoryDateFrom(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Até</label>
-                      <input
-                        type="date"
-                        value={historyDateTo}
-                        onChange={(e) => setHistoryDateTo(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      />
                     </div>
                   </div>
 
@@ -1105,7 +1215,7 @@ export default function RiderDashboard() {
                                 </span>
                               </div>
                               <p className="text-xs text-slate-400">
-                                Data: {new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR')} às {del.time}
+                                Expediente: <strong className="text-slate-600">{new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR')}</strong> às {del.time}
                               </p>
                             </div>
                             <div className="flex items-center gap-2 justify-between sm:justify-end flex-shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100">
