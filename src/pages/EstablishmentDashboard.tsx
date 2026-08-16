@@ -22,7 +22,8 @@ import {
   Ban,
   Calendar,
   Filter,
-  Layers
+  Layers,
+  Sparkles
 } from 'lucide-react';
 import L from 'leaflet';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
@@ -43,10 +44,13 @@ export default function EstablishmentDashboard() {
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Filtros avançados de corridas e histórico
+  // --- FILTRO DE TURNO INTELIGENTE POR DATA (ESTABELECIMENTO) ---
+  const [filterMode, setFilterMode] = useState<'smart_shift' | 'date_range' | 'all'>('smart_shift');
+  const [smartDate, setSmartDate] = useState<string>(db.getOperationalDateString());
+  const [smartPeriod, setSmartPeriod] = useState<'all_shifts' | 'night_shift' | 'morning_shift' | 'afternoon_shift'>('all_shifts');
+
   const [riderFilter, setRiderFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [timeframeFilter, setTimeframeFilter] = useState<'today' | '7days' | '30days' | 'all' | 'custom'>('today');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [sortOrder, setSortOrder] = useState<'recent' | 'oldest' | 'highest_value'>('recent');
@@ -425,6 +429,16 @@ export default function EstablishmentDashboard() {
     loadData();
   };
 
+  const setEstSmartDateToToday = () => {
+    setSmartDate(db.getOperationalDateString());
+  };
+
+  const setEstSmartDateToYesterday = () => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    setSmartDate(db.getOperationalDateString(d));
+  };
+
   if (user && !currentEst && db.getEstablishments().length > 0) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
@@ -456,23 +470,21 @@ export default function EstablishmentDashboard() {
       if (riderFilter !== 'all' && d.riderId !== riderFilter) return false;
       if (statusFilter !== 'all' && d.status !== statusFilter) return false;
 
-      if (timeframeFilter === 'today' && !db.isSameDayString(d.date, todayStr)) return false;
+      if (filterMode === 'smart_shift') {
+        if (!smartDate) return true;
+        const isDateMatch = db.isSameDayString(d.date, smartDate);
+        if (!isDateMatch) return false;
 
-      if (timeframeFilter === '7days') {
-        const d7 = new Date();
-        d7.setDate(d7.getDate() - 7);
-        const limitStr = db.getOperationalDateString(d7);
-        if (d.date < limitStr) return false;
-      }
-
-      if (timeframeFilter === '30days') {
-        const d30 = new Date();
-        d30.setDate(d30.getDate() - 30);
-        const limitStr = db.getOperationalDateString(d30);
-        if (d.date < limitStr) return false;
-      }
-
-      if (timeframeFilter === 'custom') {
+        const [h] = (d.time || '12:00').split(':').map(Number);
+        if (smartPeriod === 'night_shift') {
+          return h >= 18 || h < 3;
+        } else if (smartPeriod === 'morning_shift') {
+          return h >= 6 && h < 12;
+        } else if (smartPeriod === 'afternoon_shift') {
+          return h >= 12 && h < 18;
+        }
+        return true;
+      } else if (filterMode === 'date_range') {
         if (dateFrom && d.date < dateFrom) return false;
         if (dateTo && d.date > dateTo) return false;
       }
@@ -675,81 +687,81 @@ export default function EstablishmentDashboard() {
               </button>
             </div>
 
-            <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200 space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-extrabold uppercase text-slate-600 flex items-center gap-1.5">
-                  <Filter className="h-4 w-4 text-indigo-600" />
-                  <span>Filtros do Histórico</span>
+            {/* PAINEL DE FILTRO DE TURNO INTELIGENTE (ESTABELECIMENTO) */}
+            <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/70 pb-2.5">
+                <p className="text-xs font-black uppercase text-indigo-900 flex items-center gap-1.5 tracking-wider">
+                  <Sparkles className="h-4 w-4 text-indigo-600" />
+                  <span>FILTRO DE TURNO E PERÍODO</span>
                 </p>
 
-                {(timeframeFilter !== 'today' || statusFilter !== 'all' || riderFilter !== 'all' || dateFrom || dateTo) && (
-                  <button
-                    onClick={() => {
-                      setTimeframeFilter('today');
-                      setStatusFilter('all');
-                      setRiderFilter('all');
-                      setDateFrom('');
-                      setDateTo('');
-                    }}
-                    className="text-xs font-bold text-indigo-600 hover:underline"
-                  >
-                    Limpar Filtros
-                  </button>
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
-                    <Calendar className="h-3 w-3 text-indigo-600" />
-                    <span>Período de Exibição</span>
-                  </label>
+                <div className="flex items-center space-x-2">
                   <select
-                    value={timeframeFilter}
-                    onChange={(e) => setTimeframeFilter(e.target.value as any)}
-                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold text-slate-700"
+                    value={filterMode}
+                    onChange={(e) => setFilterMode(e.target.value as any)}
+                    className="px-3 py-1.5 bg-white border border-indigo-200 text-indigo-900 rounded-xl text-xs font-extrabold shadow-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   >
-                    <option value="today">Somente Hoje (Turno Atual)</option>
-                    <option value="7days">Últimos 7 dias</option>
-                    <option value="30days">Últimos 30 dias</option>
-                    <option value="all">Todas as Datas (Histórico Completo)</option>
-                    <option value="custom">Período Personalizado</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Status da Corrida</label>
-                  <select
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold"
-                  >
-                    <option value="all">Todos os Status</option>
-                    <option value="active">Aprovadas (Ativas)</option>
-                    <option value="pending">Pendentes de Aprovação</option>
-                    <option value="rejected">Rejeitadas</option>
-                    <option value="lost">Ocultadas / Perdidas</option>
-                    <option value="cancelled">Canceladas</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Motoboy</label>
-                  <select
-                    value={riderFilter}
-                    onChange={(e) => setRiderFilter(e.target.value)}
-                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                  >
-                    <option value="all">Todos os Motoboys</option>
-                    {allRiders.map(r => (
-                      <option key={r.id} value={r.id}>{r.name}</option>
-                    ))}
+                    <option value="smart_shift">✨ Turno Inteligente por Data</option>
+                    <option value="date_range">📅 Intervalo de Datas</option>
+                    <option value="all">🌐 Todas as Corridas</option>
                   </select>
                 </div>
               </div>
 
-              {timeframeFilter === 'custom' && (
-                <div className="grid grid-cols-2 gap-2.5 pt-1 border-t border-slate-200">
+              {filterMode === 'smart_shift' && (
+                <div className="bg-indigo-50/40 border border-indigo-100 rounded-xl p-3.5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-indigo-950 uppercase">
+                      Selecione o Turno:
+                    </label>
+                    <div className="flex items-center space-x-1.5">
+                      <button
+                        type="button"
+                        onClick={setEstSmartDateToToday}
+                        className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-colors shadow-sm"
+                      >
+                        Hoje
+                      </button>
+                      <button
+                        type="button"
+                        onClick={setEstSmartDateToYesterday}
+                        className="px-3 py-1 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 rounded-lg text-xs font-bold transition-colors"
+                      >
+                        Ontem
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">DATA BASE</label>
+                      <input
+                        type="date"
+                        value={smartDate}
+                        onChange={(e) => setSmartDate(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">PERÍODO / EXPEDIENTE</label>
+                      <select
+                        value={smartPeriod}
+                        onChange={(e) => setSmartPeriod(e.target.value as any)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      >
+                        <option value="all_shifts">Turno Completo (Manhã + Tarde + Noite/Madrugada)</option>
+                        <option value="night_shift">Turno Noite / Madrugada (18h00 às 02h59)</option>
+                        <option value="morning_shift">Turno Manhã (06h00 às 11h59)</option>
+                        <option value="afternoon_shift">Turno Tarde (12h00 às 17h59)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {filterMode === 'date_range' && (
+                <div className="grid grid-cols-2 gap-3 pt-1">
                   <div>
                     <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">De (Data Inicial)</label>
                     <input
@@ -770,6 +782,51 @@ export default function EstablishmentDashboard() {
                   </div>
                 </div>
               )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1 border-t border-slate-200">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Motoboy</label>
+                  <select
+                    value={riderFilter}
+                    onChange={(e) => setRiderFilter(e.target.value)}
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value="all">Todos os Motoboys</option>
+                    {allRiders.map(r => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Status da Corrida</label>
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold"
+                  >
+                    <option value="all">Todos os Status</option>
+                    <option value="active">Aprovadas (Ativas)</option>
+                    <option value="pending">Pendentes de Aprovação</option>
+                    <option value="rejected">Rejeitadas</option>
+                    <option value="lost">Ocultadas / Perdidas</option>
+                    <option value="cancelled">Canceladas</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Ordenação</label>
+                  <select
+                    value={sortOrder}
+                    onChange={(e) => setSortOrder(e.target.value as any)}
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold text-slate-700"
+                  >
+                    <option value="recent">Mais Recentes Primeiro</option>
+                    <option value="oldest">Mais Antigas Primeiro</option>
+                    <option value="highest_value">Maior Valor (R$)</option>
+                  </select>
+                </div>
+              </div>
             </div>
 
             {filteredDeliveries.length === 0 ? (

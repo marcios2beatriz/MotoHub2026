@@ -109,7 +109,11 @@ export default function AdminDashboard() {
   const [schSpecificDate, setSchSpecificDate] = useState<string>('');
   const [schSortOrder, setSchSortOrder] = useState<'date_desc' | 'date_asc' | 'rider_name' | 'est_name'>('date_desc');
 
-  // Filtros de Corridas
+  // --- FILTRO DE TURNO INTELIGENTE POR DATA NAS CORRIDAS (ADMIN) ---
+  const [delFilterMode, setDelFilterMode] = useState<'smart_shift' | 'date_range' | 'all'>('smart_shift');
+  const [delSmartDate, setDelSmartDate] = useState<string>(db.getOperationalDateString());
+  const [delSmartPeriod, setDelSmartPeriod] = useState<'all_shifts' | 'night_shift' | 'morning_shift' | 'afternoon_shift'>('all_shifts');
+
   const [delRiderFilter, setDelRiderFilter] = useState<string>('all');
   const [delEstFilter, setDelEstFilter] = useState<string>('all');
   const [delStatusFilter, setDelStatusFilter] = useState<string>('all');
@@ -1123,6 +1127,7 @@ export default function AdminDashboard() {
     })
     .sort((a, b) => b.date.localeCompare(a.date));
 
+  // --- FILTRO DE CORRIDAS COM TURNO INTELIGENTE (ADMIN) ---
   const filteredAndSortedDeliveries = deliveries
     .filter(d => {
       const rider = users.find(u => u.id === d.riderId);
@@ -1141,12 +1146,44 @@ export default function AdminDashboard() {
       if (delEstFilter !== 'all' && d.establishmentId !== delEstFilter) return false;
       if (delStatusFilter !== 'all' && d.status !== delStatusFilter) return false;
 
-      if (delDateFrom && d.date < delDateFrom) return false;
-      if (delDateTo && d.date > delDateTo) return false;
+      if (delFilterMode === 'smart_shift') {
+        if (!delSmartDate) return true;
+        const isDateMatch = db.isSameDayString(d.date, delSmartDate);
+        if (!isDateMatch) return false;
+
+        const [h] = (d.time || '12:00').split(':').map(Number);
+        if (delSmartPeriod === 'night_shift') {
+          return h >= 18 || h < 3;
+        } else if (delSmartPeriod === 'morning_shift') {
+          return h >= 6 && h < 12;
+        } else if (delSmartPeriod === 'afternoon_shift') {
+          return h >= 12 && h < 18;
+        }
+        return true;
+      } else if (delFilterMode === 'date_range') {
+        if (delDateFrom && d.date < delDateFrom) return false;
+        if (delDateTo && d.date > delDateTo) return false;
+      }
 
       return true;
     })
-    .sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time));
+    .sort((a, b) => {
+      if (delSortOrder === 'date_desc') return b.date.localeCompare(a.date) || b.time.localeCompare(a.time) || b.id.localeCompare(a.id);
+      if (delSortOrder === 'date_asc') return a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || a.id.localeCompare(b.id);
+      if (delSortOrder === 'value_desc') return Number(b.value || 0) - Number(a.value || 0);
+      if (delSortOrder === 'value_asc') return Number(a.value || 0) - Number(b.value || 0);
+      if (delSortOrder === 'rider_name') {
+        const rA = users.find(u => u.id === a.riderId)?.name || '';
+        const rB = users.find(u => u.id === b.riderId)?.name || '';
+        return rA.localeCompare(rB);
+      }
+      if (delSortOrder === 'est_name') {
+        const eA = establishments.find(e => e.id === a.establishmentId)?.name || '';
+        const eB = establishments.find(e => e.id === b.establishmentId)?.name || '';
+        return eA.localeCompare(eB);
+      }
+      return 0;
+    });
 
   const totalFilteredRevenue = filteredAndSortedDeliveries
     .filter(d => d.status === 'active')
@@ -1163,6 +1200,16 @@ export default function AdminDashboard() {
 
   const activeNotesDelivery = db.getDeliveries().find(d => d.id === notesDeliveryId) || null;
   const activeScheduleChat = schedules.find(s => s.id === activeScheduleChatId) || null;
+
+  const setDelSmartDateToToday = () => {
+    setDelSmartDate(db.getOperationalDateString());
+  };
+
+  const setDelSmartDateToYesterday = () => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    setDelSmartDate(db.getOperationalDateString(d));
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col relative">
@@ -1998,7 +2045,7 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* CORRIDAS - COM PAINEL COMPLETO DE BUSCA, FILTROS E MÉTRICAS */}
+          {/* CORRIDAS - COM PAINEL DE FILTRO DE TURNO INTELIGENTE (ADMIN) */}
           {activeTab === 'deliveries' && (
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
@@ -2051,58 +2098,105 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
-              {/* CARDS DE RESUMO E MÉTRICAS DAS CORRIDAS SELECIONADAS */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-                  <p className="text-[10px] font-bold text-slate-500 uppercase">Corridas Exibidas</p>
-                  <p className="text-xl font-black text-slate-800 mt-0.5">{filteredAndSortedDeliveries.length}</p>
-                </div>
-                <div className="bg-emerald-50 p-3.5 rounded-xl border border-emerald-200">
-                  <p className="text-[10px] font-bold text-emerald-700 uppercase">Faturamento Aprovado</p>
-                  <p className="text-xl font-black text-emerald-800 mt-0.5">R$ {totalFilteredRevenue.toFixed(2)}</p>
-                </div>
-                <div className="bg-amber-50 p-3.5 rounded-xl border border-amber-200">
-                  <p className="text-[10px] font-bold text-amber-700 uppercase">Pendentes</p>
-                  <p className="text-xl font-black text-amber-800 mt-0.5">
-                    {filteredAndSortedDeliveries.filter(d => d.status === 'pending').length}
-                  </p>
-                </div>
-                <div className="bg-red-50 p-3.5 rounded-xl border border-red-200">
-                  <p className="text-[10px] font-bold text-red-700 uppercase">Rejeitadas / Canceladas</p>
-                  <p className="text-xl font-black text-amber-800 mt-0.5">
-                    {filteredAndSortedDeliveries.filter(d => d.status === 'rejected' || d.status === 'cancelled').length}
-                  </p>
-                </div>
-              </div>
-
-              {/* PAINEL DE FILTROS AVANÇADOS DE CORRIDAS */}
-              <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200 space-y-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-extrabold uppercase text-slate-600 flex items-center gap-1.5">
-                    <Filter className="h-4 w-4 text-indigo-600" />
-                    <span>Filtros e Busca de Corridas</span>
+              {/* CARD DE FILTRO DE TURNO E PERÍODO (TURNO INTELIGENTE NO ADMIN) */}
+              <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/70 pb-2.5">
+                  <p className="text-xs font-black uppercase text-indigo-900 flex items-center gap-1.5 tracking-wider">
+                    <Sparkles className="h-4 w-4 text-indigo-600" />
+                    <span>FILTRO DE TURNO E PERÍODO</span>
                   </p>
 
-                  {(delRiderFilter !== 'all' || delEstFilter !== 'all' || delStatusFilter !== 'all' || delDateFrom || delDateTo || delSearchQuery) && (
-                    <button
-                      onClick={() => {
-                        setDelRiderFilter('all');
-                        setDelEstFilter('all');
-                        setDelStatusFilter('all');
-                        setDelDateFrom('');
-                        setDelDateTo('');
-                        setDelSearchQuery('');
-                      }}
-                      className="text-xs font-bold text-indigo-600 hover:underline"
+                  <div className="flex items-center space-x-2">
+                    <select
+                      value={delFilterMode}
+                      onChange={(e) => setDelFilterMode(e.target.value as any)}
+                      className="px-3 py-1.5 bg-white border border-indigo-200 text-indigo-900 rounded-xl text-xs font-extrabold shadow-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     >
-                      Limpar Filtros
-                    </button>
-                  )}
+                      <option value="smart_shift">✨ Turno Inteligente por Data</option>
+                      <option value="date_range">📅 Intervalo de Datas</option>
+                      <option value="all">🌐 Todas as Corridas</option>
+                    </select>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                {delFilterMode === 'smart_shift' && (
+                  <div className="bg-indigo-50/40 border border-indigo-100 rounded-xl p-3.5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-indigo-950 uppercase">
+                        Selecione o Turno:
+                      </label>
+                      <div className="flex items-center space-x-1.5">
+                        <button
+                          type="button"
+                          onClick={setDelSmartDateToToday}
+                          className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-colors shadow-sm"
+                        >
+                          Hoje
+                        </button>
+                        <button
+                          type="button"
+                          onClick={setDelSmartDateToYesterday}
+                          className="px-3 py-1 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 rounded-lg text-xs font-bold transition-colors"
+                        >
+                          Ontem
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">DATA BASE</label>
+                        <input
+                          type="date"
+                          value={delSmartDate}
+                          onChange={(e) => setDelSmartDate(e.target.value)}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">PERÍODO / EXPEDIENTE</label>
+                        <select
+                          value={delSmartPeriod}
+                          onChange={(e) => setDelSmartPeriod(e.target.value as any)}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        >
+                          <option value="all_shifts">Turno Completo (Manhã + Tarde + Noite/Madrugada)</option>
+                          <option value="night_shift">Turno Noite / Madrugada (18h00 às 02h59)</option>
+                          <option value="morning_shift">Turno Manhã (06h00 às 11h59)</option>
+                          <option value="afternoon_shift">Turno Tarde (12h00 às 17h59)</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {delFilterMode === 'date_range' && (
+                  <div className="grid grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">De (Data Inicial)</label>
+                      <input
+                        type="date"
+                        value={delDateFrom}
+                        onChange={(e) => setDelDateFrom(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Até (Data Final)</label>
+                      <input
+                        type="date"
+                        value={delDateTo}
+                        onChange={(e) => setDelDateTo(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1 border-t border-slate-200">
                   <div className="lg:col-span-2">
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Buscar por Nº do Pedido, Motoboy ou Loja</label>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Buscar por Pedido / Nome</label>
                     <div className="relative">
                       <input
                         type="text"
@@ -2115,6 +2209,36 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Motoboy</label>
+                    <select
+                      value={delRiderFilter}
+                      onChange={(e) => setDelRiderFilter(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                      <option value="all">Todos os Motoboys</option>
+                      {users.filter(u => u.role === 'rider').map(r => (
+                        <option key={r.id} value={r.id}>{r.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Estabelecimento</label>
+                    <select
+                      value={delEstFilter}
+                      onChange={(e) => setDelEstFilter(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                      <option value="all">Todos os Estabelecimentos</option>
+                      {establishments.map(e => (
+                        <option key={e.id} value={e.id}>{e.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 border-t border-slate-200">
                   <div>
                     <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Status da Corrida</label>
                     <select
@@ -2149,55 +2273,29 @@ export default function AdminDashboard() {
                     </select>
                   </div>
                 </div>
+              </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1 border-t border-slate-200">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Motoboy</label>
-                    <select
-                      value={delRiderFilter}
-                      onChange={(e) => setDelRiderFilter(e.target.value)}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                    >
-                      <option value="all">Todos os Motoboys</option>
-                      {users.filter(u => u.role === 'rider').map(r => (
-                        <option key={r.id} value={r.id}>{r.name}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Estabelecimento</label>
-                    <select
-                      value={delEstFilter}
-                      onChange={(e) => setDelEstFilter(e.target.value)}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                    >
-                      <option value="all">Todos os Estabelecimentos</option>
-                      {establishments.map(e => (
-                        <option key={e.id} value={e.id}>{e.name}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">De (Data Inicial)</label>
-                    <input
-                      type="date"
-                      value={delDateFrom}
-                      onChange={(e) => setDelDateFrom(e.target.value)}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Até (Data Final)</label>
-                    <input
-                      type="date"
-                      value={delDateTo}
-                      onChange={(e) => setDelDateTo(e.target.value)}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                    />
-                  </div>
+              {/* CARDS DE RESUMO E MÉTRICAS DAS CORRIDAS SELECIONADAS */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                  <p className="text-[10px] font-bold text-slate-500 uppercase">Corridas Exibidas</p>
+                  <p className="text-xl font-black text-slate-800 mt-0.5">{filteredAndSortedDeliveries.length}</p>
+                </div>
+                <div className="bg-emerald-50 p-3.5 rounded-xl border border-emerald-200">
+                  <p className="text-[10px] font-bold text-emerald-700 uppercase">Faturamento Aprovado</p>
+                  <p className="text-xl font-black text-emerald-800 mt-0.5">R$ {totalFilteredRevenue.toFixed(2)}</p>
+                </div>
+                <div className="bg-amber-50 p-3.5 rounded-xl border border-amber-200">
+                  <p className="text-[10px] font-bold text-amber-700 uppercase">Pendentes</p>
+                  <p className="text-xl font-black text-amber-800 mt-0.5">
+                    {filteredAndSortedDeliveries.filter(d => d.status === 'pending').length}
+                  </p>
+                </div>
+                <div className="bg-red-50 p-3.5 rounded-xl border border-red-200">
+                  <p className="text-[10px] font-bold text-red-700 uppercase">Rejeitadas / Canceladas</p>
+                  <p className="text-xl font-black text-amber-800 mt-0.5">
+                    {filteredAndSortedDeliveries.filter(d => d.status === 'rejected' || d.status === 'cancelled').length}
+                  </p>
                 </div>
               </div>
 
