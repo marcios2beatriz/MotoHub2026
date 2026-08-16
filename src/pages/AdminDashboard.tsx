@@ -61,6 +61,9 @@ import { realtimeGps } from '../utils/realtimeGps';
 const DAY_KEYS = ['seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom'] as const;
 const DAY_LABELS = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'];
 
+// Tempo limite para considerar o motoboy online no Admin (3 minutos)
+const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
+
 export function getShiftLabel(shift: string): string {
   switch(shift) {
     case 'morning': return 'Manhã';
@@ -223,7 +226,7 @@ export default function AdminDashboard() {
       db.pullFromSupabase().then(() => loadData());
     }, 2000);
 
-    const unsubscribeLocation = realtimeGps.subscribeToLocations((payload) => {
+    const unsubscribeLocation = realtimeGps.subscribeToLocations(() => {
       loadData();
     });
 
@@ -242,15 +245,20 @@ export default function AdminDashboard() {
     };
   }, [adminUser, navigate, activeTab]);
 
+  // Filtrar apenas motoboys com sinal ONLINE (atualizado nos últimos 3 minutos)
+  const onlineRiderLocations = riderLocations.filter(loc => {
+    if (!loc.lat || !loc.lng || isNaN(loc.lat) || isNaN(loc.lng)) return false;
+    const timeDiff = loc.updatedAt ? Date.now() - new Date(loc.updatedAt).getTime() : Infinity;
+    return timeDiff <= ONLINE_THRESHOLD_MS;
+  });
+
   const handleRecenterMap = () => {
     const currentMap = mapRef.current;
     if (!currentMap) return;
     const points: L.LatLngExpression[] = [];
 
-    riderLocations.forEach(loc => {
-      if (loc.lat && loc.lng && !isNaN(loc.lat) && !isNaN(loc.lng)) {
-        points.push([loc.lat, loc.lng]);
-      }
+    onlineRiderLocations.forEach(loc => {
+      points.push([loc.lat, loc.lng]);
     });
 
     if (points.length >= 2) {
@@ -288,9 +296,10 @@ export default function AdminDashboard() {
     const currentMap = mapRef.current;
     const points: L.LatLngExpression[] = [];
 
-    const validLocations = riderLocations.filter(loc => loc.lat && loc.lng && !isNaN(loc.lat) && !isNaN(loc.lng));
-    const validIds = new Set(validLocations.map(r => r.riderId));
+    // Identificadores de motoboys permitidos no mapa (estritamente ONLINE)
+    const validIds = new Set(onlineRiderLocations.map(r => r.riderId));
 
+    // Remove qualquer marcador de motoboy que ficou offline
     Object.keys(markersRef.current).forEach(markerId => {
       if (!validIds.has(markerId)) {
         currentMap.removeLayer(markersRef.current[markerId]);
@@ -298,20 +307,17 @@ export default function AdminDashboard() {
       }
     });
 
-    validLocations.forEach(loc => {
+    onlineRiderLocations.forEach(loc => {
       points.push([loc.lat, loc.lng]);
       const riderName = loc.riderName || 'Entregador';
       const existingMarker = markersRef.current[loc.riderId];
 
-      const timeDiffMinutes = loc.updatedAt ? Math.round((Date.now() - new Date(loc.updatedAt).getTime()) / 60000) : 0;
-      const isOnline = Math.abs(timeDiffMinutes) <= 5;
-
       const htmlIcon = `
         <div style="display: flex; flex-direction: column; align-items: center; justify-content: center;">
-          <div style="background: #0f172a; color: white; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px; white-space: nowrap; margin-bottom: 2px; border: 1px solid #334155; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
-            ${riderName} ${isOnline ? '🟢' : '⚪'}
+          <div style="background: #0f172a; color: white; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px; white-space: nowrap; margin-bottom: 2px; border: 1px solid #10b981; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
+            ${riderName} 🟢
           </div>
-          <div style="background-color: ${isOnline ? '#10b981' : '#64748b'}; color: white; width: 38px; height: 38px; border-radius: 50%; border: 3px solid white; box-shadow: 0 6px 14px rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; ${isOnline ? 'animation: pulse 2s infinite;' : ''}">
+          <div style="background-color: #10b981; color: white; width: 38px; height: 38px; border-radius: 50%; border: 3px solid white; box-shadow: 0 6px 14px rgba(16,185,129,0.5); display: flex; align-items: center; justify-content: center; animation: pulse 2s infinite;">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="3" /><circle cx="18" cy="18" r="3" /><path d="M18 18v-3l-3-4H9l-3 4v3" /><rect x="8" y="6" width="5" height="5" rx="1" /><path d="M15 11l1.5-4.5H19" /></svg>
           </div>
         </div>
@@ -328,21 +334,20 @@ export default function AdminDashboard() {
         existingMarker.setLatLng([loc.lat, loc.lng]);
         existingMarker.setIcon(riderIcon);
       } else {
-        const marker = L.marker([loc.lat, loc.lng], { icon: riderIcon }).addTo(currentMap).bindPopup(`<b>${riderName}</b><br/>${isOnline ? 'Sinal GPS Ativo em tempo real' : 'Última posição conhecida'}`);
+        const marker = L.marker([loc.lat, loc.lng], { icon: riderIcon }).addTo(currentMap).bindPopup(`<b>${riderName}</b><br/>🟢 Sinal GPS Ativo em tempo real`);
         markersRef.current[loc.riderId] = marker;
       }
     });
 
     if (!hasSetInitialAdminMapBoundsRef.current && points.length > 0) {
       if (points.length >= 2) {
-        const bounds = L.latLngBounds(points);
-        currentMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+        currentMap.fitBounds(L.latLngBounds(points), { padding: [50, 50], maxZoom: 16 });
       } else if (points.length === 1) {
         currentMap.setView(points[0], 16);
       }
       hasSetInitialAdminMapBoundsRef.current = true;
     }
-  }, [activeTab, riderLocations]);
+  }, [activeTab, onlineRiderLocations]);
 
   const handleLogout = () => {
     db.setCurrentUser(null);
@@ -1372,7 +1377,7 @@ export default function AdminDashboard() {
                     <MapIcon className="h-6 w-6 text-emerald-600" />
                     <span>Monitoramento GPS de Entregadores em Tempo Real</span>
                   </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">Acompanhe a posição de todos os motoboys com localização no Supabase</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{onlineRiderLocations.length} motoboy(s) online com sinal GPS ativo</p>
                 </div>
                 
                 <div className="flex items-center space-x-2">
@@ -1403,7 +1408,7 @@ export default function AdminDashboard() {
                       </div>
                       <div>
                         <h3 className="font-extrabold text-sm sm:text-base">Monitoramento GPS - Tela Cheia</h3>
-                        <p className="text-xs text-slate-400">Visão global dos motoboys no mapa</p>
+                        <p className="text-xs text-slate-400">{onlineRiderLocations.length} motoboy(s) online com sinal GPS ativo</p>
                       </div>
                     </div>
 
@@ -1430,7 +1435,6 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* ... OUTRAS ABAS (users, establishments, requests, schedules, deliveries, finance, reports) MANTIDAS ... */}
           {activeTab === 'users' && (
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

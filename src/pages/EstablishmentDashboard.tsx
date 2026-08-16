@@ -34,6 +34,9 @@ import DeliveryModal from '../components/DeliveryModal';
 import BatchDeliveryModal from '../components/BatchDeliveryModal';
 import { realtimeGps } from '../utils/realtimeGps';
 
+// Tempo máximo em minutos para considerar o motoboy online
+const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
+
 export default function EstablishmentDashboard() {
   const navigate = useNavigate();
   const [user] = useState(db.getCurrentUser());
@@ -133,7 +136,7 @@ export default function EstablishmentDashboard() {
     const handleDataUpdate = () => loadData();
     window.addEventListener('db-sync-complete', handleDataUpdate);
 
-    const unsubscribeLocation = realtimeGps.subscribeToLocations((payload) => {
+    const unsubscribeLocation = realtimeGps.subscribeToLocations(() => {
       loadData();
     });
 
@@ -164,20 +167,33 @@ export default function EstablishmentDashboard() {
     }
   });
 
+  // Conjunto de IDs dos motoboys escalados hoje para este estabelecimento
   const scheduledRiderIds = new Set(todaySchedules.map(s => {
     const r = db.resolveUser(s.riderId);
     return r ? r.id : s.riderId;
   }));
+
+  // Filtrar apenas motoboys ONLINE que estão escalados para este estabelecimento hoje
+  const onlineScheduledRiderLocations = riderLocations.filter(loc => {
+    if (!loc.lat || !loc.lng || isNaN(loc.lat) || isNaN(loc.lng)) return false;
+    
+    // 1. Deve estar escalado para o estabelecimento hoje
+    const isScheduled = scheduledRiderIds.has(loc.riderId) || 
+      todaySchedules.some(s => db.isSameUser(s.riderId, loc.riderId));
+    if (!isScheduled) return false;
+
+    // 2. Deve estar ONLINE (com sinal nos últimos 3 minutos)
+    const timeDiff = loc.updatedAt ? Date.now() - new Date(loc.updatedAt).getTime() : Infinity;
+    return timeDiff <= ONLINE_THRESHOLD_MS;
+  });
 
   const handleRecenterMap = () => {
     const currentMap = mapRef.current;
     if (!currentMap) return;
     const points: L.LatLngExpression[] = [];
 
-    riderLocations.forEach(loc => {
-      if (loc.lat && loc.lng && !isNaN(loc.lat) && !isNaN(loc.lng)) {
-        points.push([loc.lat, loc.lng]);
-      }
+    onlineScheduledRiderLocations.forEach(loc => {
+      points.push([loc.lat, loc.lng]);
     });
 
     if (points.length >= 2) {
@@ -215,31 +231,29 @@ export default function EstablishmentDashboard() {
     const currentMap = mapRef.current;
     const points: L.LatLngExpression[] = [];
 
-    // Mostra todos os motoboys com coordenadas válidas
-    const validLocations = riderLocations.filter(loc => loc.lat && loc.lng && !isNaN(loc.lat) && !isNaN(loc.lng));
-    const activeIds = new Set(validLocations.map(r => r.riderId));
+    // Conjunto de IDs permitidos no mapa (escalados na loja + online)
+    const allowedIds = new Set(onlineScheduledRiderLocations.map(r => r.riderId));
 
+    // Remove qualquer marcador de motoboy que ficou offline ou não pertence a esta escala
     Object.keys(markersRef.current).forEach(markerId => {
-      if (!activeIds.has(markerId)) {
+      if (!allowedIds.has(markerId)) {
         currentMap.removeLayer(markersRef.current[markerId]);
         delete markersRef.current[markerId];
       }
     });
 
-    validLocations.forEach(loc => {
+    // Renderiza apenas os motoboys online da escala
+    onlineScheduledRiderLocations.forEach(loc => {
       points.push([loc.lat, loc.lng]);
       const riderName = loc.riderName || 'Entregador';
       const existingMarker = markersRef.current[loc.riderId];
 
-      const timeDiffMinutes = loc.updatedAt ? Math.round((Date.now() - new Date(loc.updatedAt).getTime()) / 60000) : 0;
-      const isOnline = Math.abs(timeDiffMinutes) <= 5;
-
       const htmlIcon = `
         <div style="display: flex; flex-direction: column; align-items: center; justify-content: center;">
-          <div style="background: #0f172a; color: white; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px; white-space: nowrap; margin-bottom: 2px; border: 1px solid #334155; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
-            ${riderName} ${isOnline ? '🟢' : '⚪'}
+          <div style="background: #0f172a; color: white; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px; white-space: nowrap; margin-bottom: 2px; border: 1px solid #10b981; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
+            ${riderName} 🟢
           </div>
-          <div style="background-color: ${isOnline ? '#10b981' : '#64748b'}; color: white; width: 38px; height: 38px; border-radius: 50%; border: 3px solid white; box-shadow: 0 6px 14px rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; ${isOnline ? 'animation: pulse 2s infinite;' : ''}">
+          <div style="background-color: #10b981; color: white; width: 38px; height: 38px; border-radius: 50%; border: 3px solid white; box-shadow: 0 6px 14px rgba(16,185,129,0.5); display: flex; align-items: center; justify-content: center; animation: pulse 2s infinite;">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="3" /><circle cx="18" cy="18" r="3" /><path d="M18 18v-3l-3-4H9l-3 4v3" /><rect x="8" y="6" width="5" height="5" rx="1" /><path d="M15 11l1.5-4.5H19" /></svg>
           </div>
         </div>
@@ -256,7 +270,9 @@ export default function EstablishmentDashboard() {
         existingMarker.setLatLng([loc.lat, loc.lng]);
         existingMarker.setIcon(riderIcon);
       } else {
-        const marker = L.marker([loc.lat, loc.lng], { icon: riderIcon }).addTo(currentMap).bindPopup(`<b>${riderName}</b><br/>${isOnline ? 'Sinal GPS Ativo em tempo real' : 'Última posição conhecida'}`);
+        const marker = L.marker([loc.lat, loc.lng], { icon: riderIcon })
+          .addTo(currentMap)
+          .bindPopup(`<b>${riderName}</b><br/>🟢 Sinal GPS Ativo em tempo real`);
         markersRef.current[loc.riderId] = marker;
       }
     });
@@ -269,7 +285,7 @@ export default function EstablishmentDashboard() {
       }
       hasSetInitialMapBoundsRef.current = true;
     }
-  }, [riderLocations]);
+  }, [onlineScheduledRiderLocations]);
 
   useEffect(() => {
     if (mapRef.current) {
@@ -439,7 +455,7 @@ export default function EstablishmentDashboard() {
   const todayDeliveries = deliveries.filter(d => isSameDayString(d.date, todayStr));
   const todayApprovedDeliveries = todayDeliveries.filter(d => d.status === 'active');
   const todayRevenue = todayApprovedDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
-  const onlineRidersCount = riderLocations.filter(l => l.lat && l.lng).length;
+  const onlineRidersCount = onlineScheduledRiderLocations.length;
 
   const filteredDeliveries = deliveries
     .filter(d => {
@@ -597,7 +613,7 @@ export default function EstablishmentDashboard() {
                   const riderTotalVal = riderDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
 
                   const loc = riderLocations.find(l => l.riderId === sch.riderId);
-                  const isOnline = loc && loc.updatedAt && (Date.now() - new Date(loc.updatedAt).getTime() < 5 * 60 * 1000);
+                  const isOnline = loc && loc.updatedAt && (Date.now() - new Date(loc.updatedAt).getTime() < ONLINE_THRESHOLD_MS);
 
                   return (
                     <div key={sch.id} className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
@@ -951,7 +967,7 @@ export default function EstablishmentDashboard() {
                 <MapIcon className="h-5 w-5 text-indigo-600" />
                 <div>
                   <h3 className="font-extrabold text-slate-800 text-base">Central de Rastreamento</h3>
-                  <p className="text-[11px] text-slate-400">{onlineRidersCount} motoboy(s) com sinal GPS ativo</p>
+                  <p className="text-[11px] text-slate-400">{onlineRidersCount} motoboy(s) online escalado(s) hoje</p>
                 </div>
               </div>
 
@@ -983,7 +999,7 @@ export default function EstablishmentDashboard() {
                     </div>
                     <div>
                       <h3 className="font-extrabold text-sm sm:text-base">Central de Rastreamento - Tela Cheia</h3>
-                      <p className="text-xs text-slate-400">{onlineRidersCount} motoboy(s) com sinal GPS ativo</p>
+                      <p className="text-xs text-slate-400">{onlineRidersCount} motoboy(s) online escalado(s) hoje</p>
                     </div>
                   </div>
 
