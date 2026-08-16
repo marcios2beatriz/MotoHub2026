@@ -28,12 +28,14 @@ import {
   RotateCw,
   Ban,
   Calendar,
-  Filter
+  Filter,
+  Layers
 } from 'lucide-react';
 import L from 'leaflet';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
 import ScheduleChatModal from '../components/ScheduleChatModal';
 import DeliveryModal from '../components/DeliveryModal';
+import BatchDeliveryModal from '../components/BatchDeliveryModal';
 import { realtimeGps } from '../utils/realtimeGps';
 
 export default function EstablishmentDashboard() {
@@ -64,6 +66,7 @@ export default function EstablishmentDashboard() {
 
   // Modais de chat e corrida
   const [showDeliveryModal, setShowDeliveryModal] = useState(false);
+  const [showBatchModal, setShowBatchModal] = useState(false);
   const [editingDelivery, setEditingDelivery] = useState<Delivery | null>(null);
   const [deliveryForm, setDeliveryForm] = useState({
     riderId: '',
@@ -283,8 +286,7 @@ export default function EstablishmentDashboard() {
 
     if (!hasSetInitialMapBoundsRef.current && points.length > 0) {
       if (points.length >= 2) {
-        const bounds = L.latLngBounds(points);
-        currentMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+        currentMap.fitBounds(L.latLngBounds(points), { padding: [50, 50], maxZoom: 16 });
       } else if (points.length === 1) {
         currentMap.setView(points[0], 16);
       }
@@ -569,13 +571,23 @@ export default function EstablishmentDashboard() {
             </div>
           </div>
 
-          <button
-            onClick={handleLogout}
-            className="flex items-center space-x-1 text-xs font-bold text-red-400 hover:text-red-300 transition-colors"
-          >
-            <LogOut className="h-4 w-4" />
-            <span>Sair</span>
-          </button>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setShowBatchModal(true)}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 shadow-sm"
+              title="Lançar múltiplas corridas em lote"
+            >
+              <Layers className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Lançar em Lote</span>
+            </button>
+            <button
+              onClick={handleLogout}
+              className="flex items-center space-x-1 text-xs font-bold text-red-400 hover:text-red-300 transition-colors"
+            >
+              <LogOut className="h-4 w-4" />
+              <span>Sair</span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -633,6 +645,15 @@ export default function EstablishmentDashboard() {
                 >
                   <UserPlus className="h-4 w-4" />
                   <span>+ Adicionar na Fila</span>
+                </button>
+
+                <button
+                  onClick={() => setShowBatchModal(true)}
+                  className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition-all shadow-sm flex items-center space-x-1"
+                  title="Lançamento em lote de múltiplos pedidos"
+                >
+                  <Layers className="h-4 w-4" />
+                  <span>Lote</span>
                 </button>
 
                 <button
@@ -748,13 +769,23 @@ export default function EstablishmentDashboard() {
                 </h3>
               </div>
 
-              <button
-                onClick={() => handleOpenLaunchModal()}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-extrabold transition-all shadow-sm flex items-center space-x-1.5 self-start sm:self-center"
-              >
-                <Plus className="h-4 w-4" />
-                <span>Lançar Corrida</span>
-              </button>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setShowBatchModal(true)}
+                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1"
+                >
+                  <Layers className="h-3.5 w-3.5" />
+                  <span>Lançamento em Lote</span>
+                </button>
+
+                <button
+                  onClick={() => handleOpenLaunchModal()}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-extrabold transition-all shadow-sm flex items-center space-x-1.5"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>Lançar Corrida</span>
+                </button>
+              </div>
             </div>
 
             {todaySchedules.length === 0 ? (
@@ -829,6 +860,14 @@ export default function EstablishmentDashboard() {
                   </p>
                 </div>
               </div>
+
+              <button
+                onClick={() => setShowBatchModal(true)}
+                className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 self-start sm:self-center"
+              >
+                <Layers className="h-3.5 w-3.5" />
+                <span>Lançar em Lote</span>
+              </button>
             </div>
 
             <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200 space-y-3">
@@ -1180,6 +1219,15 @@ export default function EstablishmentDashboard() {
         deliveryForm={deliveryForm}
         setDeliveryForm={setDeliveryForm}
         onSave={handleSaveDelivery}
+      />
+
+      <BatchDeliveryModal
+        isOpen={showBatchModal}
+        onClose={() => setShowBatchModal(false)}
+        riders={allRiders}
+        establishments={currentEst ? [currentEst] : []}
+        defaultEstablishmentId={currentEst?.id}
+        onSaved={loadData}
       />
 
       <DeliveryNotesModal

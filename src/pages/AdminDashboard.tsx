@@ -39,7 +39,8 @@ import {
   LocateFixed,
   RotateCcw,
   RotateCw,
-  Sparkles
+  Sparkles,
+  Layers
 } from 'lucide-react';
 
 import L from 'leaflet';
@@ -51,6 +52,7 @@ import RiderSchedulesModal from '../components/RiderSchedulesModal';
 import DeliveryModal from '../components/DeliveryModal';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
 import ScheduleChatModal from '../components/ScheduleChatModal';
+import BatchDeliveryModal from '../components/BatchDeliveryModal';
 import ChatToastBanner, { ChatToast } from '../components/ChatToastBanner';
 import { sendDeviceNotification, playNotificationSound, requestNotificationPermission } from '../utils/notifications';
 import { realtimeGps } from '../utils/realtimeGps';
@@ -158,6 +160,9 @@ export default function AdminDashboard() {
   const [showDeliveryModal, setShowDeliveryModal] = useState(false);
   const [editingDelivery, setEditingDelivery] = useState<Delivery | null>(null);
   const [deliveryForm, setDeliveryForm] = useState({ riderId: '', establishmentId: '', date: '', time: '', value: '', orderNumber: '', notes: '' });
+
+  // Modal de Lote
+  const [showBatchModal, setShowBatchModal] = useState(false);
 
   const [notesDeliveryId, setNotesDeliveryId] = useState<string | null>(null);
   const [activeScheduleChatId, setActiveScheduleChatId] = useState<string | null>(null);
@@ -1184,6 +1189,14 @@ export default function AdminDashboard() {
           </div>
           <div className="flex items-center space-x-3">
             <button
+              onClick={() => setShowBatchModal(true)}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-black flex items-center space-x-1 transition-colors shadow-sm"
+              title="Lançar múltiplas corridas de uma vez"
+            >
+              <Layers className="h-4 w-4 text-white" />
+              <span className="hidden sm:inline">Lançamento em Lote</span>
+            </button>
+            <button
               onClick={handleRunIntelligentSync}
               className="bg-amber-500 hover:bg-amber-600 text-slate-950 px-3 py-1.5 rounded-lg text-xs font-black flex items-center space-x-1 transition-colors shadow-sm"
               title="Restaurar Corridas de 15/08 e Corridas Ocultas"
@@ -1398,6 +1411,15 @@ export default function AdminDashboard() {
                   <span>Ações de Manutenção e Recuperação</span>
                 </h3>
                 <div className="flex flex-wrap gap-3">
+                  <button
+                    onClick={() => setShowBatchModal(true)}
+                    className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-xl text-xs font-black transition-all shadow-md"
+                    title="Lançamento rápido de corridas em lote"
+                  >
+                    <Layers className="h-4 w-4 text-white" />
+                    <span>LANÇAMENTO EM LOTE (RECUPERAÇÃO)</span>
+                  </button>
+
                   <button
                     onClick={handleRunIntelligentSync}
                     className="flex items-center space-x-2 bg-amber-500 hover:bg-amber-600 text-slate-950 border border-amber-600 px-4 py-3 rounded-xl text-xs font-black transition-all shadow-md"
@@ -2098,6 +2120,14 @@ export default function AdminDashboard() {
                 
                 <div className="flex flex-wrap items-center gap-2">
                   <button
+                    onClick={() => setShowBatchModal(true)}
+                    className="flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl text-xs font-black transition-all shadow-md hover:shadow-lg"
+                  >
+                    <Layers className="h-4 w-4 text-white" />
+                    <span>Lançamento em Lote</span>
+                  </button>
+
+                  <button
                     onClick={handleRunIntelligentSync}
                     className="flex items-center space-x-1 bg-amber-500 hover:bg-amber-600 text-slate-950 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all shadow-md"
                     title="Restaurar Corridas do dia 15/08"
@@ -2121,7 +2151,7 @@ export default function AdminDashboard() {
                       setDeliveryForm({ riderId: '', establishmentId: '', date: db.getOperationalDateString(), time: new Date().toTimeString().slice(0,5), value: '', orderNumber: '', notes: '' });
                       setShowDeliveryModal(true);
                     }}
-                    className="flex items-center justify-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-md hover:shadow-lg"
+                    className="flex items-center justify-center space-x-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-md hover:shadow-lg"
                   >
                     <Plus className="h-4 w-4" />
                     <span>Lançar Nova Corrida</span>
@@ -2615,6 +2645,14 @@ export default function AdminDashboard() {
         deliveryForm={deliveryForm}
         setDeliveryForm={setDeliveryForm}
         onSave={handleSaveDelivery}
+      />
+
+      <BatchDeliveryModal
+        isOpen={showBatchModal}
+        onClose={() => setShowBatchModal(false)}
+        riders={users.filter(u => u.role === 'rider')}
+        establishments={establishments}
+        onSaved={loadData}
       />
 
       <DeliveryNotesModal
