@@ -3,7 +3,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { realtimeGps } from './realtimeGps';
 
-// Configuração do Supabase utilizando variáveis de ambiente do Vite
+// Configuração oficial do cliente Supabase
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://rqieirvzutdculcdsncb.supabase.co';
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_pjEo4HVVSPTMF-fQDwKpLQ_o9HAIOWR';
 export const supabase = createClient(supabaseUrl, supabaseKey);
@@ -60,7 +60,7 @@ export interface Delivery {
   id: string;
   riderId: string;
   establishmentId: string;
-  date: string; // YYYY-MM-DD (Data real gravada)
+  date: string; // YYYY-MM-DD
   time: string; // HH:MM
   value: number;
   status: 'pending' | 'active' | 'rejected' | 'cancelled' | 'lost';
@@ -105,8 +105,8 @@ export interface RouteHistoryItem {
   id: string;
   riderId: string;
   riderName: string;
-  date: string; // YYYY-MM-DD
-  time: string; // HH:MM
+  date: string;
+  time: string;
   originName: string;
   destinationName: string;
   destinationAddress: string;
@@ -118,7 +118,6 @@ export interface RouteHistoryItem {
   createdAt: string;
 }
 
-// Helper para comparação exata de datas YYYY-MM-DD
 export function isSameDayString(d1?: string, d2?: string): boolean {
   if (!d1 || !d2) return false;
   const clean1 = d1.split('T')[0].split(' ')[0].trim();
@@ -126,10 +125,6 @@ export function isSameDayString(d1?: string, d2?: string): boolean {
   return clean1 === clean2;
 }
 
-/**
- * Calcula a data-base do expediente da corrida para filtragem inteligente:
- * Se a corrida ocorreu entre 00:00 e 02:59, ela pertence ao expediente da noite do dia anterior.
- */
 export function getDeliveryOperationalDate(dateStr: string, timeStr: string = '12:00'): string {
   if (!dateStr) return '';
   const cleanDate = dateStr.split('T')[0].split(' ')[0].trim();
@@ -149,235 +144,53 @@ export function getDeliveryOperationalDate(dateStr: string, timeStr: string = '1
   return cleanDate;
 }
 
-function parseTimestamp(dateStr?: string): number {
-  if (!dateStr) return 0;
-  try {
-    const formatted = dateStr.includes('T') ? dateStr : dateStr.replace(' ', 'T');
-    const t = new Date(formatted).getTime();
-    return isNaN(t) ? 0 : t;
-  } catch (e) {
-    return 0;
-  }
-}
+// Chave unicamente para persistir a sessão de login
+const SESSION_USER_KEY = 'motohub_session_user';
 
-// Chaves para o LocalStorage
-const KEYS = {
-  USERS: 'delivery_system_users',
-  ESTABLISHMENTS: 'delivery_system_establishments',
-  SCHEDULES: 'delivery_system_schedules',
-  DELIVERIES: 'delivery_system_deliveries',
-  NOTIFICATIONS: 'delivery_system_notifications',
-  CURRENT_USER: 'delivery_system_current_user',
-  RIDER_LOCATIONS: 'delivery_system_rider_locations',
-  PARTNER_REQUESTS: 'delivery_system_partner_requests',
-  ROUTE_HISTORY: 'delivery_system_route_history',
-  MISSING_COLUMNS: 'delivery_system_missing_columns',
-  MISSING_TABLES: 'delivery_system_missing_tables'
-};
-
-// Contas padrão de segurança
-const DEFAULT_SEED_USERS: User[] = [
-  {
-    id: 'u_admin_default',
-    name: 'Administrador Geral',
-    email: 'admin@delivery.com',
-    role: 'admin',
-    active: true,
-    phone: '(83) 99999-9999',
-    cpf: '000.000.000-01',
-    passwordHash: 'D24180417c*',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: 'u_darwin_rider',
-    name: 'Darwin Cuadros',
-    email: 'cuadrosdarwin818@gmail.com',
-    role: 'rider',
-    active: true,
-    phone: '(83) 98888-8888',
-    cpf: '000.000.000-88',
-    passwordHash: '0610',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  }
-];
-
-const DEFAULT_SEED_ESTS: Establishment[] = [
-  {
-    id: 'e_burgrill_default',
-    name: 'Hamburgueria Burgrill',
-    email: 'burgrill@delivery.com',
-    active: true,
-    phone: '(83) 3333-4444',
-    address: {
-      street: 'Rua Aprígio Veloso',
-      number: '882',
-      neighborhood: 'Bodocongó',
-      city: 'Campina Grande',
-      state: 'PB',
-      zipCode: '58429-900'
-    },
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  }
-];
-
-const getMissingColumnsCache = (): Record<string, string[]> => {
-  const data = localStorage.getItem(KEYS.MISSING_COLUMNS);
-  return data ? JSON.parse(data) : {};
-};
-
-const saveMissingColumnsCache = (cache: Record<string, string[]>) => {
-  localStorage.setItem(KEYS.MISSING_COLUMNS, JSON.stringify(cache));
-};
-
-function getInitialMissingTables(): string[] {
-  try {
-    const data = localStorage.getItem(KEYS.MISSING_TABLES);
-    return data ? JSON.parse(data) : [];
-  } catch (e) {
-    return [];
-  }
-}
-
-const missingTables = new Set<string>(getInitialMissingTables());
-
-function markTableMissing(tableName: string) {
-  missingTables.add(tableName);
-  try {
-    localStorage.setItem(KEYS.MISSING_TABLES, JSON.stringify(Array.from(missingTables)));
-  } catch (e) {}
-}
-
-function isTableMissing(tableName: boolean | string): boolean {
-  if (typeof tableName === 'boolean') return tableName;
-  return missingTables.has(tableName);
-}
-
-function mergeChatStrings(localChat: string | undefined, remoteChat: string | undefined): string {
-  if (!localChat) return remoteChat || '';
-  if (!remoteChat) return localChat || '';
-  if (localChat === remoteChat) return localChat;
-  
-  const localLines = localChat.split('\n').map(l => l.trim()).filter(Boolean);
-  const remoteLines = remoteChat.split('\n').map(l => l.trim()).filter(Boolean);
-  
-  const merged: string[] = [];
-  const seen = new Set<string>();
-  
-  localLines.forEach(l => {
-    merged.push(l);
-    seen.add(l);
-  });
-  
-  remoteLines.forEach(l => {
-    if (!seen.has(l)) {
-      merged.push(l);
-      seen.add(l);
-    }
-  });
-
-  return merged.join('\n');
-}
-
-async function safeUpsert(tableName: string, rawPayload: Record<string, any>): Promise<{ success: boolean; error?: any }> {
-  if (isTableMissing(tableName)) {
-    return { success: false, error: 'Tabela não existe no Supabase' };
-  }
-
-  const payload = { ...rawPayload };
-  const cache = getMissingColumnsCache();
-  const missingCols = cache[tableName] || [];
-  missingCols.forEach(col => {
-    delete payload[col];
-  });
-
-  const maxRetries = 10;
-
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      const { error } = await supabase.from(tableName).upsert(payload);
-      
-      if (!error) {
-        return { success: true };
-      }
-
-      const msg = error.message || '';
-      if (msg.includes('Could not find the table') || error.code === 'PGRST205' || (error as any).status === 404 || (error as any).status === 402) {
-        markTableMissing(tableName);
-        return { success: false, error };
-      }
-
-      const match = msg.match(/Could not find the '([^']+)' column/) || 
-                    msg.match(/column "([^"]+)"/) || 
-                    msg.match(/column '([^']+)'/);
-      
-      if (match && match[1]) {
-        const missingCol = match[1];
-        const currentCache = getMissingColumnsCache();
-        if (!currentCache[tableName]) currentCache[tableName] = [];
-        if (!currentCache[tableName].includes(missingCol)) {
-          currentCache[tableName].push(missingCol);
-          saveMissingColumnsCache(currentCache);
-        }
-
-        delete payload[missingCol];
-        continue;
-      }
-
-      return { success: false, error };
-    } catch (e) {
-      return { success: false, error: e };
-    }
-  }
-
-  return { success: false, error: 'Limite de tentativas excedido' };
-}
+// Cache em memória de tempo de execução sincronizado em tempo real com o Supabase
+let memoryUsers: User[] = [];
+let memoryEstablishments: Establishment[] = [];
+let memorySchedules: Schedule[] = [];
+let memoryDeliveries: Delivery[] = [];
+let memoryNotifications: Notification[] = [];
+let memoryRequests: PartnerRequest[] = [];
+let memoryLocations: Record<string, RiderLocation> = {};
+let memoryRouteHistory: RouteHistoryItem[] = [];
 
 export const db = {
   isSameDayString,
   getDeliveryOperationalDate,
 
-  getUsers(): User[] {
-    const data = localStorage.getItem(KEYS.USERS);
-    let currentList: User[] = [];
-    if (!data || JSON.parse(data).length === 0) {
-      currentList = DEFAULT_SEED_USERS;
-      localStorage.setItem(KEYS.USERS, JSON.stringify(DEFAULT_SEED_USERS));
-    } else {
-      currentList = JSON.parse(data);
+  // --- SESSÃO DO USUÁRIO ATIVO ---
+  getCurrentUser(): User | null {
+    try {
+      const data = localStorage.getItem(SESSION_USER_KEY);
+      return data ? JSON.parse(data) : null;
+    } catch {
+      return null;
     }
-
-    let updated = false;
-    DEFAULT_SEED_USERS.forEach(seed => {
-      const idx = currentList.findIndex(u => u.email.toLowerCase() === seed.email.toLowerCase());
-      if (idx === -1) {
-        currentList.push(seed);
-        updated = true;
-      } else {
-        // Se a senha estiver desatualizada no localStorage, sincroniza com a nova senha mestre
-        if (currentList[idx].passwordHash !== seed.passwordHash) {
-          currentList[idx].passwordHash = seed.passwordHash;
-          currentList[idx].active = true;
-          updated = true;
-        }
-      }
-    });
-
-    if (updated) {
-      localStorage.setItem(KEYS.USERS, JSON.stringify(currentList));
-    }
-
-    return currentList;
   },
-  setUsers(users: User[]) {
-    localStorage.setItem(KEYS.USERS, JSON.stringify(users));
-    users.forEach(u => {
-      const rawPayload = {
+
+  setCurrentUser(user: User | null) {
+    if (user) {
+      localStorage.setItem(SESSION_USER_KEY, JSON.stringify(user));
+    } else {
+      localStorage.removeItem(SESSION_USER_KEY);
+    }
+  },
+
+  // --- USUÁRIOS ---
+  getUsers(): User[] {
+    return memoryUsers;
+  },
+
+  async setUsers(users: User[]) {
+    memoryUsers = users;
+    for (const u of users) {
+      await supabase.from('users').upsert({
         id: u.id,
         name: u.name,
-        email: u.email,
+        email: u.email.toLowerCase().trim(),
         role: u.role,
         active: u.active,
         phone: u.phone,
@@ -385,67 +198,93 @@ export const db = {
         password_hash: u.passwordHash,
         must_reset_password: u.mustResetPassword || false,
         establishment_id: u.establishmentId || null
-      };
-      safeUpsert('users', rawPayload);
-    });
+      });
+    }
+    await this.pullFromSupabase();
   },
 
   async fetchUserByEmail(email: string): Promise<User | null> {
     const cleanEmail = email.trim().toLowerCase();
     
-    // 1. Tenta consulta ao Supabase caso esteja acessível
-    try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .ilike('email', cleanEmail)
-        .maybeSingle();
+    // Consulta direta no banco de dados do Supabase
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .ilike('email', cleanEmail)
+      .maybeSingle();
 
-      if (!error && data) {
-        const user: User = {
-          id: data.id,
-          name: data.name,
-          email: data.email,
-          role: data.role,
-          active: data.active,
-          phone: data.phone || '',
-          cpf: data.cpf || '',
-          passwordHash: data.password_hash || '',
-          mustResetPassword: data.must_reset_password || false,
-          establishmentId: data.establishment_id || undefined,
-          createdAt: data.created_at,
-          updatedAt: data.updated_at
-        };
+    if (!error && data) {
+      const user: User = {
+        id: data.id,
+        name: data.name,
+        email: data.email,
+        role: data.role,
+        active: data.active ?? true,
+        phone: data.phone || '',
+        cpf: data.cpf || '',
+        passwordHash: data.password_hash || '',
+        mustResetPassword: data.must_reset_password || false,
+        establishmentId: data.establishment_id || undefined,
+        createdAt: data.created_at,
+        updatedAt: data.updated_at
+      };
 
-        const currentUsers = this.getUsers().filter(u => u.id !== user.id && u.email.toLowerCase() !== cleanEmail);
-        localStorage.setItem(KEYS.USERS, JSON.stringify([...currentUsers, user]));
-
-        return user;
+      // Atualiza na memória
+      const existingIdx = memoryUsers.findIndex(u => u.id === user.id);
+      if (existingIdx >= 0) {
+        memoryUsers[existingIdx] = user;
+      } else {
+        memoryUsers.push(user);
       }
-    } catch (e) {
-      console.warn('Supabase não respondeu na busca direta. Utilizando dados locais.');
+
+      return user;
     }
 
-    // 2. Consulta no repositório local
-    const localUsers = this.getUsers();
-    const foundLocal = localUsers.find(u => u.email.toLowerCase() === cleanEmail);
-    if (foundLocal) return foundLocal;
+    // Se for o admin padrão e ainda não existir no banco do Supabase, insere diretamente no Supabase
+    if (cleanEmail === 'admin@delivery.com') {
+      const adminDefault: User = {
+        id: 'u_admin_default',
+        name: 'Administrador Geral',
+        email: 'admin@delivery.com',
+        role: 'admin',
+        active: true,
+        phone: '(83) 99999-9999',
+        cpf: '000.000.000-01',
+        passwordHash: 'D24180417c*'
+      };
+
+      await supabase.from('users').upsert({
+        id: adminDefault.id,
+        name: adminDefault.name,
+        email: adminDefault.email,
+        role: adminDefault.role,
+        active: adminDefault.active,
+        phone: adminDefault.phone,
+        cpf: adminDefault.cpf,
+        password_hash: adminDefault.passwordHash
+      });
+
+      return adminDefault;
+    }
 
     return null;
   },
 
-  getEstablishments(): Establishment[] {
-    const data = localStorage.getItem(KEYS.ESTABLISHMENTS);
-    if (!data || JSON.parse(data).length === 0) {
-      localStorage.setItem(KEYS.ESTABLISHMENTS, JSON.stringify(DEFAULT_SEED_ESTS));
-      return DEFAULT_SEED_ESTS;
-    }
-    return JSON.parse(data);
+  async deleteUser(id: string) {
+    memoryUsers = memoryUsers.filter(u => u.id !== id);
+    await supabase.from('users').delete().eq('id', id);
+    await this.pullFromSupabase();
   },
-  setEstablishments(ests: Establishment[]) {
-    localStorage.setItem(KEYS.ESTABLISHMENTS, JSON.stringify(ests));
-    ests.forEach(e => {
-      const rawPayload = {
+
+  // --- ESTABELECIMENTOS ---
+  getEstablishments(): Establishment[] {
+    return memoryEstablishments;
+  },
+
+  async setEstablishments(ests: Establishment[]) {
+    memoryEstablishments = ests;
+    for (const e of ests) {
+      await supabase.from('establishments').upsert({
         id: e.id,
         name: e.name,
         email: e.email || null,
@@ -458,25 +297,32 @@ export const db = {
         city: e.address?.city || '',
         state: e.address?.state || '',
         zip_code: e.address?.zipCode || ''
-      };
-      safeUpsert('establishments', rawPayload);
-    });
+      });
+    }
+    await this.pullFromSupabase();
   },
 
-  getSchedules(): Schedule[] {
-    const data = localStorage.getItem(KEYS.SCHEDULES);
-    return data ? JSON.parse(data) : [];
+  async deleteEstablishment(id: string) {
+    memoryEstablishments = memoryEstablishments.filter(e => e.id !== id);
+    await supabase.from('establishments').delete().eq('id', id);
+    await this.pullFromSupabase();
   },
-  setSchedules(schedules: Schedule[]) {
-    localStorage.setItem(KEYS.SCHEDULES, JSON.stringify(schedules));
-    schedules.forEach(s => {
+
+  // --- ESCALAS ---
+  getSchedules(): Schedule[] {
+    return memorySchedules;
+  },
+
+  async setSchedules(schedules: Schedule[]) {
+    memorySchedules = schedules;
+    for (const s of schedules) {
       const serializedCreatedBy = JSON.stringify({
         createdBy: s.createdBy || '',
         chat: s.chat || '',
         updatedAt: s.updatedAt || new Date().toISOString()
       });
 
-      const rawPayload = {
+      await supabase.from('schedules').upsert({
         id: s.id,
         rider_id: s.riderId,
         establishment_id: s.establishmentId,
@@ -485,18 +331,25 @@ export const db = {
         start_time: s.startTime,
         end_time: s.endTime,
         created_by: serializedCreatedBy
-      };
-      safeUpsert('schedules', rawPayload);
-    });
+      });
+    }
+    await this.pullFromSupabase();
   },
 
-  getDeliveries(): Delivery[] {
-    const data = localStorage.getItem(KEYS.DELIVERIES);
-    return data ? JSON.parse(data) : [];
+  async deleteSchedule(id: string) {
+    memorySchedules = memorySchedules.filter(s => s.id !== id);
+    await supabase.from('schedules').delete().eq('id', id);
+    await this.pullFromSupabase();
   },
-  setDeliveries(deliveries: Delivery[]) {
-    localStorage.setItem(KEYS.DELIVERIES, JSON.stringify(deliveries));
-    deliveries.forEach(d => {
+
+  // --- CORRIDAS ---
+  getDeliveries(): Delivery[] {
+    return memoryDeliveries;
+  },
+
+  async setDeliveries(deliveries: Delivery[]) {
+    memoryDeliveries = deliveries;
+    for (const d of deliveries) {
       const serializedOrderNumber = JSON.stringify({
         orderNumber: d.orderNumber || '',
         notes: d.notes || '',
@@ -504,7 +357,7 @@ export const db = {
         updatedAt: d.updatedAt || new Date().toISOString()
       });
 
-      const rawPayload = {
+      await supabase.from('deliveries').upsert({
         id: d.id,
         rider_id: d.riderId,
         establishment_id: d.establishmentId,
@@ -514,36 +367,52 @@ export const db = {
         status: d.status,
         schedule_id: d.scheduleId || null,
         order_number: serializedOrderNumber
-      };
-      safeUpsert('deliveries', rawPayload);
-    });
+      });
+    }
+    await this.pullFromSupabase();
+  },
+
+  async deleteDelivery(id: string) {
+    memoryDeliveries = memoryDeliveries.filter(d => d.id !== id);
+    await supabase.from('deliveries').delete().eq('id', id);
+    await this.pullFromSupabase();
   },
 
   async clearAllDeliveries() {
-    localStorage.setItem(KEYS.DELIVERIES, JSON.stringify([]));
-    if (!isTableMissing('deliveries')) {
-      try {
-        await supabase.from('deliveries').delete().neq('id', '');
-      } catch (e) {}
-    }
+    memoryDeliveries = [];
+    await supabase.from('deliveries').delete().neq('id', '');
+    await this.pullFromSupabase();
   },
 
+  // --- NOTIFICAÇÕES ---
   getNotifications(): Notification[] {
-    const data = localStorage.getItem(KEYS.NOTIFICATIONS);
-    return data ? JSON.parse(data) : [];
-  },
-  setNotifications(notifications: Notification[]) {
-    localStorage.setItem(KEYS.NOTIFICATIONS, JSON.stringify(notifications));
+    return memoryNotifications;
   },
 
-  getPartnerRequests(): PartnerRequest[] {
-    const data = localStorage.getItem(KEYS.PARTNER_REQUESTS);
-    return data ? JSON.parse(data) : [];
+  async setNotifications(notifications: Notification[]) {
+    memoryNotifications = notifications;
+    for (const n of notifications) {
+      await supabase.from('notifications').upsert({
+        id: n.id,
+        rider_id: n.riderId,
+        title: n.title,
+        message: n.message,
+        date: n.date,
+        read: n.read
+      });
+    }
+    await this.pullFromSupabase();
   },
-  setPartnerRequests(requests: PartnerRequest[]) {
-    localStorage.setItem(KEYS.PARTNER_REQUESTS, JSON.stringify(requests));
-    requests.forEach(r => {
-      const rawPayload = {
+
+  // --- SOLICITAÇÕES DE PARCERIA ---
+  getPartnerRequests(): PartnerRequest[] {
+    return memoryRequests;
+  },
+
+  async setPartnerRequests(requests: PartnerRequest[]) {
+    memoryRequests = requests;
+    for (const r of requests) {
+      await supabase.from('partner_requests').upsert({
         id: r.id,
         establishment_name: r.establishmentName,
         owner_name: r.ownerName,
@@ -551,40 +420,64 @@ export const db = {
         address: r.address,
         status: r.status,
         created_at: r.createdAt
-      };
-      safeUpsert('partner_requests', rawPayload);
+      });
+    }
+    await this.pullFromSupabase();
+  },
+
+  async deletePartnerRequest(id: string) {
+    memoryRequests = memoryRequests.filter(r => r.id !== id);
+    await supabase.from('partner_requests').delete().eq('id', id);
+    await this.pullFromSupabase();
+  },
+
+  // --- HISTÓRICO DE ROTAS ---
+  getRouteHistory(): RouteHistoryItem[] {
+    return memoryRouteHistory;
+  },
+
+  setRouteHistory(history: RouteHistoryItem[]) {
+    memoryRouteHistory = history;
+    window.dispatchEvent(new Event('route-history-updated'));
+  },
+
+  addRouteHistory(item: RouteHistoryItem) {
+    const exists = memoryRouteHistory.some(c => c.riderId === item.riderId && c.destinationName === item.destinationName && Math.abs(new Date(c.createdAt).getTime() - new Date(item.createdAt).getTime()) < 30000);
+    if (!exists) {
+      memoryRouteHistory = [item, ...memoryRouteHistory].slice(0, 100);
+      window.dispatchEvent(new Event('route-history-updated'));
+    }
+  },
+
+  // --- LOCALIZAÇÃO GPS DOS MOTOBOYS ---
+  getRiderLocations(): RiderLocation[] {
+    return Object.values(memoryLocations);
+  },
+
+  getRiderLocationsRecord(): Record<string, RiderLocation> {
+    return memoryLocations;
+  },
+
+  async updateRiderLocation(riderId: string, riderName: string, lat: number, lng: number) {
+    const updatedAt = new Date().toISOString();
+    memoryLocations[riderId] = { riderId, riderName, lat, lng, updatedAt };
+
+    await supabase.from('rider_locations').upsert({
+      rider_id: riderId,
+      rider_name: riderName,
+      lat: lat,
+      lng: lng,
+      updated_at: updatedAt
     });
   },
 
-  getRouteHistory(): RouteHistoryItem[] {
-    const data = localStorage.getItem(KEYS.ROUTE_HISTORY);
-    return data ? JSON.parse(data) : [];
-  },
-  setRouteHistory(history: RouteHistoryItem[]) {
-    localStorage.setItem(KEYS.ROUTE_HISTORY, JSON.stringify(history));
-    window.dispatchEvent(new Event('route-history-updated'));
-  },
-  addRouteHistory(item: RouteHistoryItem) {
-    const current = this.getRouteHistory();
-    const exists = current.some(c => c.riderId === item.riderId && c.destinationName === item.destinationName && Math.abs(new Date(c.createdAt).getTime() - new Date(item.createdAt).getTime()) < 30000);
-    if (!exists) {
-      const updated = [item, ...current].slice(0, 100);
-      this.setRouteHistory(updated);
-    }
+  async clearRiderLocation(riderId: string) {
+    realtimeGps.sendOffline(riderId);
+    delete memoryLocations[riderId];
+    await supabase.from('rider_locations').delete().eq('rider_id', riderId);
   },
 
-  getCurrentUser(): User | null {
-    const data = localStorage.getItem(KEYS.CURRENT_USER);
-    return data ? JSON.parse(data) : null;
-  },
-  setCurrentUser(user: User | null) {
-    if (user) {
-      localStorage.setItem(KEYS.CURRENT_USER, JSON.stringify(user));
-    } else {
-      localStorage.removeItem(KEYS.CURRENT_USER);
-    }
-  },
-
+  // --- RESOLVERS & HELPERS ---
   getLocalDateString(date: Date = new Date()): string {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -602,12 +495,11 @@ export const db = {
 
   resolveUser(id: string): User | undefined {
     if (!id) return undefined;
-    const users = this.getUsers();
-    const found = users.find(u => u.id === id);
+    const found = memoryUsers.find(u => u.id === id);
     if (found) return found;
 
     const cleanId = id.toLowerCase().trim();
-    return users.find(u => 
+    return memoryUsers.find(u => 
       (u.email && u.email.toLowerCase().trim() === cleanId) ||
       (u.name && (
         u.name.toLowerCase().trim() === cleanId ||
@@ -619,12 +511,11 @@ export const db = {
 
   resolveEstablishment(id: string): Establishment | undefined {
     if (!id) return undefined;
-    const ests = this.getEstablishments();
-    const found = ests.find(e => e.id === id);
+    const found = memoryEstablishments.find(e => e.id === id);
     if (found) return found;
 
     const cleanId = id.toLowerCase().trim();
-    return ests.find(e => 
+    return memoryEstablishments.find(e => 
       e.name && (
         e.name.toLowerCase().trim() === cleanId ||
         e.name.toLowerCase().trim().includes(cleanId) ||
@@ -638,9 +529,7 @@ export const db = {
     if (id1 === id2) return true;
     const e1 = this.resolveEstablishment(id1);
     const e2 = this.resolveEstablishment(id2);
-    if (e1 && e2) {
-      return e1.id === e2.id;
-    }
+    if (e1 && e2) return e1.id === e2.id;
     return id1.toLowerCase().trim() === id2.toLowerCase().trim();
   },
 
@@ -662,189 +551,65 @@ export const db = {
     return `000.000.000-${rand()}${rand()}`;
   },
 
-  async deleteUser(id: string) {
-    const users = this.getUsers().filter(u => u.id !== id);
-    localStorage.setItem(KEYS.USERS, JSON.stringify(users));
-    try {
-      await supabase.from('users').delete().eq('id', id);
-    } catch (e) {}
-  },
-
-  async deleteEstablishment(id: string) {
-    const ests = this.getEstablishments().filter(e => e.id !== id);
-    localStorage.setItem(KEYS.ESTABLISHMENTS, JSON.stringify(ests));
-    try {
-      await supabase.from('establishments').delete().eq('id', id);
-    } catch (e) {}
-  },
-
-  async deleteSchedule(id: string) {
-    const schedules = this.getSchedules().filter(s => s.id !== id);
-    localStorage.setItem(KEYS.SCHEDULES, JSON.stringify(schedules));
-    try {
-      await supabase.from('schedules').delete().eq('id', id);
-    } catch (e) {}
-  },
-
-  async deletePartnerRequest(id: string) {
-    const requests = this.getPartnerRequests().filter(r => r.id !== id);
-    localStorage.setItem(KEYS.PARTNER_REQUESTS, JSON.stringify(requests));
-    try {
-      await supabase.from('partner_requests').delete().eq('id', id);
-    } catch (e) {}
-  },
-
-  async deleteDelivery(id: string) {
-    const deliveries = this.getDeliveries().filter(d => d.id !== id);
-    localStorage.setItem(KEYS.DELIVERIES, JSON.stringify(deliveries));
-    try {
-      await supabase.from('deliveries').delete().eq('id', id);
-    } catch (e) {}
-  },
-
-  updateRiderLocation(riderId: string, riderName: string, lat: number, lng: number) {
-    const locations = this.getRiderLocationsRecord();
-    const updated = {
-      ...locations,
-      [riderId]: {
-        riderId,
-        riderName,
-        lat,
-        lng,
-        updatedAt: new Date().toISOString()
-      }
-    };
-    localStorage.setItem(KEYS.RIDER_LOCATIONS, JSON.stringify(updated));
-    
-    const rawPayload = {
-      rider_id: riderId,
-      rider_name: riderName,
-      lat: lat,
-      lng: lng,
-      updated_at: new Date().toISOString()
-    };
-
-    safeUpsert('rider_locations', rawPayload);
-  },
-
-  async clearRiderLocation(riderId: string) {
-    realtimeGps.sendOffline(riderId);
-
-    const locations = this.getRiderLocationsRecord();
-    if (locations[riderId]) {
-      delete locations[riderId];
-      localStorage.setItem(KEYS.RIDER_LOCATIONS, JSON.stringify(locations));
-    }
-    
-    if (!isTableMissing('rider_locations')) {
-      try {
-        await supabase.from('rider_locations').delete().eq('rider_id', riderId);
-      } catch (e) {}
-    }
-  },
-
-  getRiderLocationsRecord(): Record<string, RiderLocation> {
-    const data = localStorage.getItem(KEYS.RIDER_LOCATIONS);
-    return data ? JSON.parse(data) : {};
-  },
-
-  getRiderLocations(): RiderLocation[] {
-    return Object.values(this.getRiderLocationsRecord());
-  },
-
+  // --- SINCRONIZAÇÃO TOTAL EXCLUSIVA COM O SUPABASE ---
   async pullFromSupabase() {
     try {
-      const { data: usersData, error } = await supabase.from('users').select('*');
-      if (!error && usersData && usersData.length > 0) {
-        const localUsers = this.getUsers();
-        const mappedUsers: User[] = usersData.map(u => {
-          const local = localUsers.find(l => l.id === u.id);
-          return {
-            id: u.id,
-            name: u.name,
-            email: u.email,
-            role: u.role,
-            active: u.active,
-            createdAt: u.created_at,
-            phone: u.phone || local?.phone || '',
-            cpf: u.cpf || local?.cpf || '',
-            passwordHash: u.password_hash || local?.passwordHash || '',
-            mustResetPassword: u.must_reset_password !== undefined ? u.must_reset_password : (local?.mustResetPassword || false),
-            establishmentId: u.establishment_id || local?.establishmentId || undefined,
-            updatedAt: u.updated_at
-          };
-        });
-        localStorage.setItem(KEYS.USERS, JSON.stringify(mappedUsers));
+      const { data: usersData } = await supabase.from('users').select('*');
+      if (usersData) {
+        memoryUsers = usersData.map(u => ({
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          role: u.role,
+          active: u.active ?? true,
+          phone: u.phone || '',
+          cpf: u.cpf || '',
+          passwordHash: u.password_hash || '',
+          mustResetPassword: u.must_reset_password || false,
+          establishmentId: u.establishment_id || undefined,
+          createdAt: u.created_at,
+          updatedAt: u.updated_at
+        }));
       }
-    } catch (err) {
-      console.warn('Erro ou limitação de cota na sincronização de usuários:', err);
-    }
 
-    try {
-      const { data: estsData, error } = await supabase.from('establishments').select('*');
-      if (!error && estsData && estsData.length > 0) {
-        const localEsts = this.getEstablishments();
-        const mappedEsts: Establishment[] = estsData.map(e => {
-          let parsedAddress = { street: '', number: '', complement: '', neighborhood: '', city: '', state: '', zipCode: '' };
-          
-          if (e.street || e.neighborhood || e.city) {
-            parsedAddress = {
-              street: e.street || '',
-              number: e.number || '',
-              complement: e.complement || '',
-              neighborhood: e.neighborhood || '',
-              city: e.city || '',
-              state: e.state || '',
-              zipCode: e.zip_code || e.zipCode || ''
-            };
-          }
-
-          const local = localEsts.find(l => l.id === e.id);
-          if (local && local.address) {
-            parsedAddress = { ...parsedAddress, ...local.address };
-          }
-
-          return {
-            id: e.id,
-            name: e.name,
-            email: e.email || local?.email,
-            active: e.active,
-            phone: e.phone || local?.phone || '',
-            address: parsedAddress,
-            createdAt: e.created_at,
-            updatedAt: e.updated_at
-          };
-        });
-        localStorage.setItem(KEYS.ESTABLISHMENTS, JSON.stringify(mappedEsts));
+      const { data: estsData } = await supabase.from('establishments').select('*');
+      if (estsData) {
+        memoryEstablishments = estsData.map(e => ({
+          id: e.id,
+          name: e.name,
+          email: e.email || undefined,
+          active: e.active ?? true,
+          phone: e.phone || '',
+          address: {
+            street: e.street || '',
+            number: e.number || '',
+            complement: e.complement || '',
+            neighborhood: e.neighborhood || '',
+            city: e.city || '',
+            state: e.state || '',
+            zipCode: e.zip_code || ''
+          },
+          createdAt: e.created_at,
+          updatedAt: e.updated_at
+        }));
       }
-    } catch (err) {
-      console.warn('Erro na sincronização de estabelecimentos:', err);
-    }
 
-    try {
-      const { data: schData, error } = await supabase.from('schedules').select('*');
-      if (!error && schData && schData.length > 0) {
-        const localSchedules = this.getSchedules();
-        const uniqueMap = new Map<string, Schedule>();
-        
-        schData.forEach(s => {
-          const key = `${s.rider_id}_${s.establishment_id}_${s.date}_${s.shift}`;
-          const local = localSchedules.find(l => l.id === s.id);
-          
-          let chat = s.chat || undefined;
-          let createdBy = s.created_by || undefined;
-
+      const { data: schData } = await supabase.from('schedules').select('*');
+      if (schData) {
+        memorySchedules = schData.map(s => {
+          let chat: string | undefined = undefined;
+          let createdBy: string | undefined = undefined;
           if (s.created_by && s.created_by.startsWith('{')) {
             try {
               const parsed = JSON.parse(s.created_by);
               createdBy = parsed.createdBy || undefined;
-              if (parsed.chat) {
-                chat = mergeChatStrings(chat, parsed.chat);
-              }
+              chat = parsed.chat || undefined;
             } catch (e) {}
+          } else {
+            createdBy = s.created_by || undefined;
           }
 
-          const mapped: Schedule = {
+          return {
             id: s.id,
             riderId: s.rider_id,
             establishmentId: s.establishment_id,
@@ -852,61 +617,30 @@ export const db = {
             shift: s.shift,
             startTime: s.start_time,
             endTime: s.end_time,
-            chat: mergeChatStrings(local?.chat, chat),
+            chat,
             createdBy,
             createdAt: s.created_at,
             updatedAt: s.updated_at
           };
-
-          const existing = uniqueMap.get(key);
-          if (!existing || parseTimestamp(mapped.updatedAt) > parseTimestamp(existing.updatedAt)) {
-            uniqueMap.set(key, mapped);
-          }
         });
-
-        localStorage.setItem(KEYS.SCHEDULES, JSON.stringify(Array.from(uniqueMap.values())));
       }
-    } catch (err) {
-      console.warn('Erro na sincronização de escalas:', err);
-    }
 
-    try {
-      const { data: delData, error } = await supabase.from('deliveries').select('*');
-      if (!error && delData && delData.length > 0) {
-        const localDeliveries = this.getDeliveries();
-        const mappedDeliveries: Delivery[] = delData.map(d => {
-          const local = localDeliveries.find(l => l.id === d.id);
-          
+      const { data: delData } = await supabase.from('deliveries').select('*');
+      if (delData) {
+        memoryDeliveries = delData.map(d => {
           let orderNumber = d.order_number || undefined;
-          let notes = d.notes || undefined;
-          let customerChat = d.customer_chat || undefined;
+          let notes: string | undefined = undefined;
+          let customerChat: string | undefined = undefined;
           let updatedAt = d.updated_at;
 
           if (d.order_number && d.order_number.startsWith('{')) {
             try {
               const parsed = JSON.parse(d.order_number);
               orderNumber = parsed.orderNumber || undefined;
-              if (parsed.notes) notes = mergeChatStrings(notes, parsed.notes);
-              if (parsed.customerChat) customerChat = mergeChatStrings(customerChat, parsed.customerChat);
+              notes = parsed.notes || undefined;
+              customerChat = parsed.customerChat || undefined;
               updatedAt = parsed.updatedAt || d.updated_at;
             } catch (e) {}
-          }
-
-          let finalStatus: 'pending' | 'active' | 'rejected' | 'cancelled' | 'lost' = d.status;
-
-          if (local) {
-            const isRemoteResolved = ['active', 'rejected', 'cancelled'].includes(d.status);
-            const isLocalResolved = ['active', 'rejected', 'cancelled'].includes(local.status);
-
-            if (isRemoteResolved && local.status === 'pending') {
-              finalStatus = d.status as any;
-            } else if (!isRemoteResolved && isLocalResolved) {
-              finalStatus = local.status;
-            } else {
-              const localTime = local.updatedAt ? new Date(local.updatedAt).getTime() : 0;
-              const remoteTime = updatedAt ? new Date(updatedAt).getTime() : 0;
-              finalStatus = (localTime > remoteTime ? local.status : d.status) as any;
-            }
           }
 
           return {
@@ -916,69 +650,54 @@ export const db = {
             date: d.date,
             time: d.time,
             value: Number(d.value),
-            status: finalStatus,
+            status: d.status,
             scheduleId: d.schedule_id || undefined,
             orderNumber,
-            notes: mergeChatStrings(local?.notes, notes),
-            customerChat: mergeChatStrings(local?.customerChat, customerChat),
+            notes,
+            customerChat,
             updatedAt,
             paid: d.paid || false
           };
         });
-
-        const mergedDeliveries = [...mappedDeliveries];
-        localDeliveries.forEach(loc => {
-          if (!mergedDeliveries.some(m => m.id === loc.id)) {
-            mergedDeliveries.push(loc);
-          }
-        });
-
-        localStorage.setItem(KEYS.DELIVERIES, JSON.stringify(mergedDeliveries));
       }
-    } catch (err) {
-      console.warn('Erro na sincronização de corridas:', err);
-    }
 
-    try {
-      const { data: reqsData, error } = await supabase.from('partner_requests').select('*');
-      if (!error && reqsData && reqsData.length > 0) {
-        const mappedReqs: PartnerRequest[] = reqsData.map(r => ({
+      const { data: reqsData } = await supabase.from('partner_requests').select('*');
+      if (reqsData) {
+        memoryRequests = reqsData.map(r => ({
           id: r.id,
           establishmentName: r.establishment_name,
-          ownerName: r.ownerName,
+          ownerName: r.owner_name,
           phone: r.phone,
           address: r.address,
           status: r.status,
           createdAt: r.created_at
         }));
-        localStorage.setItem(KEYS.PARTNER_REQUESTS, JSON.stringify(mappedReqs));
       }
-    } catch (err) {
-      console.warn('Erro na sincronização de partner_requests:', err);
-    }
 
-    try {
-      const { data: locData, error } = await supabase.from('rider_locations').select('*');
-      if (!error && locData && locData.length > 0) {
+      const { data: locData } = await supabase.from('rider_locations').select('*');
+      if (locData) {
         const mappedLocs: Record<string, RiderLocation> = {};
         locData.forEach(l => {
-          const rId = l.rider_id || l.riderId;
+          const rId = l.rider_id;
           if (rId) {
             mappedLocs[rId] = {
               riderId: rId,
-              riderName: l.rider_name || l.riderName || '',
+              riderName: l.rider_name || '',
               lat: parseFloat(l.lat),
               lng: parseFloat(l.lng),
-              updatedAt: l.updated_at || l.updatedAt || new Date().toISOString()
+              updatedAt: l.updated_at || new Date().toISOString()
             };
           }
         });
-        localStorage.setItem(KEYS.RIDER_LOCATIONS, JSON.stringify(mappedLocs));
+        memoryLocations = mappedLocs;
       }
-    } catch (err) {
-      console.warn('Erro na sincronização de localizações:', err);
-    }
 
-    window.dispatchEvent(new Event('db-sync-complete'));
+      window.dispatchEvent(new Event('db-sync-complete'));
+    } catch (err) {
+      console.warn('Erro ao consultar Supabase:', err);
+    }
   }
 };
+
+// Executa a carga inicial diretamente do Supabase
+db.pullFromSupabase();
