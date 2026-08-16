@@ -46,11 +46,11 @@ export interface Schedule {
   id: string;
   riderId: string;
   establishmentId: string;
-  date: string; // YYYY-MM-DD
+  date: string; // YYYY-MM-DD (Data do turno operacional)
   shift: 'morning' | 'afternoon' | 'night';
   startTime: string;
   endTime: string;
-  chat?: string; // Histórico de chat do turno
+  chat?: string;
   createdBy?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -60,14 +60,14 @@ export interface Delivery {
   id: string;
   riderId: string;
   establishmentId: string;
-  date: string; // YYYY-MM-DD
+  date: string; // YYYY-MM-DD (Data do turno operacional)
   time: string; // HH:MM
   value: number;
   status: 'pending' | 'active' | 'rejected' | 'cancelled' | 'lost';
   scheduleId?: string;
   orderNumber?: string;
-  notes?: string; // Chat/Observações com o estabelecimento
-  customerChat?: string; // Chat com o cliente final
+  notes?: string;
+  customerChat?: string;
   updatedAt?: string;
   paid?: boolean;
   lostAt?: string;
@@ -115,7 +115,7 @@ export interface RouteHistoryItem {
   waypointsCount: number;
   distanceMeters: number;
   durationSeconds: number;
-  createdAt: string; // ISO
+  createdAt: string;
 }
 
 // Helper para comparação de datas flexível
@@ -469,12 +469,38 @@ export const db = {
     return `${year}-${month}-${day}`;
   },
 
+  /**
+   * REGRA DE TURNO INTELIGENTE POR DATA:
+   * Horários entre 00:00 e 02:59 da madrugada pertencem ao turno/expediente iniciado no dia anterior (às 18:00h).
+   */
   getOperationalDateString(date: Date = new Date()): string {
     const d = new Date(date);
-    if (d.getHours() < 4) {
+    const hour = d.getHours();
+    const minute = d.getMinutes();
+    
+    // Se for entre 00:00 e 02:59 da madrugada, o expediente pertence ao dia anterior
+    if (hour < 3) {
       d.setDate(d.getDate() - 1);
     }
     return this.getLocalDateString(d);
+  },
+
+  /**
+   * Converte uma data e horário de corrida para a data do turno operacional correspondente.
+   * Se a corrida foi lançada entre 00:00 e 02:59, ela é atribuída ao expediente do dia anterior.
+   */
+  getShiftOperationalDate(calendarDateStr: string, timeStr: string): string {
+    if (!calendarDateStr) return this.getOperationalDateString();
+    const [h, m] = (timeStr || '18:00').split(':').map(Number);
+    
+    // Se for entre 00:00 e 02:59 da madrugada, retrocede 1 dia para o dia do expediente
+    if (h >= 0 && h < 3) {
+      const [year, month, day] = calendarDateStr.split('-').map(Number);
+      const prev = new Date(year, month - 1, day);
+      prev.setDate(prev.getDate() - 1);
+      return this.getLocalDateString(prev);
+    }
+    return calendarDateStr;
   },
 
   // Restaura e recupera todas as corridas que foram marcadas como 'lost' ou de dias recentes
@@ -507,6 +533,9 @@ export const db = {
     return { recoveredCount, datesRecovered: Array.from(datesSet) };
   },
 
+  /**
+   * Normaliza e vincula as corridas ao turno correto de 18:00 às 02:59 do dia subsequente.
+   */
   normalizeAndLinkHistoricalDeliveries(): { updatedCount: number; linkedSchedulesCount: number } {
     const deliveries = this.getDeliveries();
     const schedules = this.getSchedules();
@@ -524,10 +553,13 @@ export const db = {
         isModified = true;
       }
 
-      const hour = parseInt((d.time || '12:00').split(':')[0], 10);
-      if (hour >= 0 && hour < 4) {
-        const [y, m, day] = d.date.split('-').map(Number);
-        const prevDay = new Date(y, m - 1, day);
+      const [h, m] = (d.time || '12:00').split(':').map(Number);
+
+      // Aplicação do Turno Inteligente: Entre 00:00 e 02:59
+      if (h >= 0 && h < 3) {
+        // Encontra a escala noturna correspondente
+        const [y, month, day] = d.date.split('-').map(Number);
+        const prevDay = new Date(y, month - 1, day);
         prevDay.setDate(prevDay.getDate() - 1);
         const prevDayStr = this.getLocalDateString(prevDay);
 

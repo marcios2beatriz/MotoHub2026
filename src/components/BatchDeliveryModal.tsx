@@ -37,7 +37,7 @@ export default function BatchDeliveryModal({
   const activeRiders = riders.filter(r => r.active);
   const activeEsts = establishments.filter(e => e.active);
 
-  // Valores padrão globais para preenchimento rápido
+  // Valores padrão globais para preenchimento rápido (com turno operacional)
   const [globalDate, setGlobalDate] = useState<string>(db.getOperationalDateString());
   const [globalStartTime, setGlobalStartTime] = useState<string>('18:00');
   const [globalRiderId, setGlobalRiderId] = useState<string>(defaultRiderId || (activeRiders[0]?.id || ''));
@@ -112,7 +112,7 @@ export default function BatchDeliveryModal({
     }));
   };
 
-  // Parser para colar dados em massa (ex: linhas com "Valor Pedido", "15.00 1042", "12,50", etc)
+  // Parser para colar dados em massa
   const handleParsePastedText = () => {
     if (!pastedText.trim()) return;
 
@@ -122,7 +122,6 @@ export default function BatchDeliveryModal({
     const [startH, startM] = globalStartTime.split(':').map(Number);
 
     lines.forEach((line, idx) => {
-      // Procura valor monetário na linha
       const cleanLine = line.replace(/R\$/g, '').trim();
       const parts = cleanLine.split(/[\t,; ]+/).filter(Boolean);
 
@@ -190,18 +189,21 @@ export default function BatchDeliveryModal({
     const newDeliveries: Delivery[] = validRows.map((r, idx) => {
       const val = parseFloat(r.value.replace(',', '.'));
       
-      // Tenta associar com escala existente
+      // Converte para a data do turno operacional (se lançado entre 00:00 e 02:59, pertence ao dia anterior)
+      const operationalDate = db.getShiftOperationalDate(r.date, r.time || '18:00');
+
+      // Tenta associar com escala existente do turno
       const matchSchedule = schedules.find(s => 
         db.isSameUser(s.riderId, r.riderId) &&
         db.isSameEstablishment(s.establishmentId, r.establishmentId) &&
-        db.isSameDayString(s.date, r.date)
+        db.isSameDayString(s.date, operationalDate)
       );
 
       return {
         id: 'd_' + (Date.now() + idx) + '_' + Math.random().toString(36).substr(2, 4),
         riderId: r.riderId,
         establishmentId: r.establishmentId,
-        date: r.date,
+        date: operationalDate,
         time: r.time || '18:00',
         value: val,
         status: globalStatus,
@@ -217,7 +219,7 @@ export default function BatchDeliveryModal({
     onSaved();
     onClose();
 
-    alert(`🎉 ${newDeliveries.length} corridas lançadas com sucesso no lote!\n\nTotal: R$ ${totalBatchValue.toFixed(2)}`);
+    alert(`🎉 ${newDeliveries.length} corridas gravadas com sucesso no turno operacional!\n\nTotal: R$ ${totalBatchValue.toFixed(2)}`);
   };
 
   return (
@@ -234,10 +236,10 @@ export default function BatchDeliveryModal({
               <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
                 <span>Lançamento de Corridas em Lote</span>
                 <span className="bg-indigo-100 text-indigo-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase">
-                  Rápido
+                  Turno Inteligente
                 </span>
               </h3>
-              <p className="text-xs text-slate-500">Lance múltiplos pedidos de um turno (ex: 15/08 das 18:00 às 23:59) de uma só vez</p>
+              <p className="text-xs text-slate-500">Corridas de 18:00h até as 02:59h pertencem ao mesmo expediente</p>
             </div>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
@@ -301,7 +303,7 @@ export default function BatchDeliveryModal({
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data do Turno</label>
+              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data do Expediente</label>
               <input
                 type="date"
                 value={globalDate}
