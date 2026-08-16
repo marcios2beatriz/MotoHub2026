@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { db, Schedule, Delivery, Notification, Establishment, RouteHistoryItem } from '../utils/db';
+import { db, Schedule, Delivery, Notification, Establishment, RouteHistoryItem, getDeliveryOperationalDate, isSameDayString } from '../utils/db';
 import { 
   DollarSign, 
   Calendar, 
@@ -189,7 +189,7 @@ export default function RiderDashboard() {
 
       if (!restoredFromStorage) {
         const operationalTodayStr = db.getOperationalDateString();
-        const todaySch = sortedSchedules.find(s => db.isSameDayString(s.date, operationalTodayStr));
+        const todaySch = sortedSchedules.find(s => isSameDayString(s.date, operationalTodayStr));
         if (todaySch) {
           const est = db.resolveEstablishment(todaySch.establishmentId);
           if (est && est.address) {
@@ -211,7 +211,6 @@ export default function RiderDashboard() {
       return;
     }
     requestNotificationPermission();
-    db.restoreAllLostDeliveries();
     loadData();
 
     const interval = setInterval(() => {
@@ -329,13 +328,6 @@ export default function RiderDashboard() {
     });
   }, [schedules, user]);
 
-  const handleManualRecover = () => {
-    db.restoreAllLostDeliveries();
-    db.normalizeAndLinkHistoricalDeliveries();
-    loadData();
-    alert(`✅ Recuperação Concluída!\n\nForam recuperadas e restauradas com sucesso todas as corridas do sistema.`);
-  };
-
   const handleLogout = async () => {
     if (user) {
       await db.clearRiderLocation(user.id);
@@ -373,7 +365,7 @@ export default function RiderDashboard() {
 
   const operationalTodayStr = db.getOperationalDateString();
 
-  const todayDeliveries = deliveries.filter(d => db.isSameDayString(d.date, operationalTodayStr));
+  const todayDeliveries = deliveries.filter(d => isSameDayString(d.date, operationalTodayStr));
   const todayEarnings = todayDeliveries.filter(d => d.status === 'active').reduce((sum, d) => sum + Number(d.value || 0), 0);
 
   const getFutureSchedules = () => {
@@ -391,7 +383,7 @@ export default function RiderDashboard() {
     if (scheduleEstFilter) {
       matchesEst = db.isSameEstablishment(s.establishmentId, scheduleEstFilter);
     }
-    const matchesDate = scheduleDateFilter ? db.isSameDayString(s.date, scheduleDateFilter) : true;
+    const matchesDate = scheduleDateFilter ? isSameDayString(s.date, scheduleDateFilter) : true;
     return matchesEst && matchesDate;
   });
 
@@ -404,7 +396,7 @@ export default function RiderDashboard() {
   };
 
   const getScheduledEstablishmentsToday = () => {
-    const todaySchedules = schedules.filter(s => db.isSameDayString(s.date, operationalTodayStr));
+    const todaySchedules = schedules.filter(s => isSameDayString(s.date, operationalTodayStr));
     const resolvedEsts = todaySchedules
       .map(s => db.resolveEstablishment(s.establishmentId))
       .filter((e): e is Establishment => !!e);
@@ -429,7 +421,7 @@ export default function RiderDashboard() {
 
     if (!user) return;
 
-    const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && db.isSameDayString(s.date, operationalTodayStr));
+    const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && isSameDayString(s.date, operationalTodayStr));
     const allDeliveries = db.getDeliveries();
     const nowStr = new Date().toISOString();
 
@@ -528,14 +520,14 @@ export default function RiderDashboard() {
   };
 
   const scheduledEstsToday = getScheduledEstablishmentsToday();
-  const todaySchedule = schedules.find(s => db.isSameDayString(s.date, operationalTodayStr));
+  const todaySchedule = schedules.find(s => isSameDayString(s.date, operationalTodayStr));
 
   const filteredTodayDeliveries = todayDeliveries.filter(d => {
     if (deliveryStatusFilter === 'all') return true;
     return d.status === deliveryStatusFilter;
   });
 
-  // Filtro Inteligente do Histórico
+  // Filtro Inteligente do Histórico usando getDeliveryOperationalDate
   const historyDeliveries = deliveries.filter(d => {
     let matchesEst = true;
     if (historyEstFilter) {
@@ -545,19 +537,17 @@ export default function RiderDashboard() {
 
     if (filterMode === 'smart_shift') {
       if (!smartDate) return true;
-      const isDateMatch = db.isSameDayString(d.date, smartDate);
+      const opDate = getDeliveryOperationalDate(d.date, d.time);
+      const isDateMatch = isSameDayString(opDate, smartDate);
       if (!isDateMatch) return false;
 
       const [h] = (d.time || '12:00').split(':').map(Number);
 
       if (smartPeriod === 'night_shift') {
-        // Noite e Madrugada: >= 18h ou < 03h
         return h >= 18 || h < 3;
       } else if (smartPeriod === 'morning_shift') {
-        // Manhã: 06h às 11h59
         return h >= 6 && h < 12;
       } else if (smartPeriod === 'afternoon_shift') {
-        // Tarde: 12h às 17h59
         return h >= 12 && h < 18;
       }
       return true;
@@ -599,14 +589,6 @@ export default function RiderDashboard() {
             <h1 className="text-lg font-bold truncate max-w-[200px] sm:max-w-none">{user?.name}</h1>
           </div>
           <div className="flex items-center space-x-2">
-            <button
-              onClick={handleManualRecover}
-              className="bg-amber-500 hover:bg-amber-600 text-slate-950 px-2.5 py-1.5 rounded-lg text-xs font-black flex items-center space-x-1 transition-colors shadow-sm"
-              title="Recuperar Corridas do Sistema"
-            >
-              <Sparkles className="h-4 w-4" />
-              <span className="hidden sm:inline">Recuperar Corridas</span>
-            </button>
             <button
               onClick={handleInstallPwa}
               className="bg-indigo-700 hover:bg-indigo-800 text-white px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 transition-colors"
@@ -1065,7 +1047,7 @@ export default function RiderDashboard() {
 
               {historySubTab === 'deliveries' ? (
                 <>
-                  {/* CARD DE FILTRO DE TURNO E PERÍODO (EXATAMENTE CONFORME O DESIGN) */}
+                  {/* CARD DE FILTRO DE TURNO E PERÍODO */}
                   <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-3">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/70 pb-2.5">
                       <p className="text-xs font-black uppercase text-indigo-900 flex items-center gap-1.5 tracking-wider">
@@ -1215,7 +1197,7 @@ export default function RiderDashboard() {
                                 </span>
                               </div>
                               <p className="text-xs text-slate-400">
-                                Expediente: <strong className="text-slate-600">{new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR')}</strong> às {del.time}
+                                Data: <strong className="text-slate-600">{new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR')}</strong> às {del.time}
                               </p>
                             </div>
                             <div className="flex items-center gap-2 justify-between sm:justify-end flex-shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100">
