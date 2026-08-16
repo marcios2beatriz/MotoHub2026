@@ -510,7 +510,7 @@ export default function EstablishmentDashboard() {
 
   const onlineRidersCount = riderLocations.filter(l => {
     const resolved = db.resolveUser(l.riderId);
-    const riderIdToCheck = resolved ? resolved.id : loc.riderId;
+    const riderIdToCheck = resolved ? resolved.id : l.riderId;
     if (!scheduledRiderIds.has(riderIdToCheck)) return false;
     
     const lastUpdateMs = l.updatedAt ? new Date(l.updatedAt).getTime() : 0;
