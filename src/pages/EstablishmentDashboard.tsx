@@ -2,13 +2,11 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { db, Delivery, QueueEntry, User, Schedule, RiderLocation, Establishment } from '../utils/db';
+import { db, Delivery, User, Schedule, RiderLocation, Establishment } from '../utils/db';
 import { 
   LogOut, 
   Check, 
-  X, 
   Plus, 
-  ListOrdered, 
   Bike, 
   Users,
   DollarSign,
@@ -16,13 +14,8 @@ import {
   Maximize2,
   Minimize2,
   MessageSquare,
-  Trash2,
   Share2,
   Edit2,
-  ArrowUp,
-  ArrowDown,
-  Crown,
-  UserPlus,
   LocateFixed,
   AlertTriangle,
   RotateCw,
@@ -43,13 +36,11 @@ export default function EstablishmentDashboard() {
   const [user] = useState(db.getCurrentUser());
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
-  const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [allRiders, setAllRiders] = useState<User[]>([]);
   const [establishmentSchedules, setEstablishmentSchedules] = useState<Schedule[]>([]);
   const [riderLocations, setRiderLocations] = useState<RiderLocation[]>([]);
   const [currentEst, setCurrentEst] = useState<Establishment | null>(null);
 
-  // Estado de link copiado
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Filtros avançados de corridas e histórico
@@ -59,10 +50,6 @@ export default function EstablishmentDashboard() {
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [sortOrder, setSortOrder] = useState<'recent' | 'oldest' | 'highest_value'>('recent');
-
-  // Modal para adicionar motoboy na fila manualmente
-  const [showAddQueueModal, setShowAddQueueModal] = useState(false);
-  const [selectedQueueRiderId, setSelectedQueueRiderId] = useState('');
 
   // Modais de chat e corrida
   const [showDeliveryModal, setShowDeliveryModal] = useState(false);
@@ -113,12 +100,6 @@ export default function EstablishmentDashboard() {
       db.isSameEstablishment(d.establishmentId, estFound!.id)
     );
 
-    const estQueue = db.getQueue().filter(q => 
-      db.isSameEstablishment(q.establishmentId, estFound!.id) && 
-      q.status === 'waiting' &&
-      (q.date === todayStr || (q.joinedAt && q.joinedAt.startsWith(todayStr)))
-    ).sort((a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime());
-
     const riders = db.getUsers().filter(u => u.role === 'rider' && u.active);
     const schedules = db.getSchedules().filter(s => 
       db.isSameEstablishment(s.establishmentId, estFound!.id)
@@ -126,7 +107,6 @@ export default function EstablishmentDashboard() {
     const locations = db.getRiderLocations();
 
     setDeliveries([...estDeliveries].sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time)));
-    setQueue(estQueue);
     setAllRiders(riders);
     setEstablishmentSchedules([...schedules].sort((a, b) => b.date.localeCompare(a.date)));
     setRiderLocations(locations);
@@ -143,9 +123,8 @@ export default function EstablishmentDashboard() {
       db.pullFromSupabase().then(() => loadData());
     }, 2000);
 
-    const handleQueueUpdate = () => loadData();
-    window.addEventListener('queue-updated', handleQueueUpdate);
-    window.addEventListener('db-sync-complete', handleQueueUpdate);
+    const handleDataUpdate = () => loadData();
+    window.addEventListener('db-sync-complete', handleDataUpdate);
 
     const unsubscribeOffline = realtimeGps.subscribeToOffline((payload) => {
       if (mapRef.current && markersRef.current[payload.riderId]) {
@@ -157,8 +136,7 @@ export default function EstablishmentDashboard() {
 
     return () => {
       clearInterval(interval);
-      window.removeEventListener('queue-updated', handleQueueUpdate);
-      window.removeEventListener('db-sync-complete', handleQueueUpdate);
+      window.removeEventListener('db-sync-complete', handleDataUpdate);
       unsubscribeOffline();
     };
   }, [user, navigate]);
@@ -341,7 +319,7 @@ export default function EstablishmentDashboard() {
     if (!currentEst) return;
     setEditingDelivery(null);
     setDeliveryForm({
-      riderId: riderIdToPreselect || (queue.length > 0 ? queue[0].riderId : (allRiders.length > 0 ? allRiders[0].id : '')),
+      riderId: riderIdToPreselect || (allRiders.length > 0 ? allRiders[0].id : ''),
       establishmentId: currentEst.id,
       date: todayStr,
       time: new Date().toTimeString().slice(0, 5),
@@ -418,56 +396,11 @@ export default function EstablishmentDashboard() {
         paid: false
       };
       db.setDeliveries([...allDeliveries, newDelivery]);
-      db.markRiderDelivering(deliveryForm.riderId, currentEst.id);
     }
 
     setShowDeliveryModal(false);
     setEditingDelivery(null);
     loadData();
-  };
-
-  const handleAddRiderToQueue = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!currentEst || !selectedQueueRiderId) return;
-
-    db.joinQueue(selectedQueueRiderId, currentEst.id);
-    setShowAddQueueModal(false);
-    setSelectedQueueRiderId('');
-    loadData();
-    window.dispatchEvent(new Event('queue-updated'));
-  };
-
-  const handleRemoveFromQueue = (riderId: string) => {
-    if (!currentEst) return;
-    db.leaveQueue(riderId, currentEst.id);
-    loadData();
-    window.dispatchEvent(new Event('queue-updated'));
-  };
-
-  const handleMoveToFirstInQueue = (entryId: string) => {
-    if (!currentEst) return;
-    const currentQueueIds = queue.map(q => q.id);
-    const reorderedIds = [entryId, ...currentQueueIds.filter(id => id !== entryId)];
-    db.reorderQueue(currentEst.id, reorderedIds);
-    loadData();
-    window.dispatchEvent(new Event('queue-updated'));
-  };
-
-  const handleMoveQueueItem = (index: number, direction: 'up' | 'down') => {
-    if (!currentEst) return;
-    const newQueue = [...queue];
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-
-    if (targetIndex < 0 || targetIndex >= newQueue.length) return;
-
-    const temp = newQueue[index];
-    newQueue[index] = newQueue[targetIndex];
-    newQueue[targetIndex] = temp;
-
-    const reorderedIds = newQueue.map(q => q.id);
-    db.reorderQueue(currentEst.id, reorderedIds);
-    loadData();
-    window.dispatchEvent(new Event('queue-updated'));
   };
 
   const handleSaveNotes = (deliveryId: string, updatedNotes: string) => {
@@ -505,7 +438,6 @@ export default function EstablishmentDashboard() {
     );
   }
 
-  // Métricas de Hoje (operacional)
   const todayDeliveries = deliveries.filter(d => db.isSameDayString(d.date, todayStr));
   const todayApprovedDeliveries = todayDeliveries.filter(d => d.status === 'active');
   const todayRevenue = todayApprovedDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
@@ -627,141 +559,6 @@ export default function EstablishmentDashboard() {
 
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
-              <div className="flex items-center space-x-3">
-                <div className="p-2.5 bg-indigo-600 text-white rounded-xl flex-shrink-0">
-                  <ListOrdered className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="font-extrabold text-slate-800 text-base">Fila de Saída dos Motoboys</h3>
-                  <p className="text-xs text-slate-400 mt-0.5">Gerencie a ordem, adicione e coloque o motoboy na vez</p>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-2 flex-wrap">
-                <button
-                  onClick={() => setShowAddQueueModal(true)}
-                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1"
-                  title="Inserir motoboy na fila manualmente"
-                >
-                  <UserPlus className="h-4 w-4" />
-                  <span>+ Adicionar na Fila</span>
-                </button>
-
-                <button
-                  onClick={() => setShowBatchModal(true)}
-                  className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition-all shadow-sm flex items-center space-x-1"
-                  title="Lançamento em lote de múltiplos pedidos"
-                >
-                  <Layers className="h-4 w-4" />
-                  <span>Lote</span>
-                </button>
-
-                <button
-                  onClick={() => handleOpenLaunchModal(queue.length > 0 ? queue[0].riderId : undefined)}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all shadow-sm flex items-center space-x-1.5"
-                >
-                  <Plus className="h-4 w-4" />
-                  <span>{queue.length > 0 ? `Lançar para 1º da Fila` : 'Lançar Corrida'}</span>
-                </button>
-              </div>
-            </div>
-
-            {queue.length === 0 ? (
-              <div className="border-2 border-dashed border-slate-200 rounded-2xl p-8 text-center text-xs text-slate-400 max-w-lg mx-auto my-2 space-y-2">
-                <p>Nenhum entregador na fila no momento.</p>
-                <button
-                  onClick={() => setShowAddQueueModal(true)}
-                  className="text-indigo-600 font-bold hover:underline"
-                >
-                  + Adicionar motoboy na fila agora
-                </button>
-              </div>
-            ) : (
-              <div className="divide-y divide-slate-100 bg-slate-50/50 rounded-xl border border-slate-200/80 overflow-hidden">
-                {queue.map((q, idx) => {
-                  const riderUser = db.resolveUser(q.riderId);
-                  const arrivalTime = new Date(q.joinedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-                  const isFirst = idx === 0;
-
-                  return (
-                    <div key={q.id} className={`p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${isFirst ? 'bg-emerald-50/80 border-l-4 border-l-emerald-500' : ''}`}>
-                      <div className="flex items-center space-x-3 min-w-0">
-                        <span className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black flex-shrink-0 ${
-                          isFirst ? 'bg-emerald-600 text-white shadow-md animate-pulse' : 'bg-slate-200 text-slate-700'
-                        }`}>
-                          #{idx + 1}
-                        </span>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <p className="font-bold text-slate-800 text-sm truncate">{riderUser?.name || 'Entregador'}</p>
-                            {isFirst && (
-                              <span className="bg-emerald-600 text-white text-[9px] font-black uppercase px-2 py-0.5 rounded-full tracking-wider flex items-center gap-1">
-                                <Crown className="h-3 w-3 text-amber-300" /> 1º DA VEZ
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[11px] text-slate-400">Entrou na fila às {arrivalTime}</p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center space-x-1.5 flex-wrap justify-end flex-shrink-0">
-                        {!isFirst && (
-                          <button
-                            onClick={() => handleMoveToFirstInQueue(q.id)}
-                            className="bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1"
-                            title="Colocar este motoboy em 1º da fila"
-                          >
-                            <Crown className="h-3.5 w-3.5 text-amber-600" />
-                            <span>Colocar em 1º</span>
-                          </button>
-                        )}
-
-                        <div className="flex items-center bg-white border border-slate-200 rounded-lg p-0.5">
-                          <button
-                            disabled={idx === 0}
-                            onClick={() => handleMoveQueueItem(idx, 'up')}
-                            className="p-1 text-slate-600 hover:text-indigo-600 disabled:opacity-30 disabled:hover:text-slate-600"
-                            title="Subir Posição"
-                          >
-                            <ArrowUp className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            disabled={idx === queue.length - 1}
-                            onClick={() => handleMoveQueueItem(idx, 'down')}
-                            className="p-1 text-slate-600 hover:text-indigo-600 disabled:opacity-30 disabled:hover:text-slate-600"
-                            title="Descer Posição"
-                          >
-                            <ArrowDown className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-
-                        <button
-                          onClick={() => handleOpenLaunchModal(q.riderId)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1 ${
-                            isFirst ? 'bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold' : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                          }`}
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                          <span>{isFirst ? 'Lançar (Vez)' : 'Lançar'}</span>
-                        </button>
-
-                        <button
-                          onClick={() => handleRemoveFromQueue(q.riderId)}
-                          className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Remover da fila"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-2">
                 <Users className="h-5 w-5 text-indigo-600" />
                 <h3 className="font-extrabold text-slate-800 text-base">
@@ -816,6 +613,14 @@ export default function EstablishmentDashboard() {
                         </div>
 
                         <div className="flex items-center space-x-2 flex-shrink-0">
+                          <button
+                            onClick={() => handleOpenLaunchModal(sch.riderId)}
+                            className="p-1.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors text-xs font-bold flex items-center gap-1"
+                            title="Lançar Corrida para este Motoboy"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            <span>Lançar</span>
+                          </button>
                           <button
                             onClick={() => setActiveScheduleChatId(sch.id)}
                             className="p-1.5 text-indigo-600 hover:bg-indigo-100 rounded-lg transition-colors"
@@ -1036,7 +841,7 @@ export default function EstablishmentDashboard() {
                           <MessageSquare className="h-3.5 w-3.5" />
                           <span>Obs</span>
                           {hasNotes && (
-                            <span className="bg-amber-990 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full">
+                            <span className="bg-amber-900 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
                               {notesCount}
                             </span>
                           )}
@@ -1154,61 +959,6 @@ export default function EstablishmentDashboard() {
         </div>
 
       </main>
-
-      {showAddQueueModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-xl">
-            <div className="flex justify-between items-center">
-              <h3 className="text-base font-extrabold text-slate-800 flex items-center gap-2">
-                <UserPlus className="h-5 w-5 text-indigo-600" />
-                <span>Adicionar Motoboy na Fila</span>
-              </h3>
-              <button onClick={() => setShowAddQueueModal(false)} className="text-slate-400 hover:text-slate-600">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleAddRiderToQueue} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Selecione o Motoboy</label>
-                <select
-                  required
-                  value={selectedQueueRiderId}
-                  onChange={(e) => setSelectedQueueRiderId(e.target.value)}
-                  className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                >
-                  <option value="">Selecione um motoboy...</option>
-                  {allRiders.map(r => {
-                    const inQ = queue.some(q => q.riderId === r.id);
-                    return (
-                      <option key={r.id} value={r.id} disabled={inQ}>
-                        {r.name} {inQ ? '(Já está na fila)' : ''}
-                      </option>
-                    );
-                  })}
-                </select>
-              </div>
-
-              <div className="flex justify-end space-x-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAddQueueModal(false)}
-                  className="px-4 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={!selectedQueueRiderId}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white rounded-xl text-xs font-bold shadow-sm"
-                >
-                  Colocar na Fila
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       <DeliveryModal
         isOpen={showDeliveryModal}
