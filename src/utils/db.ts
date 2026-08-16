@@ -46,7 +46,7 @@ export interface Schedule {
   id: string;
   riderId: string;
   establishmentId: string;
-  date: string; // YYYY-MM-DD (Data do turno operacional)
+  date: string; // YYYY-MM-DD
   shift: 'morning' | 'afternoon' | 'night';
   startTime: string;
   endTime: string;
@@ -60,7 +60,7 @@ export interface Delivery {
   id: string;
   riderId: string;
   establishmentId: string;
-  date: string; // YYYY-MM-DD (Data do turno operacional)
+  date: string; // YYYY-MM-DD (Data real gravada)
   time: string; // HH:MM
   value: number;
   status: 'pending' | 'active' | 'rejected' | 'cancelled' | 'lost';
@@ -123,16 +123,7 @@ export function isSameDayString(d1?: string, d2?: string): boolean {
   if (!d1 || !d2) return false;
   const clean1 = d1.split('T')[0].split(' ')[0];
   const clean2 = d2.split('T')[0].split(' ')[0];
-  if (clean1 === clean2) return true;
-  try {
-    const dt1 = new Date(d1.includes('T') ? d1 : d1.replace(' ', 'T'));
-    const dt2 = new Date(d2.includes('T') ? d2 : d2.replace(' ', 'T')); 
-    return dt1.getFullYear() === dt2.getFullYear() &&
-           dt1.getMonth() === dt2.getMonth() &&
-           dt1.getDate() === dt2.getDate();
-  } catch (e) {
-    return false;
-  }
+  return clean1 === clean2;
 }
 
 function parseTimestamp(dateStr?: string): number {
@@ -219,21 +210,12 @@ function mergeChatStrings(localChat: string | undefined, remoteChat: string | un
   return merged.join('\n');
 }
 
-function isAddressEmptyOrPlaceholder(addr: any): boolean {
-  if (!addr) return true;
-  const street = (addr.street || '').toLowerCase().trim();
-  const neighborhood = (addr.neighborhood || '').toLowerCase().trim();
-  
-  return !street || !neighborhood || street === 'sem rua' || street === 'a definir' || neighborhood === 'sem bairro' || neighborhood === 'a definir';
-}
-
 async function safeUpsert(tableName: string, rawPayload: Record<string, any>): Promise<{ success: boolean; error?: any }> {
   if (isTableMissing(tableName)) {
     return { success: false, error: 'Tabela não existe no Supabase' };
   }
 
   const payload = { ...rawPayload };
-  
   const cache = getMissingColumnsCache();
   const missingCols = cache[tableName] || [];
   missingCols.forEach(col => {
@@ -432,7 +414,6 @@ export const db = {
     });
   },
 
-  // --- HISTÓRICO DE ROTAS ---
   getRouteHistory(): RouteHistoryItem[] {
     const data = localStorage.getItem(KEYS.ROUTE_HISTORY);
     return data ? JSON.parse(data) : [];
@@ -469,59 +450,30 @@ export const db = {
     return `${year}-${month}-${day}`;
   },
 
-  /**
-   * REGRA DE TURNO INTELIGENTE POR DATA:
-   * Horários entre 00:00 e 02:59 da madrugada pertencem ao turno/expediente iniciado no dia anterior (às 18:00h).
-   */
   getOperationalDateString(date: Date = new Date()): string {
-    const d = new Date(date);
-    const hour = d.getHours();
-    const minute = d.getMinutes();
-    
-    // Se for entre 00:00 e 02:59 da madrugada, o expediente pertence ao dia anterior
-    if (hour < 3) {
-      d.setDate(d.getDate() - 1);
-    }
-    return this.getLocalDateString(d);
+    return this.getLocalDateString(date);
   },
 
-  /**
-   * Converte uma data e horário de corrida para a data do turno operacional correspondente.
-   * Se a corrida foi lançada entre 00:00 e 02:59, ela é atribuída ao expediente do dia anterior.
-   */
-  getShiftOperationalDate(calendarDateStr: string, timeStr: string): string {
-    if (!calendarDateStr) return this.getOperationalDateString();
-    const [h, m] = (timeStr || '18:00').split(':').map(Number);
-    
-    // Se for entre 00:00 e 02:59 da madrugada, retrocede 1 dia para o dia do expediente
-    if (h >= 0 && h < 3) {
-      const [year, month, day] = calendarDateStr.split('-').map(Number);
-      const prev = new Date(year, month - 1, day);
-      prev.setDate(prev.getDate() - 1);
-      return this.getLocalDateString(prev);
-    }
-    return calendarDateStr;
+  getShiftOperationalDate(calendarDateStr: string, _timeStr: string): string {
+    return calendarDateStr || this.getLocalDateString();
   },
 
-  // Restaura e recupera todas as corridas que foram marcadas como 'lost' ou de dias recentes
   restoreAllLostDeliveries(): { recoveredCount: number; datesRecovered: string[] } {
     const deliveries = this.getDeliveries();
     let recoveredCount = 0;
     const datesSet = new Set<string>();
 
     const updated = deliveries.map(d => {
-      if (d.status === 'lost' || d.date === '2026-08-15' || d.date === '2024-08-15' || d.date.includes('08-15')) {
-        if (d.status === 'lost') {
-          recoveredCount++;
-          datesSet.add(d.date);
-          return {
-            ...d,
-            status: 'active' as const,
-            lostAt: undefined,
-            lostReason: undefined,
-            updatedAt: new Date().toISOString()
-          };
-        }
+      if (d.status === 'lost') {
+        recoveredCount++;
+        datesSet.add(d.date);
+        return {
+          ...d,
+          status: 'active' as const,
+          lostAt: undefined,
+          lostReason: undefined,
+          updatedAt: new Date().toISOString()
+        };
       }
       return d;
     });
@@ -533,86 +485,9 @@ export const db = {
     return { recoveredCount, datesRecovered: Array.from(datesSet) };
   },
 
-  /**
-   * Normaliza e vincula as corridas ao turno correto de 18:00 às 02:59 do dia subsequente.
-   */
   normalizeAndLinkHistoricalDeliveries(): { updatedCount: number; linkedSchedulesCount: number } {
-    const deliveries = this.getDeliveries();
-    const schedules = this.getSchedules();
-    let updatedCount = 0;
-    let linkedSchedulesCount = 0;
-
-    const updatedDeliveries = deliveries.map(d => {
-      let isModified = false;
-      let targetDate = d.date;
-      let targetScheduleId = d.scheduleId;
-      let targetStatus = d.status;
-
-      if (targetStatus === 'lost') {
-        targetStatus = 'active';
-        isModified = true;
-      }
-
-      const [h, m] = (d.time || '12:00').split(':').map(Number);
-
-      // Aplicação do Turno Inteligente: Entre 00:00 e 02:59
-      if (h >= 0 && h < 3) {
-        // Encontra a escala noturna correspondente
-        const [y, month, day] = d.date.split('-').map(Number);
-        const prevDay = new Date(y, month - 1, day);
-        prevDay.setDate(prevDay.getDate() - 1);
-        const prevDayStr = this.getLocalDateString(prevDay);
-
-        const matchingSchedule = schedules.find(s => 
-          this.isSameUser(s.riderId, d.riderId) &&
-          this.isSameEstablishment(s.establishmentId, d.establishmentId) &&
-          (isSameDayString(s.date, prevDayStr) || isSameDayString(s.date, d.date))
-        );
-
-        if (matchingSchedule) {
-          if (targetDate !== matchingSchedule.date) {
-            targetDate = matchingSchedule.date;
-            isModified = true;
-          }
-          if (targetScheduleId !== matchingSchedule.id) {
-            targetScheduleId = matchingSchedule.id;
-            linkedSchedulesCount++;
-            isModified = true;
-          }
-        }
-      } else {
-        if (!targetScheduleId) {
-          const matchingSchedule = schedules.find(s => 
-            this.isSameUser(s.riderId, d.riderId) &&
-            this.isSameEstablishment(s.establishmentId, d.establishmentId) &&
-            isSameDayString(s.date, d.date)
-          );
-          if (matchingSchedule) {
-            targetScheduleId = matchingSchedule.id;
-            linkedSchedulesCount++;
-            isModified = true;
-          }
-        }
-      }
-
-      if (isModified) {
-        updatedCount++;
-        return {
-          ...d,
-          date: targetDate,
-          status: targetStatus,
-          scheduleId: targetScheduleId,
-          updatedAt: new Date().toISOString()
-        };
-      }
-      return d;
-    });
-
-    if (updatedCount > 0) {
-      this.setDeliveries(updatedDeliveries);
-    }
-
-    return { updatedCount, linkedSchedulesCount };
+    // Não altera as datas gravadas das entregas para preservar integridade histórica
+    return { updatedCount: 0, linkedSchedulesCount: 0 };
   },
 
   resolveUser(id: string): User | undefined {
@@ -817,8 +692,8 @@ export const db = {
           }
 
           const local = localEsts.find(l => l.id === e.id);
-          if (isAddressEmptyOrPlaceholder(parsedAddress) && local && local.address && !isAddressEmptyOrPlaceholder(local.address)) {
-            parsedAddress = { ...local.address };
+          if (local && local.address) {
+            parsedAddress = { ...parsedAddress, ...local.address };
           }
 
           return {
@@ -912,9 +787,6 @@ export const db = {
           }
 
           let finalStatus: 'pending' | 'active' | 'rejected' | 'cancelled' | 'lost' = d.status;
-          if (finalStatus === 'lost') {
-            finalStatus = 'active';
-          }
 
           if (local) {
             const isRemoteResolved = ['active', 'rejected', 'cancelled'].includes(d.status);
@@ -929,10 +801,6 @@ export const db = {
               const remoteTime = updatedAt ? new Date(updatedAt).getTime() : 0;
               finalStatus = (localTime > remoteTime ? local.status : d.status) as any;
             }
-          }
-
-          if (finalStatus === 'lost') {
-            finalStatus = 'active';
           }
 
           return {
@@ -955,10 +823,7 @@ export const db = {
         const mergedDeliveries = [...mappedDeliveries];
         localDeliveries.forEach(loc => {
           if (!mergedDeliveries.some(m => m.id === loc.id)) {
-            mergedDeliveries.push({
-              ...loc,
-              status: loc.status === 'lost' ? 'active' : loc.status
-            });
+            mergedDeliveries.push(loc);
           }
         });
 
@@ -1009,9 +874,6 @@ export const db = {
     } catch (err) {
       console.warn('Erro ao sincronizar tabela "rider_locations":', err);
     }
-
-    this.restoreAllLostDeliveries();
-    this.normalizeAndLinkHistoricalDeliveries();
 
     window.dispatchEvent(new Event('db-sync-complete'));
   }
