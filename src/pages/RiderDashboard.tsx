@@ -24,7 +24,8 @@ import {
   Download,
   RotateCw,
   Sparkles,
-  Filter
+  Filter,
+  Hash
 } from 'lucide-react';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
 import CustomerChatModal from '../components/CustomerChatModal';
@@ -420,18 +421,64 @@ export default function RiderDashboard() {
     return uniqueEsts;
   };
 
+  // Estabelecimentos onde o motoboy já esteve ou está escalado (para o dropdown de filtro do histórico)
+  const getRiderHistoryEstablishments = () => {
+    const scheduledEstIds = new Set(schedules.map(s => s.establishmentId));
+    const deliveryEstIds = new Set(deliveries.map(d => d.establishmentId));
+    const allRelatedEstIds = new Set([...scheduledEstIds, ...deliveryEstIds]);
+
+    return establishments.filter(e => 
+      allRelatedEstIds.has(e.id) || 
+      Array.from(allRelatedEstIds).some(id => db.isSameEstablishment(e.id, id))
+    );
+  };
+
   const handleLaunchDelivery = (e: React.FormEvent) => {
     e.preventDefault();
-    const val = parseFloat(launchForm.value);
+    if (!user) return;
+
+    const val = parseFloat(launchForm.value.replace(',', '.'));
     if (isNaN(val) || val <= 0) {
       alert('Erro: O valor da corrida deve ser maior que zero.');
       return;
     }
 
-    if (!user) return;
+    const cleanOrderNumber = launchForm.orderNumber.trim();
+    if (!cleanOrderNumber) {
+      alert('Erro: O número do pedido é obrigatório.');
+      return;
+    }
+
+    if (!/^\d{1,4}$/.test(cleanOrderNumber)) {
+      alert('Erro: O número do pedido deve conter apenas números (máximo 4 dígitos).');
+      return;
+    }
+
+    const allDeliveries = db.getDeliveries();
+
+    // Validação de duplicidade: impede que o mesmo pedido seja lançado mais de uma vez hoje por qualquer motoboy
+    const duplicateDelivery = allDeliveries.find(d => {
+      if (editingDelivery && d.id === editingDelivery.id) return false;
+      if (d.status === 'cancelled') return false;
+
+      const dOrderNum = (d.orderNumber || '').trim();
+      if (!dOrderNum) return false;
+
+      const opDate = getDeliveryOperationalDate(d.date, d.time);
+      const isToday = isSameDayString(opDate, operationalTodayStr);
+
+      return isToday && dOrderNum === cleanOrderNumber;
+    });
+
+    if (duplicateDelivery) {
+      const duplicateRider = db.resolveUser(duplicateDelivery.riderId);
+      const isMe = duplicateDelivery.riderId === user.id;
+      const riderName = isMe ? 'por você' : `pelo motoboy "${duplicateRider?.name || 'Outro entregador'}"`;
+      alert(`⚠️ Erro: O pedido #${cleanOrderNumber} já foi lançado hoje ${riderName}.\n\nNão é permitido lançar mais de uma corrida com o mesmo número de pedido.`);
+      return;
+    }
 
     const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && isSameDayString(s.date, operationalTodayStr));
-    const allDeliveries = db.getDeliveries();
     const nowStr = new Date().toISOString();
 
     if (editingDelivery) {
@@ -439,7 +486,7 @@ export default function RiderDashboard() {
         ...d,
         establishmentId: launchForm.establishmentId,
         value: val,
-        orderNumber: launchForm.orderNumber.trim() || undefined,
+        orderNumber: cleanOrderNumber,
         notes: launchForm.notes.trim() || undefined,
         scheduleId: activeSchedule?.id || d.scheduleId,
         updatedAt: nowStr
@@ -457,13 +504,13 @@ export default function RiderDashboard() {
         value: val,
         status: 'pending',
         scheduleId: activeSchedule?.id,
-        orderNumber: launchForm.orderNumber.trim() || undefined,
+        orderNumber: cleanOrderNumber,
         notes: launchForm.notes.trim() || undefined,
         updatedAt: nowStr
       };
 
       db.setDeliveries([...allDeliveries, newDelivery]);
-      alert('Corrida lançada com sucesso! Aguardando aprovação.');
+      alert(`🎉 Corrida #${cleanOrderNumber} lançada com sucesso! Aguardando aprovação.`);
     }
 
     setShowLaunchModal(false);
@@ -530,6 +577,7 @@ export default function RiderDashboard() {
 
   const scheduledEstsToday = getScheduledEstablishmentsToday();
   const todaySchedule = schedules.find(s => isSameDayString(s.date, operationalTodayStr));
+  const riderHistoryEsts = getRiderHistoryEstablishments();
 
   const filteredTodayDeliveries = todayDeliveries.filter(d => {
     if (deliveryStatusFilter === 'all') return true;
@@ -609,7 +657,7 @@ export default function RiderDashboard() {
             <button
               onClick={() => {
                 if (scheduledEstsToday.length === 0) {
-                  alert('Aviso: Você não possui estabelecimentos ativos hoje. Fale com o administrador.');
+                  alert('Aviso: Você não possui escalas ativas hoje neste turno. Fale com o administrador.');
                   return;
                 }
                 setEditingDelivery(null);
@@ -1151,14 +1199,16 @@ export default function RiderDashboard() {
                     )}
 
                     <div className="pt-1">
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Filtrar por Estabelecimento</label>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                        Filtrar por Estabelecimento ({riderHistoryEsts.length} disponível{riderHistoryEsts.length !== 1 ? 'is' : ''})
+                      </label>
                       <select
                         value={historyEstFilter}
                         onChange={(e) => setHistoryEstFilter(e.target.value)}
                         className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
                       >
-                        <option value="">Todos os Estabelecimentos</option>
-                        {establishments.map(est => (
+                        <option value="">Todos os Meus Estabelecimentos Escalados</option>
+                        {riderHistoryEsts.map(est => (
                           <option key={est.id} value={est.id}>{est.name}</option>
                         ))}
                       </select>
@@ -1346,72 +1396,115 @@ export default function RiderDashboard() {
         )}
       </main>
 
+      {/* Modal de Lançamento de Corrida pelo Motoboy */}
       {showLaunchModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-md w-full p-6 space-y-4 shadow-xl">
-            <div className="flex justify-between items-center">
-              <h3 className="text-lg font-bold text-slate-800">
-                {editingDelivery ? 'Editar Corrida Pendente' : 'Lançar Nova Corrida'}
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-100">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <h3 className="text-base font-extrabold text-slate-800 flex items-center gap-2">
+                <Plus className="h-5 w-5 text-indigo-600" />
+                <span>{editingDelivery ? 'Editar Corrida' : 'Lançar Nova Corrida'}</span>
               </h3>
-              <button onClick={() => { setShowLaunchModal(false); setEditingDelivery(null); }} className="text-slate-400 hover:text-slate-600">
+              <button 
+                onClick={() => { setShowLaunchModal(false); setEditingDelivery(null); }} 
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <form onSubmit={handleLaunchDelivery} className="space-y-3">
+
+            <form onSubmit={handleLaunchDelivery} className="space-y-3.5">
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Estabelecimento</label>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                  Estabelecimento Escalado
+                </label>
                 <select
                   required
                   value={launchForm.establishmentId}
                   onChange={(e) => setLaunchForm({ ...launchForm, establishmentId: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white font-medium"
                 >
                   {scheduledEstsToday.map(e => (
                     <option key={e.id} value={e.id}>{e.name}</option>
                   ))}
                 </select>
               </div>
+
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nº do Pedido (Opcional)</label>
-                <input
-                  type="text"
-                  placeholder="Ex: 1042"
-                  value={launchForm.orderNumber}
-                  onChange={(e) => setLaunchForm({ ...launchForm, orderNumber: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none"
-                />
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <Hash className="h-3.5 w-3.5 text-indigo-600" />
+                    <span>Nº do Pedido (Obrigatório)</span>
+                  </span>
+                  <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                    Máx. 4 números
+                  </span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    required
+                    maxLength={4}
+                    inputMode="numeric"
+                    pattern="[0-9]{1,4}"
+                    placeholder="Ex: 1042"
+                    value={launchForm.orderNumber}
+                    onChange={(e) => {
+                      const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 4);
+                      setLaunchForm({ ...launchForm, orderNumber: digitsOnly });
+                    }}
+                    className="w-full pl-8 pr-3 py-2 border border-slate-300 rounded-xl text-sm font-bold font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                  />
+                  <Hash className="h-4 w-4 text-slate-400 absolute left-2.5 top-2.5" />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Digite somente números (ex: 12, 104, 1042). O sistema valida se já foi lançado hoje.
+                </p>
               </div>
+
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Valor da Corrida (R$)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  required
-                  placeholder="0.00"
-                  value={launchForm.value}
-                  onChange={(e) => setLaunchForm({ ...launchForm, value: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none"
-                />
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                  Valor da Corrida (R$)
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    required
+                    placeholder="0.00"
+                    value={launchForm.value}
+                    onChange={(e) => setLaunchForm({ ...launchForm, value: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm font-bold text-emerald-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                  />
+                </div>
               </div>
+
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Observações / Instruções (Opcional)</label>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                  Observações / Instruções (Opcional)
+                </label>
                 <textarea
-                  placeholder="Ex: Entregar na recepção, troco para R$ 50,00..."
+                  placeholder="Ex: Troco para 50, bloco B apto 201..."
                   value={launchForm.notes}
                   onChange={(e) => setLaunchForm({ ...launchForm, notes: e.target.value })}
                   rows={2}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none resize-none"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs focus:outline-none resize-none"
                 />
               </div>
-              <div className="flex justify-end space-x-2 pt-3">
+
+              <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => { setShowLaunchModal(false); setEditingDelivery(null); }}
-                  className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  className="px-4 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors"
                 >
                   Cancelar
                 </button>
-                <button type="submit" className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium">
+                <button 
+                  type="submit" 
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-extrabold transition-all shadow-md"
+                >
                   {editingDelivery ? 'Salvar Alterações' : 'Lançar Corrida'}
                 </button>
               </div>
