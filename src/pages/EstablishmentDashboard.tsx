@@ -16,6 +16,7 @@ import {
   MessageSquare,
   Share2,
   Edit2,
+  Trash2,
   LocateFixed,
   AlertTriangle,
   RotateCw,
@@ -177,12 +178,10 @@ export default function EstablishmentDashboard() {
   const onlineScheduledRiderLocations = riderLocations.filter(loc => {
     if (!loc.lat || !loc.lng || isNaN(loc.lat) || isNaN(loc.lng)) return false;
     
-    // 1. Deve estar escalado para o estabelecimento hoje
     const isScheduled = scheduledRiderIds.has(loc.riderId) || 
       todaySchedules.some(s => db.isSameUser(s.riderId, loc.riderId));
     if (!isScheduled) return false;
 
-    // 2. Deve estar ONLINE (com sinal nos últimos 3 minutos)
     const timeDiff = loc.updatedAt ? Date.now() - new Date(loc.updatedAt).getTime() : Infinity;
     return timeDiff <= ONLINE_THRESHOLD_MS;
   });
@@ -231,10 +230,8 @@ export default function EstablishmentDashboard() {
     const currentMap = mapRef.current;
     const points: L.LatLngExpression[] = [];
 
-    // Conjunto de IDs permitidos no mapa (escalados na loja + online)
     const allowedIds = new Set(onlineScheduledRiderLocations.map(r => r.riderId));
 
-    // Remove qualquer marcador de motoboy que ficou offline ou não pertence a esta escala
     Object.keys(markersRef.current).forEach(markerId => {
       if (!allowedIds.has(markerId)) {
         currentMap.removeLayer(markersRef.current[markerId]);
@@ -242,7 +239,6 @@ export default function EstablishmentDashboard() {
       }
     });
 
-    // Renderiza apenas os motoboys online da escala
     onlineScheduledRiderLocations.forEach(loc => {
       points.push([loc.lat, loc.lng]);
       const riderName = loc.riderName || 'Entregador';
@@ -301,21 +297,29 @@ export default function EstablishmentDashboard() {
   };
 
   const handleShareTracking = (deliveryId: string) => {
-    const link = `${window.location.origin}/#/track/${deliveryId}`;
-    navigator.clipboard.writeText(link).then(() => {
-      setCopiedId(deliveryId);
-      setTimeout(() => setCopiedId(null), 2000);
-    });
+    const origin = window.location.origin || `${window.location.protocol}//${window.location.host}`;
+    const link = `${origin}/#/track/${deliveryId}`;
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link).then(() => {
+        setCopiedId(deliveryId);
+        setTimeout(() => setCopiedId(null), 2500);
+      }).catch(() => {
+        prompt('Copie o link de rastreio para o cliente:', link);
+      });
+    } else {
+      prompt('Copie o link de rastreio para o cliente:', link);
+    }
   };
 
-  const handleApproveDelivery = (id: string) => {
+  const handleApproveDelivery = async (id: string) => {
     const allDeliveries = db.getDeliveries();
     const updated = allDeliveries.map(d => d.id === id ? { ...d, status: 'active' as const, updatedAt: new Date().toISOString() } : d);
-    db.setDeliveries(updated);
+    await db.setDeliveries(updated);
     loadData();
   };
 
-  const handleRejectDelivery = (id: string) => {
+  const handleRejectDelivery = async (id: string) => {
     const reason = prompt('Digite o motivo da rejeição:');
     if (reason !== null) {
       const allDeliveries = db.getDeliveries();
@@ -325,7 +329,14 @@ export default function EstablishmentDashboard() {
         notes: d.notes ? `${d.notes}\nRejeitado: ${reason}` : `Rejeitado: ${reason}`,
         updatedAt: new Date().toISOString()
       } : d);
-      db.setDeliveries(updated);
+      await db.setDeliveries(updated);
+      loadData();
+    }
+  };
+
+  const handleDeleteDelivery = async (id: string) => {
+    if (confirm('Tem certeza que deseja excluir esta corrida definitivamente? Esta ação não pode ser desfeita.')) {
+      await db.deleteDelivery(id);
       loadData();
     }
   };
@@ -360,7 +371,7 @@ export default function EstablishmentDashboard() {
     setShowDeliveryModal(true);
   };
 
-  const handleSaveDelivery = (e: React.FormEvent) => {
+  const handleSaveDelivery = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentEst) return;
 
@@ -384,7 +395,7 @@ export default function EstablishmentDashboard() {
         notes: deliveryForm.notes.trim() || undefined,
         updatedAt: nowStr
       } : d);
-      db.setDeliveries(updated);
+      await db.setDeliveries(updated);
     } else {
       const newDelivery: Delivery = {
         id: 'd_' + Date.now(),
@@ -399,7 +410,7 @@ export default function EstablishmentDashboard() {
         updatedAt: nowStr,
         paid: false
       };
-      db.setDeliveries([...allDeliveries, newDelivery]);
+      await db.setDeliveries([...allDeliveries, newDelivery]);
     }
 
     setShowDeliveryModal(false);
@@ -407,25 +418,25 @@ export default function EstablishmentDashboard() {
     loadData();
   };
 
-  const handleSaveNotes = (deliveryId: string, updatedNotes: string) => {
+  const handleSaveNotes = async (deliveryId: string, updatedNotes: string) => {
     const allDeliveries = db.getDeliveries();
     const updated = allDeliveries.map(d => d.id === deliveryId ? {
       ...d,
       notes: updatedNotes,
       updatedAt: new Date().toISOString()
     } : d);
-    db.setDeliveries(updated);
+    await db.setDeliveries(updated);
     loadData();
   };
 
-  const handleSaveScheduleChat = (scheduleId: string, updatedChat: string) => {
+  const handleSaveScheduleChat = async (scheduleId: string, updatedChat: string) => {
     const allSchedules = db.getSchedules();
     const updated = allSchedules.map(s => s.id === scheduleId ? {
       ...s,
       chat: updatedChat,
       updatedAt: new Date().toISOString()
     } : s);
-    db.setSchedules(updated);
+    await db.setSchedules(updated);
     loadData();
   };
 
@@ -945,6 +956,14 @@ export default function EstablishmentDashboard() {
                           title="Editar Corrida"
                         >
                           <Edit2 className="h-4 w-4" />
+                        </button>
+
+                        <button
+                          onClick={() => handleDeleteDelivery(del.id)}
+                          className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Excluir Corrida"
+                        >
+                          <Trash2 className="h-4 w-4" />
                         </button>
 
                         <span className={`font-black text-sm ml-1 ${del.status === 'active' ? 'text-emerald-600' : 'text-slate-400 line-through'}`}>

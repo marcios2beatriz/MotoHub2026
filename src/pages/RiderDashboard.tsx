@@ -338,11 +338,19 @@ export default function RiderDashboard() {
   };
 
   const handleShareTracking = (deliveryId: string) => {
-    const link = `${window.location.origin}/#/track/${deliveryId}`;
-    navigator.clipboard.writeText(link).then(() => {
-      setCopiedId(deliveryId);
-      setTimeout(() => setCopiedId(null), 2000);
-    });
+    const origin = window.location.origin || `${window.location.protocol}//${window.location.host}`;
+    const link = `${origin}/#/track/${deliveryId}`;
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link).then(() => {
+        setCopiedId(deliveryId);
+        setTimeout(() => setCopiedId(null), 2500);
+      }).catch(() => {
+        prompt('Copie o link de rastreio para o cliente:', link);
+      });
+    } else {
+      prompt('Copie o link de rastreio para o cliente:', link);
+    }
   };
 
   const handleNavigateToEst = (est: Establishment) => {
@@ -867,20 +875,18 @@ export default function RiderDashboard() {
                             </button>
                           )}
 
-                          {(delivery.status === 'active' || delivery.status === 'pending') && (
-                            <button
-                              onClick={() => handleShareTracking(delivery.id)}
-                              className={`px-2 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${
-                                copiedId === delivery.id 
-                                  ? 'bg-emerald-100 text-emerald-800' 
-                                  : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
-                              }`}
-                              title="Compartilhar Link de Rastreamento"
-                            >
-                              <Share2 className="h-3.5 w-3.5" />
-                              <span>{copiedId === delivery.id ? 'Copiado!' : 'Enviar Link'}</span>
-                            </button>
-                          )}
+                          <button
+                            onClick={() => handleShareTracking(delivery.id)}
+                            className={`px-2 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${
+                              copiedId === delivery.id 
+                                ? 'bg-emerald-100 text-emerald-800' 
+                                : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
+                            }`}
+                            title="Compartilhar Link de Rastreamento"
+                          >
+                            <Share2 className="h-3.5 w-3.5" />
+                            <span>{copiedId === delivery.id ? 'Copiado!' : 'Rastreio'}</span>
+                          </button>
 
                           <span className={`font-black text-sm ml-auto sm:ml-0 ${delivery.status === 'active' ? 'text-emerald-600' : 'text-slate-400'}`}>
                             R$ {Number(delivery.value || 0).toFixed(2)}
@@ -1218,6 +1224,20 @@ export default function RiderDashboard() {
                                   </span>
                                 )}
                               </button>
+                              
+                              <button
+                                onClick={() => handleShareTracking(del.id)}
+                                className={`px-2 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${
+                                  copiedId === del.id 
+                                    ? 'bg-emerald-100 text-emerald-800' 
+                                    : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
+                                }`}
+                                title="Copiar Link de Rastreamento"
+                              >
+                                <Share2 className="h-3.5 w-3.5" />
+                                <span>{copiedId === del.id ? 'Copiado!' : 'Rastreio'}</span>
+                              </button>
+
                               <span className={`font-black text-sm ${del.status === 'active' ? 'text-emerald-600' : 'text-slate-400 line-through'}`}>
                                 R$ {Number(del.value || 0).toFixed(2)}
                               </span>
