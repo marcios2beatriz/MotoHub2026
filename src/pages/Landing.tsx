@@ -17,15 +17,25 @@ import {
   MapPin,
   MessageSquare,
   Building2,
-  UserCheck
+  UserCheck,
+  Compass,
+  Zap,
+  TrendingUp,
+  Share2,
+  Phone,
+  Mail,
+  Lock,
+  Sparkles,
+  ChevronRight,
+  ShieldCheck
 } from 'lucide-react';
 
 export default function Landing() {
   const navigate = useNavigate();
   const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [showEstModal, setShowEstModal] = useState(false);
+  const [activeFeatureTab, setActiveFeatureTab] = useState<'establishments' | 'riders'>('establishments');
   
-  // Proteção: Se já estiver logado, redireciona para o dashboard correto
   useEffect(() => {
     const user = db.getCurrentUser();
     if (user && user.active) {
@@ -61,11 +71,12 @@ export default function Landing() {
 
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [loadingCep, setLoadingCep] = useState(false);
 
-  // Função para buscar CEP automaticamente e preencher os campos
   const handleCepBlur = async (e: React.FocusEvent<HTMLInputElement>) => {
     const cep = e.target.value.replace(/\D/g, '');
     if (cep.length === 8) {
+      setLoadingCep(true);
       try {
         const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
         const data = await res.json();
@@ -80,6 +91,8 @@ export default function Landing() {
         }
       } catch (err) {
         console.warn('Erro ao buscar CEP:', err);
+      } finally {
+        setLoadingCep(false);
       }
     }
   };
@@ -90,7 +103,6 @@ export default function Landing() {
     setSuccess(false);
 
     const allUsers = db.getUsers();
-
     const duplicateCpf = allUsers.find(u => u.cpf === form.cpf);
     const duplicateEmail = allUsers.find(u => u.email.toLowerCase() === form.email.toLowerCase());
 
@@ -110,7 +122,7 @@ export default function Landing() {
       phone: form.phone,
       email: form.email,
       role: 'rider',
-      active: false, // Pending approval
+      active: false,
       passwordHash: form.password
     };
 
@@ -121,7 +133,7 @@ export default function Landing() {
     setTimeout(() => {
       setShowRegisterModal(false);
       setSuccess(false);
-    }, 2000);
+    }, 2500);
   };
 
   const handleEstRegister = (e: React.FormEvent) => {
@@ -139,7 +151,6 @@ export default function Landing() {
 
     const estId = 'e_' + Date.now();
 
-    // Criar o estabelecimento com endereço estruturado
     const newEst: Establishment = {
       id: estId,
       name: estForm.establishmentName,
@@ -154,10 +165,9 @@ export default function Landing() {
         zipCode: estForm.zipCode
       },
       phone: estForm.phone,
-      active: false // Inativo até aprovação
+      active: false
     };
 
-    // Criar o usuário gerente vinculado com CPF único
     const newEstUser: User = {
       id: 'u_' + Date.now(),
       name: estForm.ownerName,
@@ -172,7 +182,6 @@ export default function Landing() {
       updatedAt: new Date().toISOString()
     };
 
-    // Criar a solicitação de parceria formatada
     const formattedAddress = `${estForm.street}, ${estForm.number} - ${estForm.neighborhood}, ${estForm.city}/${estForm.state}`;
     const newRequest: PartnerRequest = {
       id: 'req_' + Date.now(),
@@ -184,7 +193,6 @@ export default function Landing() {
       createdAt: new Date().toISOString()
     };
 
-    // Salvar no banco de dados local e Supabase
     const allEsts = db.getEstablishments();
     db.setEstablishments([...allEsts, newEst]);
     db.setUsers([...allUsers, newEstUser]);
@@ -214,196 +222,380 @@ export default function Landing() {
   };
 
   const handleWhatsAppContact = () => {
-    const message = encodeURIComponent("Olá! Gostaria de fechar parceria com o MotoHub para o meu estabelecimento.");
+    const message = encodeURIComponent("Olá! Gostaria de saber mais sobre o MotoHub para o meu negócio.");
     window.open(`https://wa.me/5583988623431?text=${message}`, '_blank');
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans relative">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans relative selection:bg-indigo-500 selection:text-white">
+      
+      {/* Glow Ambient Highlights */}
+      <div className="absolute top-0 left-1/4 w-96 h-96 bg-indigo-600/15 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-32 right-10 w-96 h-96 bg-emerald-600/10 rounded-full blur-3xl pointer-events-none" />
+
       {/* Header / Navbar */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="bg-indigo-600 p-2 rounded-lg">
+      <header className="bg-slate-900/80 backdrop-blur-md border-b border-slate-800/80 sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+          <div className="flex items-center space-x-3 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+            <div className="bg-gradient-to-tr from-indigo-600 to-indigo-500 p-2.5 rounded-xl shadow-lg shadow-indigo-500/20 border border-indigo-400/30">
               <Bike className="h-6 w-6 text-white" />
             </div>
-            <span className="text-xl font-extrabold text-slate-900 tracking-tight">MotoHub</span>
+            <div>
+              <span className="text-xl font-black text-white tracking-tight flex items-center gap-1">
+                MotoHub <span className="text-indigo-400 text-xs px-2 py-0.5 rounded-full bg-indigo-950 border border-indigo-800/60 uppercase font-mono">PRO</span>
+              </span>
+              <p className="text-[10px] text-slate-400 hidden sm:block font-medium tracking-wide">Gestão & Rastreamento em Tempo Real</p>
+            </div>
           </div>
-          <div className="flex items-center space-x-3">
+
+          <div className="flex items-center space-x-2.5 sm:space-x-3">
             <button 
               onClick={() => navigate('/login')}
-              className="flex items-center space-x-1.5 text-slate-600 hover:text-indigo-600 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+              className="flex items-center space-x-1.5 text-slate-300 hover:text-white hover:bg-slate-800/80 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all border border-transparent hover:border-slate-700"
             >
-              <LogIn className="h-4 w-4" />
+              <LogIn className="h-4 w-4 text-indigo-400" />
               <span>Entrar</span>
             </button>
             <button 
               onClick={() => setShowEstModal(true)}
-              className="hidden sm:flex items-center space-x-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-emerald-200"
+              className="hidden sm:flex items-center space-x-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold transition-all border border-emerald-500/30 shadow-sm"
             >
-              <Building2 className="h-4 w-4" />
+              <Building2 className="h-4 w-4 text-emerald-400" />
               <span>Seja Parceiro</span>
             </button>
             <button 
               onClick={() => setShowRegisterModal(true)}
-              className="flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm"
+              className="flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-500 text-white px-4 sm:px-5 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold transition-all shadow-lg shadow-indigo-600/30 border border-indigo-400/30"
             >
               <UserPlus className="h-4 w-4" />
-              <span>Quero ser Entregador</span>
+              <span className="hidden xs:inline">Quero ser</span> Entregador
             </button>
           </div>
         </div>
       </header>
 
       {/* Hero Section */}
-      <section className="bg-gradient-to-b from-indigo-50/50 to-white py-16 sm:py-24 border-b border-slate-100">
+      <section className="relative pt-12 sm:pt-20 pb-16 sm:pb-28 overflow-hidden border-b border-slate-800/80">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+          
+          {/* Lado Esquerdo: Textos & CTA */}
           <div className="lg:col-span-7 space-y-6 text-center lg:text-left">
-            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-800">
-              🚀 Gestão Inteligente de Delivery
-            </span>
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-slate-900 tracking-tight leading-none">
-              Conectando <span className="text-indigo-600">Entregadores</span> e <span className="text-indigo-600">Estabelecimentos</span>
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-black bg-indigo-950/80 text-indigo-300 border border-indigo-700/50 shadow-inner">
+              <span className="flex h-2 w-2 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              <span>Plataforma Inteligente de Escalas e Delivery</span>
+            </div>
+
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight leading-[1.1] text-white">
+              Controle Total de <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-indigo-200 to-emerald-400">Escalas & Entregas</span> em Tempo Real
             </h1>
-            <p className="text-lg text-slate-600 max-w-2xl mx-auto lg:mx-0">
-              O MotoHub é a plataforma definitiva para gerenciar escalas de motoqueiros, acompanhar faturamentos em tempo real e otimizar as entregas do seu negócio.
+
+            <p className="text-base sm:text-lg text-slate-300 max-w-2xl mx-auto lg:mx-0 leading-relaxed font-normal">
+              Conecte estabelecimentos gastronômicos a motoboys qualificados com rastreamento GPS contínuo, roteirização com menor percurso, link para cliente e fechamento financeiro transparente.
             </p>
-            <div className="flex flex-col sm:flex-row justify-center lg:justify-start gap-4 pt-2">
+
+            <div className="flex flex-col sm:flex-row justify-center lg:justify-start gap-3.5 pt-2">
               <button 
                 onClick={() => setShowRegisterModal(true)}
-                className="flex items-center justify-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3.5 rounded-xl font-semibold transition-all shadow-md hover:shadow-lg"
+                className="flex items-center justify-center space-x-2.5 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-600 text-white px-7 py-4 rounded-2xl font-black text-sm transition-all shadow-xl shadow-indigo-600/30 hover:scale-[1.02] border border-indigo-300/30"
               >
+                <Bike className="h-5 w-5" />
                 <span>Cadastrar como Entregador</span>
-                <ArrowRight className="h-5 w-5" />
+                <ArrowRight className="h-4 w-4 ml-1" />
               </button>
+              
               <button 
                 onClick={() => setShowEstModal(true)}
-                className="flex items-center justify-center space-x-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3.5 rounded-xl font-semibold transition-all shadow-md hover:shadow-lg"
+                className="flex items-center justify-center space-x-2 bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white px-6 py-4 rounded-2xl font-bold text-sm transition-all border border-slate-700 hover:border-slate-600 shadow-md"
               >
-                <Building2 className="h-5 w-5" />
+                <Building2 className="h-5 w-5 text-emerald-400" />
                 <span>Cadastrar Estabelecimento</span>
               </button>
             </div>
+
+            {/* Micro badges de garantia */}
+            <div className="pt-4 flex flex-wrap items-center justify-center lg:justify-start gap-5 text-xs text-slate-400">
+              <div className="flex items-center gap-1.5 font-semibold">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                <span>Sem Conflitos de Escala</span>
+              </div>
+              <div className="flex items-center gap-1.5 font-semibold">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                <span>GPS Ativo em Segundo Plano</span>
+              </div>
+              <div className="flex items-center gap-1.5 font-semibold">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                <span>Link Direto para o Cliente</span>
+              </div>
+            </div>
           </div>
+
+          {/* Lado Direito: Mockup Interativo Visual */}
           <div className="lg:col-span-5 flex justify-center">
             <div className="relative w-full max-w-md">
-              <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-2xl blur opacity-20"></div>
-              <div className="relative bg-white p-8 rounded-2xl shadow-xl border border-slate-100 space-y-6">
-                <h3 className="text-lg font-bold text-slate-900">Como funciona o MotoHub?</h3>
-                <div className="space-y-4">
-                  <div className="flex items-start space-x-3">
-                    <div className="bg-indigo-100 p-2 rounded-lg text-indigo-600 mt-0.5">
-                      <Store className="h-5 w-5" />
-                    </div>
+              <div className="absolute -inset-1.5 bg-gradient-to-r from-indigo-500 to-emerald-500 rounded-3xl blur-xl opacity-30 animate-pulse" />
+              
+              <div className="relative bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4">
+                
+                {/* Header Mock Card */}
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3.5">
+                  <div className="flex items-center space-x-2.5">
+                    <div className="w-3 h-3 rounded-full bg-red-500/80" />
+                    <div className="w-3 h-3 rounded-full bg-amber-500/80" />
+                    <div className="w-3 h-3 rounded-full bg-emerald-500/80" />
+                  </div>
+                  <span className="text-[11px] font-mono text-slate-400 bg-slate-950 px-2.5 py-1 rounded-full border border-slate-800 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                    GPS LIVE • MTO-1042
+                  </span>
+                </div>
+
+                {/* Pedido Ativo Simulação */}
+                <div className="bg-gradient-to-br from-indigo-950/80 to-slate-950 border border-indigo-800/40 p-4 rounded-2xl space-y-3">
+                  <div className="flex items-start justify-between">
                     <div>
-                      <h4 className="font-bold text-slate-800 text-sm">Parcerias Sólidas</h4>
-                      <p className="text-xs text-slate-500">Estabelecimentos cadastram suas demandas e turnos de entrega.</p>
+                      <span className="text-[10px] font-black uppercase text-indigo-400 bg-indigo-900/60 px-2 py-0.5 rounded-full">
+                        Em Trânsito
+                      </span>
+                      <h4 className="font-extrabold text-white text-base mt-1">Pedido #1042</h4>
+                      <p className="text-xs text-slate-400">Hamburgueria Burgrill • Bodocongó</p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs text-slate-400 block font-medium">Previsão</span>
+                      <span className="text-base font-black text-emerald-400">6 min</span>
                     </div>
                   </div>
-                  <div className="flex items-start space-x-3">
-                    <div className="bg-emerald-100 p-2 rounded-lg text-emerald-600 mt-0.5">
-                      <Clock className="h-5 w-5" />
+
+                  {/* Barra de Progresso */}
+                  <div className="space-y-1">
+                    <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                      <div className="bg-gradient-to-r from-indigo-500 to-emerald-400 h-full w-3/4 rounded-full animate-pulse" />
                     </div>
-                    <div>
-                      <h4 className="font-bold text-slate-800 text-sm">Escalas Inteligentes</h4>
-                      <p className="text-xs text-slate-500">Entregadores são escalados de forma justa e organizada por turnos.</p>
-                    </div>
-                  </div>
-                  <div className="flex items-start space-x-3">
-                    <div className="bg-blue-100 p-2 rounded-lg text-blue-600 mt-0.5">
-                      <DollarSign className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-slate-800 text-sm">Ganhos Transparentes</h4>
-                      <p className="text-xs text-slate-500">Acompanhamento de faturamento diário, semanal e mensal em tempo real.</p>
+                    <div className="flex justify-between text-[10px] font-mono text-slate-400">
+                      <span>Saída: 19:15</span>
+                      <span className="text-emerald-400 font-bold">75% Concluído</span>
+                      <span>Chegada: 19:21</span>
                     </div>
                   </div>
                 </div>
+
+                {/* Status Entregador */}
+                <div className="flex items-center justify-between p-3.5 bg-slate-950 border border-slate-800/80 rounded-2xl">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black text-sm shadow-md">
+                      M
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-white">Marcos Silva</p>
+                      <p className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                        Honda CG 160 • Online
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] text-slate-400 uppercase font-semibold">Hoje</p>
+                    <p className="text-xs font-black text-emerald-400">12 Corridas</p>
+                  </div>
+                </div>
+
+                {/* Features Mini Pills */}
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div className="p-2.5 bg-slate-950 border border-slate-800/60 rounded-xl flex items-center gap-2">
+                    <Compass className="h-4 w-4 text-indigo-400 flex-shrink-0" />
+                    <span className="text-[11px] font-bold text-slate-300">Roteirização 2-Opt</span>
+                  </div>
+                  <div className="p-2.5 bg-slate-950 border border-slate-800/60 rounded-xl flex items-center gap-2">
+                    <MessageSquare className="h-4 w-4 text-emerald-400 flex-shrink-0" />
+                    <span className="text-[11px] font-bold text-slate-300">Chat em Tempo Real</span>
+                  </div>
+                </div>
+
               </div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      {/* Metrics Bar */}
+      <section className="bg-slate-900 border-b border-slate-800/80 py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
+            <div className="space-y-1">
+              <p className="text-2xl sm:text-3xl font-black text-white tracking-tight">100%</p>
+              <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Sincronização em Tempo Real</p>
+            </div>
+            <div className="space-y-1">
+              <p className="text-2xl sm:text-3xl font-black text-emerald-400 tracking-tight">0 Conflitos</p>
+              <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Validação Automática de Escalas</p>
+            </div>
+            <div className="space-y-1">
+              <p className="text-2xl sm:text-3xl font-black text-indigo-400 tracking-tight">2 Horas</p>
+              <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Rastreio Ativo para o Cliente</p>
+            </div>
+            <div className="space-y-1">
+              <p className="text-2xl sm:text-3xl font-black text-amber-400 tracking-tight">2-Opt Pro</p>
+              <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Menor Percurso Garantido</p>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Features Section */}
-      <section className="py-16 sm:py-24 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center max-w-3xl mx-auto space-y-4 mb-16">
-            <h2 className="text-3xl font-bold text-slate-900 sm:text-4xl">Tudo o que você precisa em um só lugar</h2>
-            <p className="text-lg text-slate-500">Desenvolvido para facilitar a rotina de administradores e motoboys parceiros.</p>
+      {/* Interactive Tabs Section */}
+      <section className="py-16 sm:py-24 bg-slate-950">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+          
+          <div className="text-center max-w-3xl mx-auto space-y-3">
+            <h2 className="text-3xl sm:text-4xl font-black text-white tracking-tight">
+              Feito sob medida para toda a operação
+            </h2>
+            <p className="text-sm sm:text-base text-slate-400">
+              Escolha seu perfil e descubra como o MotoHub simplifica sua rotina diária:
+            </p>
+
+            {/* Toggle Tabs */}
+            <div className="flex justify-center pt-4">
+              <div className="bg-slate-900 p-1.5 rounded-2xl border border-slate-800 flex items-center space-x-1 shadow-lg">
+                <button
+                  onClick={() => setActiveFeatureTab('establishments')}
+                  className={`px-5 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold transition-all flex items-center gap-2 ${
+                    activeFeatureTab === 'establishments'
+                      ? 'bg-indigo-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Store className="h-4 w-4" />
+                  <span>Para Estabelecimentos</span>
+                </button>
+                <button
+                  onClick={() => setActiveFeatureTab('riders')}
+                  className={`px-5 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold transition-all flex items-center gap-2 ${
+                    activeFeatureTab === 'riders'
+                      ? 'bg-indigo-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Bike className="h-4 w-4" />
+                  <span>Para Entregadores</span>
+                </button>
+              </div>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="bg-slate-50 p-8 rounded-2xl border border-slate-100 space-y-4">
-              <div className="bg-indigo-600 text-white p-3 rounded-xl w-fit">
-                <Shield className="h-6 w-6" />
+          {/* Conteúdo Dinâmico das Abas */}
+          {activeFeatureTab === 'establishments' ? (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-slate-900 border border-slate-800 hover:border-indigo-500/50 p-6 rounded-3xl space-y-3 transition-all">
+                <div className="p-3 bg-indigo-600/10 text-indigo-400 rounded-2xl w-fit border border-indigo-500/20">
+                  <MapPin className="h-6 w-6" />
+                </div>
+                <h3 className="text-lg font-bold text-white">Central de Rastreamento ao Vivo</h3>
+                <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                  Acompanhe exatamente onde os motoboys escalados para a sua loja estão no mapa, garantindo despachos mais rápidos e previsíveis.
+                </p>
               </div>
-              <h3 className="text-xl font-bold text-slate-900">Segurança e Controle</h3>
-              <p className="text-slate-600 text-sm leading-relaxed">
-                Controle de acesso rígido por perfil. Bloqueio automático de contas após tentativas malsucedidas e expiração de sessão por inatividade.
-              </p>
-            </div>
 
-            <div className="bg-slate-50 p-8 rounded-2xl border border-slate-100 space-y-4">
-              <div className="bg-indigo-600 text-white p-3 rounded-xl w-fit">
-                <MapPin className="h-6 w-6" />
+              <div className="bg-slate-900 border border-slate-800 hover:border-emerald-500/50 p-6 rounded-3xl space-y-3 transition-all">
+                <div className="p-3 bg-emerald-600/10 text-emerald-400 rounded-2xl w-fit border border-emerald-500/20">
+                  <Share2 className="h-6 w-6" />
+                </div>
+                <h3 className="text-lg font-bold text-white">Link de Rastreio para o Cliente</h3>
+                <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                  Gere com um clique um link exclusivo para o cliente acompanhar o entregador chegando na porta de casa por até 2 horas.
+                </p>
               </div>
-              <h3 className="text-xl font-bold text-slate-900">Navegação Integrada</h3>
-              <p className="text-slate-600 text-sm leading-relaxed">
-                O entregador visualiza o endereço completo do estabelecimento escalado e pode abrir a rota diretamente no GPS padrão do celular com um clique.
-              </p>
-            </div>
 
-            <div className="bg-slate-50 p-8 rounded-2xl border border-slate-100 space-y-4">
-              <div className="bg-indigo-600 text-white p-3 rounded-xl w-fit">
-                <CheckCircle2 className="h-6 w-6" />
+              <div className="bg-slate-900 border border-slate-800 hover:border-purple-500/50 p-6 rounded-3xl space-y-3 transition-all">
+                <div className="p-3 bg-purple-600/10 text-purple-400 rounded-2xl w-fit border border-purple-500/20">
+                  <DollarSign className="h-6 w-6" />
+                </div>
+                <h3 className="text-lg font-bold text-white">Lançamento em Lote & Fechamento</h3>
+                <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                  Lance dezenas de entregas simultaneamente e tenha o fechamento financeiro do turno por motoboy pronto sem planilhas confusas.
+                </p>
               </div>
-              <h3 className="text-xl font-bold text-slate-900">Notificações Instantâneas</h3>
-              <p className="text-slate-600 text-sm leading-relaxed">
-                Avisos em tempo real no aplicativo sempre que uma escala for criada, alterada ou cancelada pelo administrador.
-              </p>
             </div>
-          </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-slate-900 border border-slate-800 hover:border-indigo-500/50 p-6 rounded-3xl space-y-3 transition-all">
+                <div className="p-3 bg-indigo-600/10 text-indigo-400 rounded-2xl w-fit border border-indigo-500/20">
+                  <Compass className="h-6 w-6" />
+                </div>
+                <h3 className="text-lg font-bold text-white">Navegador GPS Integrado</h3>
+                <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                  Digite ou fale os endereços das entregas e deixe o algoritmo 2-Opt calcular automaticamente a ordem mais curta para você economizar gasolina.
+                </p>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 hover:border-emerald-500/50 p-6 rounded-3xl space-y-3 transition-all">
+                <div className="p-3 bg-emerald-600/10 text-emerald-400 rounded-2xl w-fit border border-emerald-500/20">
+                  <Calendar className="h-6 w-6" />
+                </div>
+                <h3 className="text-lg font-bold text-white">Escalas Claras para os Próximos 30 Dias</h3>
+                <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                  Veja exatamente em quais lojas e turnos você trabalhará, com endereço completo, horários de início e término e avisos de alteração.
+                </p>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 hover:border-amber-500/50 p-6 rounded-3xl space-y-3 transition-all">
+                <div className="p-3 bg-amber-600/10 text-amber-400 rounded-2xl w-fit border border-amber-500/20">
+                  <TrendingUp className="h-6 w-6" />
+                </div>
+                <h3 className="text-lg font-bold text-white">Faturamento Transparente em Tempo Real</h3>
+                <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                  Acompanhe seus ganhos acumulados por dia e turno na hora, sem surpresas no momento de receber seus pagamentos.
+                </p>
+              </div>
+            </div>
+          )}
+
         </div>
       </section>
 
       {/* WhatsApp CTA Section */}
-      <section className="bg-emerald-600 text-white py-12 sm:py-16">
+      <section className="bg-gradient-to-br from-emerald-950 via-slate-900 to-slate-950 border-y border-emerald-900/40 py-14 sm:py-20 relative overflow-hidden">
         <div className="max-w-5xl mx-auto px-4 text-center space-y-6">
-          <h2 className="text-2xl sm:text-3xl font-extrabold">Quer fechar negócio agora mesmo?</h2>
-          <p className="text-emerald-100 max-w-xl mx-auto text-sm sm:text-base">
-            Fale diretamente com o nosso administrador no WhatsApp para tirar dúvidas, fechar parcerias e começar a usar o MotoHub hoje mesmo!
+          <div className="inline-flex items-center gap-2 bg-emerald-900/60 text-emerald-300 px-3.5 py-1.5 rounded-full text-xs font-extrabold border border-emerald-700/50">
+            <Sparkles className="h-3.5 w-3.5" />
+            <span>Atendimento Rápido e Descomplicado</span>
+          </div>
+
+          <h2 className="text-3xl sm:text-4xl font-black text-white">Pronto para acelerar suas entregas?</h2>
+          <p className="text-slate-300 max-w-xl mx-auto text-sm sm:text-base leading-relaxed">
+            Fale diretamente com nossa equipe no WhatsApp para tirar dúvidas, fechar parcerias ou tirar sua conta do papel hoje mesmo!
           </p>
+
           <button
             onClick={handleWhatsAppContact}
-            className="inline-flex items-center space-x-2 bg-white text-emerald-700 hover:bg-emerald-50 px-6 py-3 rounded-xl font-bold transition-all shadow-md hover:shadow-lg"
+            className="inline-flex items-center space-x-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-8 py-4 rounded-2xl font-black text-sm transition-all shadow-xl shadow-emerald-500/20 hover:scale-105"
           >
-            <MessageSquare className="h-5 w-5 text-emerald-600" />
+            <MessageSquare className="h-5 w-5 text-slate-950" />
             <span>Falar com Administrador no WhatsApp</span>
           </button>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="bg-slate-900 text-slate-400 py-12 mt-auto border-t border-slate-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="flex items-center space-x-3">
-            <div className="bg-indigo-600 p-1.5 rounded-lg">
-              <Bike className="h-5 w-5 text-white" />
+      <footer className="bg-slate-950 text-slate-500 py-10 mt-auto border-t border-slate-900">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
+          <div className="flex items-center space-x-2.5">
+            <div className="bg-indigo-600 p-1.5 rounded-lg text-white">
+              <Bike className="h-4 w-4" />
             </div>
-            <span className="text-lg font-bold text-white">MotoHub Delivery</span>
+            <span className="font-bold text-white text-sm">MotoHub Delivery</span>
           </div>
           
-          <p className="text-xs">
-            &copy; {new Date().getFullYear()} MotoHub Delivery. Todos os direitos reservados.
-          </p>
+          <p>&copy; {new Date().getFullYear()} MotoHub Delivery. Todos os direitos reservados.</p>
         </div>
       </footer>
 
       {/* Botão Flutuante do WhatsApp */}
       <button
         onClick={handleWhatsAppContact}
-        className="fixed bottom-6 right-6 bg-emerald-500 hover:bg-emerald-600 text-white p-4 rounded-full shadow-2xl transition-all hover:scale-110 z-50 flex items-center justify-center"
+        className="fixed bottom-6 right-6 bg-emerald-500 hover:bg-emerald-400 text-slate-950 p-4 rounded-full shadow-2xl transition-all hover:scale-110 z-50 flex items-center justify-center border-2 border-white/20"
         title="Fale Conosco no WhatsApp"
       >
         <MessageSquare className="h-6 w-6" />
@@ -411,303 +603,271 @@ export default function Landing() {
 
       {/* MODAL DE CADASTRO DE MOTOBOY */}
       {showRegisterModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl max-h-[95vh] overflow-y-auto">
-            <div className="flex justify-between items-center">
-              <h3 className="text-xl font-bold text-slate-900">
-                Cadastrar Novo Motoboy
-              </h3>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-slate-900 text-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-800 max-h-[95vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-indigo-600/20 text-indigo-400 rounded-xl">
+                  <UserPlus className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-white">Cadastro de Entregador</h3>
+                  <p className="text-[11px] text-slate-400">Junte-se à nossa rede de motoqueiros</p>
+                </div>
+              </div>
               <button 
-                onClick={() => {
-                  setShowRegisterModal(false);
-                  setError('');
-                  setSuccess(false);
-                }} 
-                className="text-slate-400 hover:text-slate-600 transition-colors"
+                onClick={() => { setShowRegisterModal(false); setError(''); setSuccess(false); }} 
+                className="text-slate-400 hover:text-white p-1"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
             {error && (
-              <div className="bg-red-50 border-l-4 border-red-500 p-3 rounded text-xs text-red-700 font-medium">
-                {error}
-              </div>
-            )}
-
-            {success && (
-              <div className="bg-emerald-50 border-l-4 border-emerald-500 p-3 rounded text-xs text-emerald-700 font-medium">
-                Cadastro realizado com sucesso! Seu cadastro está pendente de aprovação do administrador. Você será notificado quando for aprovado.
-              </div>
-            )}
-
-            <form onSubmit={handleRegister} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Nome Completo</label>
-                <input
-                  type="text"
-                  required
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">CPF</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="000.000.000-00"
-                  value={form.cpf}
-                  onChange={(e) => setForm({ ...form, cpf: e.target.value })}
-                  className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Telefone</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="(11) 99999-9999"
-                  value={form.phone}
-                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                  className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">E-mail</label>
-                <input
-                  type="email"
-                  required
-                  value={form.email}
-                  onChange={(e) => setForm({ ...form, email: e.target.value })}
-                  className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Senha Inicial</label>
-                <input
-                  type="password"
-                  required
-                  value={form.password}
-                  onChange={(e) => setForm({ ...form, password: e.target.value })}
-                  className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                />
-              </div>
-              <div className="flex justify-end space-x-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowRegisterModal(false);
-                    setError('');
-                    setSuccess(false);
-                  }}
-                  className="px-5 py-2.5 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-medium transition-colors shadow-sm"
-                >
-                  Salvar
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL DE CADASTRO DE ESTABELECIMENTO COM ENDEREÇO DESMEMBRADO */}
-      {showEstModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl max-h-[95vh] overflow-y-auto">
-            <div className="flex justify-between items-center">
-              <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                <Building2 className="h-5 w-5 text-emerald-600" />
-                Seja um Estabelecimento Parceiro
-              </h3>
-              <button 
-                onClick={() => {
-                  setShowEstModal(false);
-                  setError('');
-                  setSuccess(false);
-                }} 
-                className="text-slate-400 hover:text-slate-600 transition-colors"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            {error && (
-              <div className="bg-red-50 border-l-4 border-red-500 p-3 rounded text-xs text-red-700 font-medium">
+              <div className="bg-red-950/80 border border-red-800 p-3 rounded-xl text-xs text-red-300 font-bold">
                 {error}
               </div>
             )}
 
             {success ? (
-              <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl text-center space-y-3">
-                <UserCheck className="h-12 w-12 text-emerald-600 mx-auto" />
-                <h4 className="font-bold text-emerald-800">Solicitação Enviada!</h4>
-                <p className="text-xs text-emerald-700">
-                  Seus dados foram enviados com sucesso para o nosso painel administrativo. Assim que o administrador aprovar, você poderá acessar o sistema com seu e-mail e senha!
+              <div className="bg-emerald-950/60 border border-emerald-800/80 p-5 rounded-2xl text-center space-y-2">
+                <ShieldCheck className="h-10 w-10 text-emerald-400 mx-auto" />
+                <h4 className="font-bold text-white text-sm">Cadastro Enviado com Sucesso!</h4>
+                <p className="text-xs text-emerald-300">
+                  Seus dados foram salvos. O administrador irá aprovar sua conta em breve para liberar seu acesso.
                 </p>
               </div>
             ) : (
-              <form onSubmit={handleEstRegister} className="space-y-4">
+              <form onSubmit={handleRegister} className="space-y-3.5 text-xs">
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Nome do Estabelecimento</label>
+                  <label className="block font-bold text-slate-400 uppercase mb-1">Nome Completo</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: João da Silva"
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-400 uppercase mb-1">CPF</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="000.000.000-00"
+                    value={form.cpf}
+                    onChange={(e) => setForm({ ...form, cpf: e.target.value })}
+                    className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-400 uppercase mb-1">WhatsApp / Telefone</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="(83) 99999-9999"
+                    value={form.phone}
+                    onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                    className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-400 uppercase mb-1">E-mail</label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="joao@gmail.com"
+                    value={form.email}
+                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                    className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-400 uppercase mb-1">Senha Inicial</label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="••••••••"
+                    value={form.password}
+                    onChange={(e) => setForm({ ...form, password: e.target.value })}
+                    className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div className="flex justify-end space-x-2 pt-2 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowRegisterModal(false)}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-xl font-bold text-slate-300"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black shadow-lg"
+                  >
+                    Concluir Cadastro
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE CADASTRO DE ESTABELECIMENTO */}
+      {showEstModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-slate-900 text-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-800 max-h-[95vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-emerald-600/20 text-emerald-400 rounded-xl">
+                  <Building2 className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-white">Seja um Parceiro</h3>
+                  <p className="text-[11px] text-slate-400">Cadastre seu restaurante ou loja</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => { setShowEstModal(false); setError(''); setSuccess(false); }} 
+                className="text-slate-400 hover:text-white p-1"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {error && (
+              <div className="bg-red-950/80 border border-red-800 p-3 rounded-xl text-xs text-red-300 font-bold">
+                {error}
+              </div>
+            )}
+
+            {success ? (
+              <div className="bg-emerald-950/60 border border-emerald-800/80 p-5 rounded-2xl text-center space-y-2">
+                <UserCheck className="h-10 w-10 text-emerald-400 mx-auto" />
+                <h4 className="font-bold text-white text-sm">Solicitação Enviada!</h4>
+                <p className="text-xs text-emerald-300">
+                  Seus dados foram enviados. O administrador liberará seu acesso para você gerenciar seus entregadores.
+                </p>
+              </div>
+            ) : (
+              <form onSubmit={handleEstRegister} className="space-y-3.5 text-xs">
+                <div>
+                  <label className="block font-bold text-slate-400 uppercase mb-1">Nome do Estabelecimento</label>
                   <input
                     type="text"
                     required
                     placeholder="Ex: Hamburgueria Burgrill"
                     value={estForm.establishmentName}
                     onChange={(e) => setEstForm({ ...estForm, establishmentName: e.target.value })}
-                    className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                    className="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500"
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Nome do Proprietário</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ex: João Silva"
-                    value={estForm.ownerName}
-                    onChange={(e) => setEstForm({ ...estForm, ownerName: e.target.value })}
-                    className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Telefone para Contato</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ex: (83) 99999-9999"
-                    value={estForm.phone}
-                    onChange={(e) => setEstForm({ ...estForm, phone: e.target.value })}
-                    className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-                  />
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block font-bold text-slate-400 uppercase mb-1">Nome do Gerente</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ex: Carlos"
+                      value={estForm.ownerName}
+                      onChange={(e) => setEstForm({ ...estForm, ownerName: e.target.value })}
+                      className="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-400 uppercase mb-1">Telefone WhatsApp</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="(83) 99999-9999"
+                      value={estForm.phone}
+                      onChange={(e) => setEstForm({ ...estForm, phone: e.target.value })}
+                      className="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
                 </div>
 
-                {/* Endereço Desmembrado */}
-                <div className="border-t border-slate-100 pt-3 space-y-3">
-                  <p className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Endereço do Estabelecimento</p>
+                <div className="border-t border-slate-800 pt-3 space-y-2">
+                  <p className="text-[11px] font-black text-emerald-400 uppercase tracking-wider">Endereço da Loja</p>
                   
                   <div className="grid grid-cols-3 gap-2">
                     <div className="col-span-2">
-                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">CEP (Auto-completar)</label>
+                      <label className="block font-bold text-slate-400 uppercase mb-1">CEP</label>
                       <input
                         type="text"
                         required
-                        placeholder="Ex: 58429-900"
+                        placeholder="58429-900"
                         value={estForm.zipCode}
                         onChange={(e) => setEstForm({ ...estForm, zipCode: e.target.value })}
                         onBlur={handleCepBlur}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                        className="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Número</label>
+                      <label className="block font-bold text-slate-400 uppercase mb-1">Número</label>
                       <input
                         type="text"
                         required
-                        placeholder="Ex: 882"
+                        placeholder="100"
                         value={estForm.number}
                         onChange={(e) => setEstForm({ ...estForm, number: e.target.value })}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                        className="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Rua / Logradouro</label>
+                    <label className="block font-bold text-slate-400 uppercase mb-1">Rua / Bairro</label>
                     <input
                       type="text"
                       required
-                      placeholder="Ex: Rua Aprígio Veloso"
+                      placeholder="Rua Aprígio Veloso, Bodocongó"
                       value={estForm.street}
                       onChange={(e) => setEstForm({ ...estForm, street: e.target.value })}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="col-span-2">
-                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Bairro</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="Ex: Bodocongó"
-                        value={estForm.neighborhood}
-                        onChange={(e) => setEstForm({ ...estForm, neighborhood: e.target.value })}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Estado</label>
-                      <input
-                        type="text"
-                        required
-                        maxLength={2}
-                        placeholder="PB"
-                        value={estForm.state}
-                        onChange={(e) => setEstForm({ ...estForm, state: e.target.value })}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Cidade</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Ex: Campina Grande"
-                      value={estForm.city}
-                      onChange={(e) => setEstForm({ ...estForm, city: e.target.value })}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                      className="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500"
                     />
                   </div>
                 </div>
 
-                {/* Credenciais de Acesso */}
-                <div className="border-t border-slate-100 pt-3 space-y-3">
-                  <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider">Credenciais de Acesso do Gerente</p>
+                <div className="border-t border-slate-800 pt-3 space-y-2">
+                  <p className="text-[11px] font-black text-indigo-400 uppercase tracking-wider">Credenciais de Login</p>
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">E-mail de Login</label>
+                    <label className="block font-bold text-slate-400 uppercase mb-1">E-mail de Acesso</label>
                     <input
                       type="email"
                       required
-                      placeholder="gerente@estabelecimento.com"
+                      placeholder="gerente@burgrill.com"
                       value={estForm.email}
                       onChange={(e) => setEstForm({ ...estForm, email: e.target.value })}
-                      className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                      className="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-indigo-500"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Senha de Acesso</label>
+                    <label className="block font-bold text-slate-400 uppercase mb-1">Senha</label>
                     <input
                       type="password"
                       required
                       placeholder="••••••••"
                       value={estForm.password}
                       onChange={(e) => setEstForm({ ...estForm, password: e.target.value })}
-                      className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                      className="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-indigo-500"
                     />
                   </div>
                 </div>
 
-                <div className="flex justify-end space-x-2 pt-3">
+                <div className="flex justify-end space-x-2 pt-2 border-t border-slate-800">
                   <button
                     type="button"
                     onClick={() => setShowEstModal(false)}
-                    className="px-5 py-2.5 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-xl font-bold text-slate-300"
                   >
                     Cancelar
                   </button>
                   <button
                     type="submit"
-                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium transition-colors shadow-sm"
+                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black shadow-lg"
                   >
                     Enviar Solicitação
                   </button>
@@ -717,6 +877,7 @@ export default function Landing() {
           </div>
         </div>
       )}
+
     </div>
   );
 }
