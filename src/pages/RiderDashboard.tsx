@@ -433,7 +433,7 @@ export default function RiderDashboard() {
     );
   };
 
-  const handleLaunchDelivery = (e: React.FormEvent) => {
+  const handleLaunchDelivery = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
 
@@ -443,7 +443,7 @@ export default function RiderDashboard() {
       return;
     }
 
-    const cleanOrderNumber = launchForm.orderNumber.trim();
+    const cleanOrderNumber = launchForm.orderNumber.trim().replace('#', '');
     if (!cleanOrderNumber) {
       alert('Erro: O número do pedido é obrigatório.');
       return;
@@ -454,30 +454,14 @@ export default function RiderDashboard() {
       return;
     }
 
-    const allDeliveries = db.getDeliveries();
-
     // Validação de duplicidade: impede que o mesmo pedido seja lançado mais de uma vez hoje por qualquer motoboy
-    const duplicateDelivery = allDeliveries.find(d => {
-      if (editingDelivery && d.id === editingDelivery.id) return false;
-      if (d.status === 'cancelled') return false;
-
-      const dOrderNum = (d.orderNumber || '').trim();
-      if (!dOrderNum) return false;
-
-      const opDate = getDeliveryOperationalDate(d.date, d.time);
-      const isToday = isSameDayString(opDate, operationalTodayStr);
-
-      return isToday && dOrderNum === cleanOrderNumber;
-    });
-
-    if (duplicateDelivery) {
-      const duplicateRider = db.resolveUser(duplicateDelivery.riderId);
-      const isMe = duplicateDelivery.riderId === user.id;
-      const riderName = isMe ? 'por você' : `pelo motoboy "${duplicateRider?.name || 'Outro entregador'}"`;
-      alert(`⚠️ Erro: O pedido #${cleanOrderNumber} já foi lançado hoje ${riderName}.\n\nNão é permitido lançar mais de uma corrida com o mesmo número de pedido.`);
+    const dupCheck = db.checkDuplicateOrderNumber(cleanOrderNumber, operationalTodayStr, new Date().toTimeString().slice(0, 5), editingDelivery?.id);
+    if (dupCheck.isDuplicate) {
+      alert(`⚠️ Erro: O pedido #${cleanOrderNumber} já foi lançado hoje por ${dupCheck.riderName}.\n\nNão é permitido lançar mais de uma corrida com o mesmo número de pedido.`);
       return;
     }
 
+    const allDeliveries = db.getDeliveries();
     const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && isSameDayString(s.date, operationalTodayStr));
     const nowStr = new Date().toISOString();
 
@@ -492,7 +476,7 @@ export default function RiderDashboard() {
         updatedAt: nowStr
       } : d);
 
-      db.setDeliveries(updated);
+      await db.setDeliveries(updated);
       alert('Corrida atualizada com sucesso!');
     } else {
       const newDelivery: Delivery = {
@@ -509,7 +493,7 @@ export default function RiderDashboard() {
         updatedAt: nowStr
       };
 
-      db.setDeliveries([...allDeliveries, newDelivery]);
+      await db.setDeliveries([...allDeliveries, newDelivery]);
       alert(`🎉 Corrida #${cleanOrderNumber} lançada com sucesso! Aguardando aprovação.`);
     }
 
