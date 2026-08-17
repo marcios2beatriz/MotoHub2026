@@ -735,6 +735,15 @@ export default function AdminDashboard() {
       return;
     }
 
+    const cleanOrderNumber = deliveryForm.orderNumber.trim().replace('#', '');
+    if (cleanOrderNumber) {
+      const dupCheck = db.checkDuplicateOrderNumber(cleanOrderNumber, deliveryForm.date, deliveryForm.time, editingDelivery?.id);
+      if (dupCheck.isDuplicate) {
+        alert(`⚠️ Erro: O pedido #${cleanOrderNumber} já foi lançado hoje por ${dupCheck.riderName}.\n\nNão é permitido lançar mais de uma corrida com o mesmo número de pedido.`);
+        return;
+      }
+    }
+
     const activeSchedule = schedules.find(s => s.riderId === deliveryForm.riderId && s.establishmentId === deliveryForm.establishmentId && s.date === deliveryForm.date);
     const nowStr = new Date().toISOString();
 
@@ -747,7 +756,7 @@ export default function AdminDashboard() {
         time: deliveryForm.time,
         value: val,
         scheduleId: activeSchedule?.id || d.scheduleId,
-        orderNumber: deliveryForm.orderNumber.trim() || undefined,
+        orderNumber: cleanOrderNumber || undefined,
         notes: deliveryForm.notes.trim() || undefined,
         updatedAt: nowStr
       } : d);
@@ -762,7 +771,7 @@ export default function AdminDashboard() {
         value: val,
         status: 'active',
         scheduleId: activeSchedule?.id,
-        orderNumber: deliveryForm.orderNumber.trim() || undefined,
+        orderNumber: cleanOrderNumber || undefined,
         notes: deliveryForm.notes.trim() || undefined,
         updatedAt: nowStr,
         paid: false

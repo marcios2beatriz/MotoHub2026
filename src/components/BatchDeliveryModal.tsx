@@ -216,6 +216,47 @@ export default function BatchDeliveryModal({
       return;
     }
 
+    // 1. Validação de duplicidade dentro do próprio lote
+    const seenBatchNumbers = new Set<string>();
+    const internalDuplicates: string[] = [];
+
+    for (const r of validRows) {
+      const num = r.orderNumber.trim().replace('#', '');
+      if (num) {
+        if (seenBatchNumbers.has(num)) {
+          internalDuplicates.push(num);
+        } else {
+          seenBatchNumbers.add(num);
+        }
+      }
+    }
+
+    if (internalDuplicates.length > 0) {
+      alert(`⚠️ Erro: Existem números de pedidos duplicados dentro da própria tabela de lançamento:\n\n• Pedido(s): #${internalDuplicates.join(', #')}\n\nCada corrida deve possuir um número exclusivo.`);
+      return;
+    }
+
+    // 2. Validação de duplicidade contra o banco de dados do dia operacional
+    const dbDuplicates: { orderNumber: string; riderName: string }[] = [];
+    for (const r of validRows) {
+      const num = r.orderNumber.trim().replace('#', '');
+      if (num) {
+        const check = db.checkDuplicateOrderNumber(num, r.date, r.time);
+        if (check.isDuplicate) {
+          dbDuplicates.push({
+            orderNumber: num,
+            riderName: check.riderName || 'Outro entregador'
+          });
+        }
+      }
+    }
+
+    if (dbDuplicates.length > 0) {
+      const details = dbDuplicates.map(d => `• Pedido #${d.orderNumber} (já lançado por ${d.riderName})`).join('\n');
+      alert(`⚠️ Erro: Os seguintes pedidos já foram lançados hoje no sistema:\n\n${details}\n\nNenhum pedido pode ser lançado mais de uma vez no mesmo dia.`);
+      return;
+    }
+
     setIsSaving(true);
     try {
       const allDeliveries = db.getDeliveries();
@@ -242,7 +283,7 @@ export default function BatchDeliveryModal({
           value: val,
           status: globalStatus,
           scheduleId: matchSchedule?.id,
-          orderNumber: r.orderNumber.trim() || undefined,
+          orderNumber: r.orderNumber.trim() ? r.orderNumber.trim().replace('#', '') : undefined,
           notes: r.notes.trim() || undefined,
           updatedAt: nowStr,
           paid: false

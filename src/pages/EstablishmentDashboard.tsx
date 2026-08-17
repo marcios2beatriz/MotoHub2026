@@ -381,6 +381,15 @@ export default function EstablishmentDashboard() {
       return;
     }
 
+    const cleanOrderNumber = deliveryForm.orderNumber.trim().replace('#', '');
+    if (cleanOrderNumber) {
+      const dupCheck = db.checkDuplicateOrderNumber(cleanOrderNumber, deliveryForm.date, deliveryForm.time, editingDelivery?.id);
+      if (dupCheck.isDuplicate) {
+        alert(`⚠️ Erro: O pedido #${cleanOrderNumber} já foi lançado hoje por ${dupCheck.riderName}.\n\nNão é permitido lançar mais de uma corrida com o mesmo número de pedido.`);
+        return;
+      }
+    }
+
     const allDeliveries = db.getDeliveries();
     const nowStr = new Date().toISOString();
 
@@ -391,7 +400,7 @@ export default function EstablishmentDashboard() {
         date: deliveryForm.date,
         time: deliveryForm.time,
         value: val,
-        orderNumber: deliveryForm.orderNumber.trim() || undefined,
+        orderNumber: cleanOrderNumber || undefined,
         notes: deliveryForm.notes.trim() || undefined,
         updatedAt: nowStr
       } : d);
@@ -405,7 +414,7 @@ export default function EstablishmentDashboard() {
         time: deliveryForm.time,
         value: val,
         status: 'active',
-        orderNumber: deliveryForm.orderNumber.trim() || undefined,
+        orderNumber: cleanOrderNumber || undefined,
         notes: deliveryForm.notes.trim() || undefined,
         updatedAt: nowStr,
         paid: false

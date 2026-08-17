@@ -161,6 +161,36 @@ export const db = {
   isSameDayString,
   getDeliveryOperationalDate,
 
+  // Verifica se o número do pedido já foi lançado no mesmo dia operacional por qualquer motoboy
+  checkDuplicateOrderNumber(orderNumber: string, date: string, time: string = '12:00', excludeDeliveryId?: string): { isDuplicate: boolean; duplicateDelivery?: Delivery; riderName?: string } {
+    const cleanNumber = orderNumber.trim().replace('#', '');
+    if (!cleanNumber) return { isDuplicate: false };
+
+    const targetOpDate = getDeliveryOperationalDate(date, time);
+
+    const duplicate = memoryDeliveries.find(d => {
+      if (excludeDeliveryId && d.id === excludeDeliveryId) return false;
+      if (d.status === 'cancelled') return false;
+
+      const dNumber = (d.orderNumber || '').trim().replace('#', '');
+      if (!dNumber || dNumber !== cleanNumber) return false;
+
+      const dOpDate = getDeliveryOperationalDate(d.date, d.time);
+      return isSameDayString(dOpDate, targetOpDate);
+    });
+
+    if (duplicate) {
+      const rider = this.resolveUser(duplicate.riderId);
+      return {
+        isDuplicate: true,
+        duplicateDelivery: duplicate,
+        riderName: rider?.name || 'Outro entregador'
+      };
+    }
+
+    return { isDuplicate: false };
+  },
+
   // --- SESSÃO DO USUÁRIO ATIVO ---
   getCurrentUser(): User | null {
     try {
