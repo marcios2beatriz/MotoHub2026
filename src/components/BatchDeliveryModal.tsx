@@ -49,85 +49,126 @@ export default function BatchDeliveryModal({
   const [showPasteMode, setShowPasteMode] = useState(false);
   const [pastedText, setPastedText] = useState('');
 
-  // Linhas do lote
-  const createEmptyRow = (timeOverride?: string, riderOverride?: string, estOverride?: string, dateOverride?: string): BatchRow => ({
-    id: 'row_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-    riderId: riderOverride || globalRiderId || (activeRiders[0]?.id || ''),
-    establishmentId: estOverride || globalEstId || (activeEsts[0]?.id || ''),
-    date: dateOverride || globalDate || db.getOperationalDateString(),
-    time: timeOverride || globalStartTime || '18:00',
-    value: '',
-    orderNumber: '',
-    notes: ''
-  });
-
   const [rows, setRows] = useState<BatchRow[]>([]);
 
-  const resetToEmptyBatch = (riderId?: string, estId?: string, dateStr?: string) => {
-    const initialRider = riderId || defaultRiderId || (activeRiders[0]?.id || '');
-    const initialEst = estId || defaultEstablishmentId || (activeEsts[0]?.id || '');
+  // Função para reiniciar o lote com os valores padrão preenchidos em todas as linhas
+  const resetToEmptyBatch = (riderId?: string, estId?: string, dateStr?: string, startTimeStr?: string) => {
+    const initialRider = riderId !== undefined ? riderId : (defaultRiderId || (activeRiders[0]?.id || ''));
+    const initialEst = estId !== undefined ? estId : (defaultEstablishmentId || (activeEsts[0]?.id || ''));
     const initialDate = dateStr || db.getOperationalDateString();
+    const initialTime = startTimeStr || '18:00';
 
     setGlobalRiderId(initialRider);
     setGlobalEstId(initialEst);
     setGlobalDate(initialDate);
-    setGlobalStartTime('18:00');
+    setGlobalStartTime(initialTime);
     setPastedText('');
     setShowPasteMode(false);
 
-    setRows([
-      createEmptyRow('18:00', initialRider, initialEst, initialDate),
-      createEmptyRow('18:15', initialRider, initialEst, initialDate),
-      createEmptyRow('18:30', initialRider, initialEst, initialDate),
-      createEmptyRow('18:45', initialRider, initialEst, initialDate),
-      createEmptyRow('19:00', initialRider, initialEst, initialDate)
-    ]);
+    const [startH, startM] = initialTime.split(':').map(Number);
+
+    const initialRows: BatchRow[] = [0, 15, 30, 45, 60].map((offsetMins, idx) => {
+      const totalMins = (((startH || 18) * 60 + (startM || 0)) + offsetMins) % 1440;
+      const hStr = String(Math.floor(totalMins / 60)).padStart(2, '0');
+      const mStr = String(totalMins % 60).padStart(2, '0');
+      return {
+        id: 'row_' + Date.now() + '_' + idx + '_' + Math.random().toString(36).substring(2, 6),
+        riderId: initialRider,
+        establishmentId: initialEst,
+        date: initialDate,
+        time: `${hStr}:${mStr}`,
+        value: '',
+        orderNumber: '',
+        notes: ''
+      };
+    });
+
+    setRows(initialRows);
   };
 
-  // Toda vez que o modal abre (isOpen vira true), limpa completamente para dados em branco
+  // Toda vez que o modal abre, reseta e pré-preenche com o motoboy e estabelecimento padrão
   useEffect(() => {
     if (isOpen) {
       resetToEmptyBatch();
     }
-  }, [isOpen]);
+  }, [isOpen, defaultRiderId, defaultEstablishmentId]);
 
-  // Atualização automática ao mudar motoboy global
+  // Atualização automática ao mudar motoboy global -> reflete imediatamente em todas as linhas da tabela
   const handleGlobalRiderChange = (newRiderId: string) => {
     setGlobalRiderId(newRiderId);
     setRows(prev => prev.map(r => ({ ...r, riderId: newRiderId })));
   };
 
-  // Atualização automática ao mudar estabelecimento global
+  // Atualização automática ao mudar estabelecimento global -> reflete imediatamente em todas as linhas da tabela
   const handleGlobalEstChange = (newEstId: string) => {
     setGlobalEstId(newEstId);
     setRows(prev => prev.map(r => ({ ...r, establishmentId: newEstId })));
   };
 
-  // Atualização automática ao mudar data global
+  // Atualização automática ao mudar data global -> reflete imediatamente em todas as linhas da tabela
   const handleGlobalDateChange = (newDate: string) => {
     setGlobalDate(newDate);
     setRows(prev => prev.map(r => ({ ...r, date: newDate })));
   };
 
+  // Atualização automática ao mudar horário inicial -> recalcula a sequência horária das linhas
+  const handleGlobalStartTimeChange = (newStartTime: string) => {
+    setGlobalStartTime(newStartTime);
+    const [startH, startM] = (newStartTime || '18:00').split(':').map(Number);
+    setRows(prev => prev.map((r, idx) => {
+      const totalMins = (((startH || 18) * 60 + (startM || 0)) + idx * 15) % 1440;
+      const nextH = String(Math.floor(totalMins / 60)).padStart(2, '0');
+      const nextM = String(totalMins % 60).padStart(2, '0');
+      return {
+        ...r,
+        time: `${nextH}:${nextM}`
+      };
+    }));
+  };
+
   if (!isOpen) return null;
 
   const handleAddRow = () => {
-    const lastRow = rows[rows.length - 1];
     let nextTime = '19:00';
-    if (lastRow && lastRow.time) {
-      const [h, m] = lastRow.time.split(':').map(Number);
-      const totalMins = ((h || 18) * 60 + (m || 0) + 15) % 1440;
-      const nextH = String(Math.floor(totalMins / 60)).padStart(2, '0');
-      const nextM = String(totalMins % 60).padStart(2, '0');
-      nextTime = `${nextH}:${nextM}`;
+    if (rows.length > 0) {
+      const lastRow = rows[rows.length - 1];
+      if (lastRow && lastRow.time) {
+        const [h, m] = lastRow.time.split(':').map(Number);
+        const totalMins = ((h || 18) * 60 + (m || 0) + 15) % 1440;
+        const nextH = String(Math.floor(totalMins / 60)).padStart(2, '0');
+        const nextM = String(totalMins % 60).padStart(2, '0');
+        nextTime = `${nextH}:${nextM}`;
+      }
+    } else {
+      nextTime = globalStartTime || '18:00';
     }
-    setRows(prev => [...prev, createEmptyRow(nextTime, globalRiderId, globalEstId, globalDate)]);
+
+    const newRow: BatchRow = {
+      id: 'row_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      riderId: globalRiderId || (activeRiders[0]?.id || ''),
+      establishmentId: globalEstId || (activeEsts[0]?.id || ''),
+      date: globalDate || db.getOperationalDateString(),
+      time: nextTime,
+      value: '',
+      orderNumber: '',
+      notes: ''
+    };
+
+    setRows(prev => [...prev, newRow]);
   };
 
   const handleRemoveRow = (id: string) => {
     if (rows.length === 1) {
-      // Se remover a última linha, apenas limpa os valores dela
-      setRows([createEmptyRow('18:00', globalRiderId, globalEstId, globalDate)]);
+      setRows([{
+        id: 'row_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+        riderId: globalRiderId || (activeRiders[0]?.id || ''),
+        establishmentId: globalEstId || (activeEsts[0]?.id || ''),
+        date: globalDate || db.getOperationalDateString(),
+        time: globalStartTime || '18:00',
+        value: '',
+        orderNumber: '',
+        notes: ''
+      }]);
       return;
     }
     setRows(prev => prev.filter(r => r.id !== id));
@@ -138,9 +179,9 @@ export default function BatchDeliveryModal({
   };
 
   const handleApplyGlobalSettings = () => {
+    const [startH, startM] = (globalStartTime || '18:00').split(':').map(Number);
     setRows(prev => prev.map((r, idx) => {
-      const [h, m] = globalStartTime.split(':').map(Number);
-      const totalMins = (((h || 18) * 60 + (m || 0)) + idx * 15) % 1440;
+      const totalMins = (((startH || 18) * 60 + (startM || 0)) + idx * 15) % 1440;
       const nextH = String(Math.floor(totalMins / 60)).padStart(2, '0');
       const nextM = String(totalMins % 60).padStart(2, '0');
 
@@ -161,7 +202,7 @@ export default function BatchDeliveryModal({
     const lines = pastedText.split('\n').map(l => l.trim()).filter(Boolean);
     const parsedRows: BatchRow[] = [];
 
-    const [startH, startM] = globalStartTime.split(':').map(Number);
+    const [startH, startM] = (globalStartTime || '18:00').split(':').map(Number);
 
     lines.forEach((line, idx) => {
       const cleanLine = line.replace(/R\$/g, '').trim();
@@ -188,9 +229,9 @@ export default function BatchDeliveryModal({
       if (val) {
         parsedRows.push({
           id: 'row_' + Date.now() + '_' + idx,
-          riderId: globalRiderId,
-          establishmentId: globalEstId,
-          date: globalDate,
+          riderId: globalRiderId || (activeRiders[0]?.id || ''),
+          establishmentId: globalEstId || (activeEsts[0]?.id || ''),
+          date: globalDate || db.getOperationalDateString(),
           time: timeStr,
           value: val,
           orderNumber: orderNum,
@@ -275,7 +316,6 @@ export default function BatchDeliveryModal({
         const val = parseFloat(r.value.replace(',', '.'));
         const operationalDate = r.date || db.getOperationalDateString();
 
-        // Tenta associar com escala existente do turno
         const matchSchedule = schedules.find(s => 
           db.isSameUser(s.riderId, r.riderId) &&
           db.isSameEstablishment(s.establishmentId, r.establishmentId) &&
@@ -300,9 +340,7 @@ export default function BatchDeliveryModal({
 
       await db.setDeliveries([...allDeliveries, ...newDeliveries]);
       
-      // Limpa os campos para o próximo lançamento
       resetToEmptyBatch();
-
       onSaved();
       onClose();
 
@@ -357,9 +395,9 @@ export default function BatchDeliveryModal({
             <div className="flex items-center space-x-2">
               <button
                 type="button"
-                onClick={() => resetToEmptyBatch(globalRiderId, globalEstId, globalDate)}
+                onClick={() => resetToEmptyBatch(globalRiderId, globalEstId, globalDate, globalStartTime)}
                 className="text-xs font-bold text-slate-500 hover:text-red-600 flex items-center gap-1 transition-colors mr-1"
-                title="Limpar todos os campos e voltar ao início"
+                title="Limpar e reiniciar todas as linhas"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
                 <span>Limpar Tabela</span>
@@ -426,7 +464,7 @@ export default function BatchDeliveryModal({
               <input
                 type="time"
                 value={globalStartTime}
-                onChange={(e) => setGlobalStartTime(e.target.value)}
+                onChange={(e) => handleGlobalStartTimeChange(e.target.value)}
                 className="w-full px-2 py-1.5 border border-slate-300 rounded-lg bg-white font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               />
             </div>
