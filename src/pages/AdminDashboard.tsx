@@ -1905,7 +1905,7 @@ export default function AdminDashboard() {
                 <div>
                   <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                     <Bike className="h-6 w-6 text-indigo-600" />
-                    <span>Registro e Controle de Corridas</span>
+                    <span>Registro e Controle de Corridas ({filteredAndSortedDeliveries.length})</span>
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">Visualize, filtre e gerencie todas as entregas do sistema</p>
                 </div>
