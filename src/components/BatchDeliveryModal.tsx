@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Layers, Check, Sparkles, FileText, Loader2 } from 'lucide-react';
+import { X, Plus, Trash2, Layers, Check, Sparkles, FileText, Loader2, RotateCcw } from 'lucide-react';
 import { User, Establishment, Delivery, db } from '../utils/db';
 
 interface BatchRow {
@@ -63,26 +63,33 @@ export default function BatchDeliveryModal({
 
   const [rows, setRows] = useState<BatchRow[]>([]);
 
-  // Inicializa e sincroniza linhas quando o modal abre ou os dados mudam
+  const resetToEmptyBatch = (riderId?: string, estId?: string, dateStr?: string) => {
+    const initialRider = riderId || defaultRiderId || (activeRiders[0]?.id || '');
+    const initialEst = estId || defaultEstablishmentId || (activeEsts[0]?.id || '');
+    const initialDate = dateStr || db.getOperationalDateString();
+
+    setGlobalRiderId(initialRider);
+    setGlobalEstId(initialEst);
+    setGlobalDate(initialDate);
+    setGlobalStartTime('18:00');
+    setPastedText('');
+    setShowPasteMode(false);
+
+    setRows([
+      createEmptyRow('18:00', initialRider, initialEst, initialDate),
+      createEmptyRow('18:15', initialRider, initialEst, initialDate),
+      createEmptyRow('18:30', initialRider, initialEst, initialDate),
+      createEmptyRow('18:45', initialRider, initialEst, initialDate),
+      createEmptyRow('19:00', initialRider, initialEst, initialDate)
+    ]);
+  };
+
+  // Toda vez que o modal abre (isOpen vira true), limpa completamente para dados em branco
   useEffect(() => {
     if (isOpen) {
-      const initialRider = defaultRiderId || (activeRiders[0]?.id || '');
-      const initialEst = defaultEstablishmentId || (activeEsts[0]?.id || '');
-      const initialDate = db.getOperationalDateString();
-
-      setGlobalRiderId(initialRider);
-      setGlobalEstId(initialEst);
-      setGlobalDate(initialDate);
-
-      setRows([
-        createEmptyRow('18:00', initialRider, initialEst, initialDate),
-        createEmptyRow('18:15', initialRider, initialEst, initialDate),
-        createEmptyRow('18:30', initialRider, initialEst, initialDate),
-        createEmptyRow('18:45', initialRider, initialEst, initialDate),
-        createEmptyRow('19:00', initialRider, initialEst, initialDate)
-      ]);
+      resetToEmptyBatch();
     }
-  }, [isOpen, defaultRiderId, defaultEstablishmentId]);
+  }, [isOpen]);
 
   // Atualização automática ao mudar motoboy global
   const handleGlobalRiderChange = (newRiderId: string) => {
@@ -119,7 +126,8 @@ export default function BatchDeliveryModal({
 
   const handleRemoveRow = (id: string) => {
     if (rows.length === 1) {
-      alert('É necessário manter pelo menos uma linha na tabela.');
+      // Se remover a última linha, apenas limpa os valores dela
+      setRows([createEmptyRow('18:00', globalRiderId, globalEstId, globalDate)]);
       return;
     }
     setRows(prev => prev.filter(r => r.id !== id));
@@ -291,6 +299,10 @@ export default function BatchDeliveryModal({
       });
 
       await db.setDeliveries([...allDeliveries, ...newDeliveries]);
+      
+      // Limpa os campos para o próximo lançamento
+      resetToEmptyBatch();
+
       onSaved();
       onClose();
 
@@ -317,13 +329,20 @@ export default function BatchDeliveryModal({
               <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
                 <span>Lançamento de Corridas em Lote</span>
                 <span className="bg-indigo-100 text-indigo-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase">
-                  Rápido & Direto
+                  Turno Inteligente
                 </span>
               </h3>
-              <p className="text-xs text-slate-500">Selecione o motoboy no topo e preencha os valores das corridas abaixo</p>
+              <p className="text-xs text-slate-500">Corridas de 18:00h até as 02:59h pertencem ao mesmo expediente</p>
             </div>
           </div>
-          <button onClick={onClose} disabled={isSaving} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+          <button 
+            onClick={() => {
+              resetToEmptyBatch();
+              onClose();
+            }} 
+            disabled={isSaving} 
+            className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+          >
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -338,6 +357,15 @@ export default function BatchDeliveryModal({
             <div className="flex items-center space-x-2">
               <button
                 type="button"
+                onClick={() => resetToEmptyBatch(globalRiderId, globalEstId, globalDate)}
+                className="text-xs font-bold text-slate-500 hover:text-red-600 flex items-center gap-1 transition-colors mr-1"
+                title="Limpar todos os campos e voltar ao início"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>Limpar Tabela</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setShowPasteMode(!showPasteMode)}
                 className="text-xs font-bold text-indigo-600 hover:underline flex items-center gap-1"
               >
@@ -349,7 +377,7 @@ export default function BatchDeliveryModal({
                 onClick={handleApplyGlobalSettings}
                 className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1 rounded-lg shadow-sm"
               >
-                Reaplicar a Todas
+                Aplicar a Todas
               </button>
             </div>
           </div>
@@ -384,7 +412,7 @@ export default function BatchDeliveryModal({
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data</label>
+              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data do Expediente</label>
               <input
                 type="date"
                 value={globalDate}
@@ -582,7 +610,10 @@ export default function BatchDeliveryModal({
           <div className="flex items-center space-x-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={() => {
+                resetToEmptyBatch();
+                onClose();
+              }}
               disabled={isSaving}
               className="px-4 py-2.5 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors"
             >
