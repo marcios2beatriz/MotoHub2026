@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState } from 'react';
-import { X, Plus, Trash2, Layers, Check, Calculator, Clock, Calendar, Sparkles, FileText } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Plus, Trash2, Layers, Check, Sparkles, FileText, Loader2 } from 'lucide-react';
 import { User, Establishment, Delivery, db } from '../utils/db';
 
 interface BatchRow {
@@ -37,36 +37,70 @@ export default function BatchDeliveryModal({
   const activeRiders = riders.filter(r => r.active);
   const activeEsts = establishments.filter(e => e.active);
 
-  // Valores padrão globais para preenchimento rápido (com turno operacional)
+  // Valores padrão globais para preenchimento rápido
   const [globalDate, setGlobalDate] = useState<string>(db.getOperationalDateString());
   const [globalStartTime, setGlobalStartTime] = useState<string>('18:00');
   const [globalRiderId, setGlobalRiderId] = useState<string>(defaultRiderId || (activeRiders[0]?.id || ''));
   const [globalEstId, setGlobalEstId] = useState<string>(defaultEstablishmentId || (activeEsts[0]?.id || ''));
   const [globalStatus, setGlobalStatus] = useState<'active' | 'pending'>('active');
+  const [isSaving, setIsSaving] = useState(false);
 
   // Modo de texto/colagem rápida
   const [showPasteMode, setShowPasteMode] = useState(false);
   const [pastedText, setPastedText] = useState('');
 
   // Linhas do lote
-  const createEmptyRow = (timeOverride?: string): BatchRow => ({
+  const createEmptyRow = (timeOverride?: string, riderOverride?: string, estOverride?: string, dateOverride?: string): BatchRow => ({
     id: 'row_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-    riderId: globalRiderId,
-    establishmentId: globalEstId,
-    date: globalDate,
-    time: timeOverride || globalStartTime,
+    riderId: riderOverride || globalRiderId || (activeRiders[0]?.id || ''),
+    establishmentId: estOverride || globalEstId || (activeEsts[0]?.id || ''),
+    date: dateOverride || globalDate || db.getOperationalDateString(),
+    time: timeOverride || globalStartTime || '18:00',
     value: '',
     orderNumber: '',
     notes: ''
   });
 
-  const [rows, setRows] = useState<BatchRow[]>([
-    createEmptyRow('18:00'),
-    createEmptyRow('18:30'),
-    createEmptyRow('19:00'),
-    createEmptyRow('19:30'),
-    createEmptyRow('20:00')
-  ]);
+  const [rows, setRows] = useState<BatchRow[]>([]);
+
+  // Inicializa e sincroniza linhas quando o modal abre ou os dados mudam
+  useEffect(() => {
+    if (isOpen) {
+      const initialRider = defaultRiderId || (activeRiders[0]?.id || '');
+      const initialEst = defaultEstablishmentId || (activeEsts[0]?.id || '');
+      const initialDate = db.getOperationalDateString();
+
+      setGlobalRiderId(initialRider);
+      setGlobalEstId(initialEst);
+      setGlobalDate(initialDate);
+
+      setRows([
+        createEmptyRow('18:00', initialRider, initialEst, initialDate),
+        createEmptyRow('18:15', initialRider, initialEst, initialDate),
+        createEmptyRow('18:30', initialRider, initialEst, initialDate),
+        createEmptyRow('18:45', initialRider, initialEst, initialDate),
+        createEmptyRow('19:00', initialRider, initialEst, initialDate)
+      ]);
+    }
+  }, [isOpen, defaultRiderId, defaultEstablishmentId]);
+
+  // Atualização automática ao mudar motoboy global
+  const handleGlobalRiderChange = (newRiderId: string) => {
+    setGlobalRiderId(newRiderId);
+    setRows(prev => prev.map(r => ({ ...r, riderId: newRiderId })));
+  };
+
+  // Atualização automática ao mudar estabelecimento global
+  const handleGlobalEstChange = (newEstId: string) => {
+    setGlobalEstId(newEstId);
+    setRows(prev => prev.map(r => ({ ...r, establishmentId: newEstId })));
+  };
+
+  // Atualização automática ao mudar data global
+  const handleGlobalDateChange = (newDate: string) => {
+    setGlobalDate(newDate);
+    setRows(prev => prev.map(r => ({ ...r, date: newDate })));
+  };
 
   if (!isOpen) return null;
 
@@ -75,12 +109,12 @@ export default function BatchDeliveryModal({
     let nextTime = '19:00';
     if (lastRow && lastRow.time) {
       const [h, m] = lastRow.time.split(':').map(Number);
-      const totalMins = (h * 60 + m + 15) % 1440;
+      const totalMins = ((h || 18) * 60 + (m || 0) + 15) % 1440;
       const nextH = String(Math.floor(totalMins / 60)).padStart(2, '0');
       const nextM = String(totalMins % 60).padStart(2, '0');
       nextTime = `${nextH}:${nextM}`;
     }
-    setRows(prev => [...prev, createEmptyRow(nextTime)]);
+    setRows(prev => [...prev, createEmptyRow(nextTime, globalRiderId, globalEstId, globalDate)]);
   };
 
   const handleRemoveRow = (id: string) => {
@@ -98,7 +132,7 @@ export default function BatchDeliveryModal({
   const handleApplyGlobalSettings = () => {
     setRows(prev => prev.map((r, idx) => {
       const [h, m] = globalStartTime.split(':').map(Number);
-      const totalMins = (h * 60 + m + idx * 15) % 1440;
+      const totalMins = (((h || 18) * 60 + (m || 0)) + idx * 15) % 1440;
       const nextH = String(Math.floor(totalMins / 60)).padStart(2, '0');
       const nextM = String(totalMins % 60).padStart(2, '0');
 
@@ -129,7 +163,7 @@ export default function BatchDeliveryModal({
       let orderNum = '';
       let timeStr = '';
 
-      const totalMins = (startH * 60 + startM + idx * 10) % 1440;
+      const totalMins = (((startH || 18) * 60 + (startM || 0)) + idx * 10) % 1440;
       const calcH = String(Math.floor(totalMins / 60)).padStart(2, '0');
       const calcM = String(totalMins % 60).padStart(2, '0');
       timeStr = `${calcH}:${calcM}`;
@@ -174,52 +208,58 @@ export default function BatchDeliveryModal({
 
   const totalBatchValue = validRows.reduce((sum, r) => sum + parseFloat(r.value.replace(',', '.')), 0);
 
-  const handleSaveBatch = (e: React.FormEvent) => {
+  const handleSaveBatch = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (validRows.length === 0) {
-      alert('Preencha ao menos uma corrida com valor válido maior que zero.');
+      alert('Preencha ao menos uma corrida com valor válido maior que zero, motoboy e estabelecimento selecionados.');
       return;
     }
 
-    const allDeliveries = db.getDeliveries();
-    const schedules = db.getSchedules();
-    const nowStr = new Date().toISOString();
+    setIsSaving(true);
+    try {
+      const allDeliveries = db.getDeliveries();
+      const schedules = db.getSchedules();
+      const nowStr = new Date().toISOString();
 
-    const newDeliveries: Delivery[] = validRows.map((r, idx) => {
-      const val = parseFloat(r.value.replace(',', '.'));
-      
-      // Converte para a data do turno operacional (se lançado entre 00:00 e 02:59, pertence ao dia anterior)
-      const operationalDate = db.getShiftOperationalDate(r.date, r.time || '18:00');
+      const newDeliveries: Delivery[] = validRows.map((r, idx) => {
+        const val = parseFloat(r.value.replace(',', '.'));
+        const operationalDate = r.date || db.getOperationalDateString();
 
-      // Tenta associar com escala existente do turno
-      const matchSchedule = schedules.find(s => 
-        db.isSameUser(s.riderId, r.riderId) &&
-        db.isSameEstablishment(s.establishmentId, r.establishmentId) &&
-        db.isSameDayString(s.date, operationalDate)
-      );
+        // Tenta associar com escala existente do turno
+        const matchSchedule = schedules.find(s => 
+          db.isSameUser(s.riderId, r.riderId) &&
+          db.isSameEstablishment(s.establishmentId, r.establishmentId) &&
+          db.isSameDayString(s.date, operationalDate)
+        );
 
-      return {
-        id: 'd_' + (Date.now() + idx) + '_' + Math.random().toString(36).substr(2, 4),
-        riderId: r.riderId,
-        establishmentId: r.establishmentId,
-        date: operationalDate,
-        time: r.time || '18:00',
-        value: val,
-        status: globalStatus,
-        scheduleId: matchSchedule?.id,
-        orderNumber: r.orderNumber.trim() || undefined,
-        notes: r.notes.trim() || undefined,
-        updatedAt: nowStr,
-        paid: false
-      };
-    });
+        return {
+          id: 'd_' + Date.now() + '_' + idx + '_' + Math.random().toString(36).substring(2, 6),
+          riderId: r.riderId,
+          establishmentId: r.establishmentId,
+          date: operationalDate,
+          time: r.time || '18:00',
+          value: val,
+          status: globalStatus,
+          scheduleId: matchSchedule?.id,
+          orderNumber: r.orderNumber.trim() || undefined,
+          notes: r.notes.trim() || undefined,
+          updatedAt: nowStr,
+          paid: false
+        };
+      });
 
-    db.setDeliveries([...allDeliveries, ...newDeliveries]);
-    onSaved();
-    onClose();
+      await db.setDeliveries([...allDeliveries, ...newDeliveries]);
+      onSaved();
+      onClose();
 
-    alert(`🎉 ${newDeliveries.length} corridas gravadas com sucesso no turno operacional!\n\nTotal: R$ ${totalBatchValue.toFixed(2)}`);
+      alert(`🎉 ${newDeliveries.length} corridas gravadas com sucesso!\n\nTotal: R$ ${totalBatchValue.toFixed(2)}`);
+    } catch (err) {
+      console.error('Erro ao salvar lote de corridas:', err);
+      alert('Erro ao gravar o lote de corridas. Tente novamente.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -236,13 +276,13 @@ export default function BatchDeliveryModal({
               <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
                 <span>Lançamento de Corridas em Lote</span>
                 <span className="bg-indigo-100 text-indigo-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase">
-                  Turno Inteligente
+                  Rápido & Direto
                 </span>
               </h3>
-              <p className="text-xs text-slate-500">Corridas de 18:00h até as 02:59h pertencem ao mesmo expediente</p>
+              <p className="text-xs text-slate-500">Selecione o motoboy no topo e preencha os valores das corridas abaixo</p>
             </div>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+          <button onClick={onClose} disabled={isSaving} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -268,7 +308,7 @@ export default function BatchDeliveryModal({
                 onClick={handleApplyGlobalSettings}
                 className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1 rounded-lg shadow-sm"
               >
-                Aplicar a Todas
+                Reaplicar a Todas
               </button>
             </div>
           </div>
@@ -278,8 +318,8 @@ export default function BatchDeliveryModal({
               <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Motoboy Padrão</label>
               <select
                 value={globalRiderId}
-                onChange={(e) => setGlobalRiderId(e.target.value)}
-                className="w-full px-2 py-1.5 border border-slate-300 rounded-lg bg-white font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                onChange={(e) => handleGlobalRiderChange(e.target.value)}
+                className="w-full px-2 py-1.5 border border-indigo-300 rounded-lg bg-white font-bold text-indigo-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               >
                 <option value="">Selecione...</option>
                 {activeRiders.map(r => (
@@ -292,7 +332,7 @@ export default function BatchDeliveryModal({
               <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Estabelecimento</label>
               <select
                 value={globalEstId}
-                onChange={(e) => setGlobalEstId(e.target.value)}
+                onChange={(e) => handleGlobalEstChange(e.target.value)}
                 className="w-full px-2 py-1.5 border border-slate-300 rounded-lg bg-white font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500"
               >
                 <option value="">Selecione...</option>
@@ -303,11 +343,11 @@ export default function BatchDeliveryModal({
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data do Expediente</label>
+              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data</label>
               <input
                 type="date"
                 value={globalDate}
-                onChange={(e) => setGlobalDate(e.target.value)}
+                onChange={(e) => handleGlobalDateChange(e.target.value)}
                 className="w-full px-2 py-1.5 border border-slate-300 rounded-lg bg-white font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               />
             </div>
@@ -396,7 +436,7 @@ export default function BatchDeliveryModal({
                       <select
                         value={row.riderId}
                         onChange={(e) => handleUpdateRow(row.id, 'riderId', e.target.value)}
-                        className="w-full px-2 py-1 border border-slate-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        className="w-full px-2 py-1 border border-slate-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
                       >
                         <option value="">Selecione...</option>
                         {activeRiders.map(r => (
@@ -409,7 +449,7 @@ export default function BatchDeliveryModal({
                       <select
                         value={row.establishmentId}
                         onChange={(e) => handleUpdateRow(row.id, 'establishmentId', e.target.value)}
-                        className="w-full px-2 py-1 border border-slate-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        className="w-full px-2 py-1 border border-slate-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
                       >
                         <option value="">Selecione...</option>
                         {activeEsts.map(e => (
@@ -482,6 +522,7 @@ export default function BatchDeliveryModal({
             <button
               type="button"
               onClick={handleAddRow}
+              disabled={isSaving}
               className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-colors"
             >
               <Plus className="h-4 w-4" />
@@ -501,6 +542,7 @@ export default function BatchDeliveryModal({
             <button
               type="button"
               onClick={onClose}
+              disabled={isSaving}
               className="px-4 py-2.5 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors"
             >
               Cancelar
@@ -509,11 +551,20 @@ export default function BatchDeliveryModal({
             <button
               type="button"
               onClick={handleSaveBatch}
-              disabled={validRows.length === 0}
+              disabled={validRows.length === 0 || isSaving}
               className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white rounded-xl text-xs font-black shadow-md flex items-center gap-2 transition-all"
             >
-              <Check className="h-4 w-4" />
-              <span>Gravar Lote ({validRows.length} Corridas)</span>
+              {isSaving ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Gravando...</span>
+                </>
+              ) : (
+                <>
+                  <Check className="h-4 w-4" />
+                  <span>Gravar Lote ({validRows.length} Corridas)</span>
+                </>
+              )}
             </button>
           </div>
         </div>
