@@ -41,7 +41,11 @@ import {
   Sparkles,
   Layers,
   Hash,
-  FileText
+  FileText,
+  Percent,
+  Wallet,
+  Coins,
+  Receipt
 } from 'lucide-react';
 
 import L from 'leaflet';
@@ -60,6 +64,9 @@ import { realtimeGps } from '../utils/realtimeGps';
 
 const DAY_KEYS = ['seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom'] as const;
 const DAY_LABELS = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'];
+
+// Taxa padrão do administrador por corrida
+const ADMIN_FEE_PER_DELIVERY = 1.00;
 
 // Tempo limite para considerar o motoboy online no Admin (3 minutos)
 const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
@@ -125,6 +132,15 @@ export default function AdminDashboard() {
   const [delOrderNumberFilter, setDelOrderNumberFilter] = useState<string>('');
   const [delNotesFilter, setDelNotesFilter] = useState<'all' | 'with_notes' | 'without_notes'>('all');
   const [delSortOrder, setDelSortOrder] = useState<'date_desc' | 'date_asc' | 'value_desc' | 'value_asc' | 'rider_name' | 'est_name'>('date_desc');
+
+  // --- FILTROS DA ABA FECHAMENTO FINANCEIRO ---
+  const [financePeriodMode, setFinancePeriodMode] = useState<'this_week' | 'last_week' | 'today' | 'this_month' | 'custom'>('this_week');
+  const [financeCustomFrom, setFinanceCustomFrom] = useState<string>('');
+  const [financeCustomTo, setFinanceCustomTo] = useState<string>('');
+  const [financePaidFilter, setFinancePaidFilter] = useState<'unpaid' | 'paid' | 'all'>('unpaid');
+  const [financeRiderSearch, setFinanceRiderSearch] = useState<string>('');
+  const [financeEstSearch, setFinanceEstSearch] = useState<string>('');
+  const [financeActiveSection, setFinanceActiveSection] = useState<'riders' | 'establishments'>('riders');
 
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
 
@@ -833,17 +849,57 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleSettleRiderDeliveries = async (riderId: string) => {
-    if (confirm('Deseja realmente dar baixa e marcar todas as corridas ativas deste motoboy como pagas?')) {
-      const updated = deliveries.map(d => d.riderId === riderId && d.status === 'active' ? { ...d, paid: true, updatedAt: new Date().toISOString() } : d);
+  const handleSettleRiderDeliveries = async (riderId: string, deliveryIds?: string[]) => {
+    const rider = users.find(u => u.id === riderId);
+    if (!rider) return;
+
+    const msg = deliveryIds && deliveryIds.length > 0
+      ? `Deseja dar baixa e marcar ${deliveryIds.length} corrida(s) do motoboy ${rider.name} como PAGAS?`
+      : `Deseja realmente dar baixa e marcar TODAS as corridas ativas deste motoboy como pagas?`;
+
+    if (confirm(msg)) {
+      const allDeliveries = db.getDeliveries();
+      const idSet = deliveryIds ? new Set(deliveryIds) : null;
+      const updated = allDeliveries.map(d => {
+        const matches = idSet ? idSet.has(d.id) : (d.riderId === riderId && d.status === 'active');
+        return matches ? { ...d, paid: true, updatedAt: new Date().toISOString() } : d;
+      });
       await db.setDeliveries(updated);
       loadData();
     }
   };
 
-  const handleSettleEstDeliveries = async (estId: string) => {
-    if (confirm('Deseja realmente dar baixa e marcar todas as corridas ativas deste estabelecimento como pagas?')) {
-      const updated = deliveries.map(d => d.establishmentId === estId && d.status === 'active' ? { ...d, paid: true, updatedAt: new Date().toISOString() } : d);
+  const handleUnsettleRiderDeliveries = async (riderId: string, deliveryIds?: string[]) => {
+    const rider = users.find(u => u.id === riderId);
+    if (!rider) return;
+
+    if (confirm(`Deseja reverter e marcar as corridas de ${rider.name} como PENDENTES DE REPASSE?`)) {
+      const allDeliveries = db.getDeliveries();
+      const idSet = deliveryIds ? new Set(deliveryIds) : null;
+      const updated = allDeliveries.map(d => {
+        const matches = idSet ? idSet.has(d.id) : (d.riderId === riderId && d.status === 'active');
+        return matches ? { ...d, paid: false, updatedAt: new Date().toISOString() } : d;
+      });
+      await db.setDeliveries(updated);
+      loadData();
+    }
+  };
+
+  const handleSettleEstDeliveries = async (estId: string, deliveryIds?: string[]) => {
+    const est = establishments.find(e => e.id === estId);
+    if (!est) return;
+
+    const msg = deliveryIds && deliveryIds.length > 0
+      ? `Deseja dar baixa e marcar ${deliveryIds.length} corrida(s) do estabelecimento ${est.name} como RECEBIDAS/PAGAS?`
+      : `Deseja realmente dar baixa e marcar TODAS as corridas ativas deste estabelecimento como recebidas/pagas?`;
+
+    if (confirm(msg)) {
+      const allDeliveries = db.getDeliveries();
+      const idSet = deliveryIds ? new Set(deliveryIds) : null;
+      const updated = allDeliveries.map(d => {
+        const matches = idSet ? idSet.has(d.id) : (d.establishmentId === estId && d.status === 'active');
+        return matches ? { ...d, paid: true, updatedAt: new Date().toISOString() } : d;
+      });
       await db.setDeliveries(updated);
       loadData();
     }
@@ -880,6 +936,70 @@ export default function AdminDashboard() {
     d.setDate(d.getDate() - 1);
     setDelSmartDate(db.getOperationalDateString(d));
   };
+
+  // Helper para obter limites de data no filtro de fechamento
+  const getFinanceDateBounds = (): { start: string; end: string; label: string } => {
+    const now = new Date();
+    if (financePeriodMode === 'today') {
+      const todayStr = db.getOperationalDateString();
+      return { start: todayStr, end: todayStr, label: 'Hoje (Turno Atual)' };
+    }
+
+    if (financePeriodMode === 'this_week') {
+      const monStr = getThisMonday();
+      const [y, m, d] = monStr.split('-').map(Number);
+      const sun = new Date(y, m - 1, d + 6);
+      const sunStr = `${sun.getFullYear()}-${String(sun.getMonth() + 1).padStart(2, '0')}-${String(sun.getDate()).padStart(2, '0')}`;
+      return { start: monStr, end: sunStr, label: 'Esta Semana (Segunda a Domingo)' };
+    }
+
+    if (financePeriodMode === 'last_week') {
+      const monStr = getThisMonday();
+      const [y, m, d] = monStr.split('-').map(Number);
+      const lastMon = new Date(y, m - 1, d - 7);
+      const lastSun = new Date(y, m - 1, d - 1);
+      const lastMonStr = `${lastMon.getFullYear()}-${String(lastMon.getMonth() + 1).padStart(2, '0')}-${String(lastMon.getDate()).padStart(2, '0')}`;
+      const lastSunStr = `${lastSun.getFullYear()}-${String(lastSun.getMonth() + 1).padStart(2, '0')}-${String(lastSun.getDate()).padStart(2, '0')}`;
+      return { start: lastMonStr, end: lastSunStr, label: 'Semana Passada' };
+    }
+
+    if (financePeriodMode === 'this_month') {
+      const y = now.getFullYear();
+      const m = now.getMonth();
+      const startStr = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+      const lastDay = new Date(y, m + 1, 0).getDate();
+      const endStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      return { start: startStr, end: endStr, label: 'Este Mês' };
+    }
+
+    return {
+      start: financeCustomFrom || '1970-01-01',
+      end: financeCustomTo || '2099-12-31',
+      label: 'Período Personalizado'
+    };
+  };
+
+  const financeBounds = getFinanceDateBounds();
+
+  // Entregas filtradas para o fechamento financeiro
+  const financeFilteredDeliveries = deliveries.filter(d => {
+    if (d.status !== 'active') return false; // Apenas corridas aprovadas/ativas contam no fechamento
+
+    // Filtro de data
+    if (d.date < financeBounds.start || d.date > financeBounds.end) return false;
+
+    // Filtro de status de pagamento
+    if (financePaidFilter === 'unpaid' && d.paid) return false;
+    if (financePaidFilter === 'paid' && !d.paid) return false;
+
+    return true;
+  });
+
+  // Métricas financeiras consolidadas
+  const totalFinanceGrossRevenue = financeFilteredDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
+  const totalFinanceDeliveriesCount = financeFilteredDeliveries.length;
+  const totalFinanceAdminCommission = totalFinanceDeliveriesCount * ADMIN_FEE_PER_DELIVERY;
+  const totalFinanceRidersNet = Math.max(0, totalFinanceGrossRevenue - totalFinanceAdminCommission);
 
   const getFilteredReportData = () => {
     let start = new Date();
@@ -1227,7 +1347,7 @@ export default function AdminDashboard() {
               activeTab === 'finance' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
             }`}
           >
-            <DollarSign className="h-5 w-5" />
+            <DollarSign className="h-5 w-5 text-emerald-600" />
             <span>Fechamento</span>
           </button>
 
@@ -2183,7 +2303,7 @@ export default function AdminDashboard() {
                               del.status === 'pending' ? 'bg-amber-100 text-amber-800 font-black animate-pulse' :
                               'bg-red-100 text-red-800'
                             }`}>
-                              {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : del.status === 'rejected' ? 'Rejeitada' : 'Cancelada'}
+                              {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : 'Rejeitada'}
                             </span>
                             {del.paid && (
                               <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">
@@ -2276,59 +2396,420 @@ export default function AdminDashboard() {
             </div>
           )}
 
+          {/* ABA FECHAMENTO FINANCEIRO REORGANIZADA COM DIVISÃO DE GANHOS */}
           {activeTab === 'finance' && (
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-6">
-              <h2 className="text-xl font-bold text-slate-800">Fechamento Financeiro</h2>
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6">
               
-              <div className="space-y-4">
-                <h3 className="font-bold text-slate-700 text-sm">Fechamento por Motoboy</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {users.filter(u => u.role === 'rider').map(r => {
-                    const riderDels = deliveries.filter(d => d.riderId === r.id && d.status === 'active' && !d.paid);
-                    const totalRider = riderDels.reduce((sum, d) => sum + d.value, 0);
+              {/* Header do Fechamento */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                <div>
+                  <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
+                    <Wallet className="h-6 w-6 text-emerald-600" />
+                    <span>Fechamento Financeiro & Repasse</span>
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Discriminação detalhada: Ganho do Motoboy (R$ 7,00/corrida) vs Taxa do Administrador (R$ 1,00/corrida)
+                  </p>
+                </div>
 
-                    return (
-                      <div key={r.id} className="p-4 border border-slate-200 rounded-xl bg-slate-50/50 flex justify-between items-center">
-                        <div>
-                          <p className="font-bold text-slate-800">{r.name}</p>
-                          <p className="text-xs text-slate-500">{riderDels.length} corrida(s) a pagar</p>
-                          <p className="text-base font-extrabold text-emerald-600 mt-1">R$ {totalRider.toFixed(2)}</p>
-                        </div>
-                        {totalRider > 0 && (
-                          <button onClick={() => handleSettleRiderDeliveries(r.id)} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-bold">
-                            Dar Baixa
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+                  <button
+                    onClick={() => setFinanceActiveSection('riders')}
+                    className={`px-3.5 py-2 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+                      financeActiveSection === 'riders' ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Bike className="h-4 w-4" />
+                    <span>Por Motoboy</span>
+                  </button>
+                  <button
+                    onClick={() => setFinanceActiveSection('establishments')}
+                    className={`px-3.5 py-2 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+                      financeActiveSection === 'establishments' ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Store className="h-4 w-4" />
+                    <span>Por Estabelecimento</span>
+                  </button>
                 </div>
               </div>
 
-              <div className="space-y-4 border-t border-slate-100 pt-4">
-                <h3 className="font-bold text-slate-700 text-sm">Fechamento por Estabelecimento</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {establishments.map(e => {
-                    const estDels = deliveries.filter(d => d.establishmentId === e.id && d.status === 'active' && !d.paid);
-                    const totalEst = estDels.reduce((sum, d) => sum + d.value, 0);
+              {/* FILTROS DO FECHAMENTO */}
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/60 pb-2.5">
+                  <span className="text-xs font-black uppercase text-indigo-900 flex items-center gap-1.5 tracking-wider">
+                    <Filter className="h-4 w-4 text-indigo-600" />
+                    <span>Filtros do Fechamento: {financeBounds.label}</span>
+                  </span>
 
-                    return (
-                      <div key={e.id} className="p-4 border border-slate-200 rounded-xl bg-slate-50/50 flex justify-between items-center">
-                        <div>
-                          <p className="font-bold text-slate-800">{e.name}</p>
-                          <p className="text-xs text-slate-500">{estDels.length} corrida(s) a receber</p>
-                          <p className="text-base font-extrabold text-indigo-600 mt-1">R$ {totalEst.toFixed(2)}</p>
-                        </div>
-                        {totalEst > 0 && (
-                          <button onClick={() => handleSettleEstDeliveries(e.id)} className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-xs font-bold">
-                            Dar Baixa
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-slate-500 font-bold">Status:</span>
+                    <select
+                      value={financePaidFilter}
+                      onChange={(e) => setFinancePaidFilter(e.target.value as any)}
+                      className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                      <option value="unpaid">⏳ A Pagar / Pendentes de Baixa</option>
+                      <option value="paid">✅ Já Pagas / Baixadas</option>
+                      <option value="all">🌐 Todas as Corridas</option>
+                    </select>
+                  </div>
                 </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setFinancePeriodMode('this_week')}
+                    className={`py-2 rounded-xl text-xs font-black transition-all border ${
+                      financePeriodMode === 'this_week' 
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    📅 Esta Semana
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setFinancePeriodMode('last_week')}
+                    className={`py-2 rounded-xl text-xs font-black transition-all border ${
+                      financePeriodMode === 'last_week' 
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    ⏮️ Semana Passada
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setFinancePeriodMode('today')}
+                    className={`py-2 rounded-xl text-xs font-black transition-all border ${
+                      financePeriodMode === 'today' 
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    ⚡ Hoje (Turno)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setFinancePeriodMode('this_month')}
+                    className={`py-2 rounded-xl text-xs font-black transition-all border ${
+                      financePeriodMode === 'this_month' 
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    📆 Este Mês
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setFinancePeriodMode('custom')}
+                    className={`py-2 rounded-xl text-xs font-black transition-all border ${
+                      financePeriodMode === 'custom' 
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    🔍 Personalizado
+                  </button>
+                </div>
+
+                {financePeriodMode === 'custom' && (
+                  <div className="grid grid-cols-2 gap-3 pt-2">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data Inicial</label>
+                      <input
+                        type="date"
+                        value={financeCustomFrom}
+                        onChange={(e) => setFinanceCustomFrom(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data Final</label>
+                      <input
+                        type="date"
+                        value={financeCustomTo}
+                        onChange={(e) => setFinanceCustomTo(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
+
+              {/* CARDS DE MÉTRICAS CONSOLIDADAS DISCRIMINANDO TAXA ADM E GANHO MOTOBOY */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                
+                {/* Total Bruto Faturado */}
+                <div className="bg-slate-900 text-white p-4.5 rounded-2xl shadow-sm border border-slate-800 space-y-1">
+                  <div className="flex items-center justify-between text-slate-400">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider">Total Bruto Faturado</span>
+                    <Receipt className="h-4 w-4 text-indigo-400" />
+                  </div>
+                  <p className="text-2xl font-black tracking-tight text-white mt-1">
+                    R$ {totalFinanceGrossRevenue.toFixed(2)}
+                  </p>
+                  <p className="text-[11px] text-slate-400 font-medium">
+                    {totalFinanceDeliveriesCount} corrida(s) no período
+                  </p>
+                </div>
+
+                {/* Ganho Líquido Motoboys */}
+                <div className="bg-emerald-50 border-2 border-emerald-300 p-4.5 rounded-2xl shadow-sm space-y-1">
+                  <div className="flex items-center justify-between text-emerald-800">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider">Repasse Líquido Motoboys</span>
+                    <Bike className="h-4 w-4 text-emerald-600" />
+                  </div>
+                  <p className="text-2xl font-black tracking-tight text-emerald-700 mt-1">
+                    R$ {totalFinanceRidersNet.toFixed(2)}
+                  </p>
+                  <p className="text-[11px] text-emerald-800 font-bold">
+                    R$ 7,00 por corrida entregue
+                  </p>
+                </div>
+
+                {/* Comissão do Administrador */}
+                <div className="bg-amber-50 border-2 border-amber-300 p-4.5 rounded-2xl shadow-sm space-y-1">
+                  <div className="flex items-center justify-between text-amber-900">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider">Taxa Adm / Sistema</span>
+                    <Coins className="h-4 w-4 text-amber-600" />
+                  </div>
+                  <p className="text-2xl font-black tracking-tight text-amber-800 mt-1">
+                    R$ {totalFinanceAdminCommission.toFixed(2)}
+                  </p>
+                  <p className="text-[11px] text-amber-800 font-bold">
+                    R$ 1,00 por corrida realizada
+                  </p>
+                </div>
+
+                {/* Total a Receber das Lojas */}
+                <div className="bg-indigo-50 border-2 border-indigo-300 p-4.5 rounded-2xl shadow-sm space-y-1">
+                  <div className="flex items-center justify-between text-indigo-900">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider">Cobrança Estabelecimentos</span>
+                    <Store className="h-4 w-4 text-indigo-600" />
+                  </div>
+                  <p className="text-2xl font-black tracking-tight text-indigo-900 mt-1">
+                    R$ {totalFinanceGrossRevenue.toFixed(2)}
+                  </p>
+                  <p className="text-[11px] text-indigo-700 font-bold">
+                    Valor total a acertar com lojas
+                  </p>
+                </div>
+
+              </div>
+
+              {/* SEÇÃO 1: FECHAMENTO POR MOTOBOY */}
+              {financeActiveSection === 'riders' && (
+                <div className="space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <h3 className="font-extrabold text-slate-800 text-base flex items-center gap-2">
+                      <Bike className="h-5 w-5 text-indigo-600" />
+                      <span>Extrato por Motoboy ({users.filter(u => u.role === 'rider').length})</span>
+                    </h3>
+
+                    <div className="w-full sm:w-64">
+                      <input
+                        type="text"
+                        placeholder="Buscar motoboy por nome..."
+                        value={financeRiderSearch}
+                        onChange={(e) => setFinanceRiderSearch(e.target.value)}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {users
+                      .filter(u => u.role === 'rider')
+                      .filter(r => r.name.toLowerCase().includes(financeRiderSearch.toLowerCase()) || r.phone.includes(financeRiderSearch))
+                      .map(rider => {
+                        const riderDeliveries = financeFilteredDeliveries.filter(d => d.riderId === rider.id);
+                        const count = riderDeliveries.length;
+                        const grossVal = riderDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
+                        const adminCut = count * ADMIN_FEE_PER_DELIVERY;
+                        const riderNet = Math.max(0, grossVal - adminCut);
+                        const allPaid = count > 0 && riderDeliveries.every(d => d.paid);
+
+                        return (
+                          <div 
+                            key={rider.id} 
+                            className={`p-5 rounded-2xl border transition-all ${
+                              count > 0 
+                                ? allPaid 
+                                  ? 'bg-slate-50 border-slate-200' 
+                                  : 'bg-white border-indigo-200 shadow-sm hover:border-indigo-400' 
+                                : 'bg-slate-50/50 border-slate-200 opacity-60'
+                            }`}
+                          >
+                            <div className="flex justify-between items-start">
+                              <div className="flex items-center space-x-3 min-w-0">
+                                <div className="w-10 h-10 rounded-full bg-indigo-600 text-white font-black text-sm flex items-center justify-center flex-shrink-0">
+                                  {rider.name.charAt(0).toUpperCase()}
+                                </div>
+                                <div className="min-w-0">
+                                  <h4 className="font-extrabold text-slate-900 text-base truncate">{rider.name}</h4>
+                                  <p className="text-xs text-slate-500 font-mono">{rider.phone || 'Sem telefone'}</p>
+                                </div>
+                              </div>
+
+                              <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase ${
+                                count === 0 ? 'bg-slate-100 text-slate-500' :
+                                allPaid ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'
+                              }`}>
+                                {count === 0 ? 'Sem Corridas' : allPaid ? 'Pago' : 'A Repassar'}
+                              </span>
+                            </div>
+
+                            {/* Detalhamento dos Valores */}
+                            <div className="grid grid-cols-3 gap-2 pt-3.5 pb-2 text-center border-t border-slate-100 mt-3">
+                              <div className="bg-slate-50 rounded-xl p-2 border border-slate-100">
+                                <p className="text-[9px] font-extrabold text-slate-400 uppercase">Corridas</p>
+                                <p className="text-sm font-black text-slate-800 mt-0.5">{count}</p>
+                              </div>
+                              <div className="bg-amber-50/60 rounded-xl p-2 border border-amber-200">
+                                <p className="text-[9px] font-extrabold text-amber-800 uppercase">Taxa Adm (R$1)</p>
+                                <p className="text-sm font-black text-amber-700 mt-0.5">R$ {adminCut.toFixed(2)}</p>
+                              </div>
+                              <div className="bg-emerald-50 rounded-xl p-2 border border-emerald-200">
+                                <p className="text-[9px] font-extrabold text-emerald-800 uppercase">Líquido Motoboy</p>
+                                <p className="text-sm font-black text-emerald-700 mt-0.5">R$ {riderNet.toFixed(2)}</p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-100">
+                              <span className="text-slate-500 font-medium">
+                                Bruto Total: <strong className="text-slate-700">R$ {grossVal.toFixed(2)}</strong>
+                              </span>
+
+                              {count > 0 && (
+                                <div className="flex items-center space-x-1.5">
+                                  {allPaid ? (
+                                    <button
+                                      onClick={() => handleUnsettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
+                                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-bold transition-colors"
+                                      title="Desmarcar como pago"
+                                    >
+                                      Reverter
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => handleSettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
+                                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-black transition-all shadow-sm flex items-center gap-1"
+                                    >
+                                      <Check className="h-3.5 w-3.5" />
+                                      <span>Dar Baixa (Pagar)</span>
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+
+              {/* SEÇÃO 2: FECHAMENTO POR ESTABELECIMENTO */}
+              {financeActiveSection === 'establishments' && (
+                <div className="space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <h3 className="font-extrabold text-slate-800 text-base flex items-center gap-2">
+                      <Store className="h-5 w-5 text-indigo-600" />
+                      <span>Cobrança por Estabelecimento ({establishments.length})</span>
+                    </h3>
+
+                    <div className="w-full sm:w-64">
+                      <input
+                        type="text"
+                        placeholder="Buscar loja por nome..."
+                        value={financeEstSearch}
+                        onChange={(e) => setFinanceEstSearch(e.target.value)}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {establishments
+                      .filter(e => e.name.toLowerCase().includes(financeEstSearch.toLowerCase()) || e.phone.includes(financeEstSearch))
+                      .map(est => {
+                        const estDeliveries = financeFilteredDeliveries.filter(d => d.establishmentId === est.id);
+                        const count = estDeliveries.length;
+                        const totalCharged = estDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
+                        const adminCut = count * ADMIN_FEE_PER_DELIVERY;
+                        const ridersCut = Math.max(0, totalCharged - adminCut);
+                        const allSettled = count > 0 && estDeliveries.every(d => d.paid);
+
+                        return (
+                          <div 
+                            key={est.id} 
+                            className={`p-5 rounded-2xl border transition-all ${
+                              count > 0 
+                                ? allSettled 
+                                  ? 'bg-slate-50 border-slate-200' 
+                                  : 'bg-white border-indigo-200 shadow-sm hover:border-indigo-400' 
+                                : 'bg-slate-50/50 border-slate-200 opacity-60'
+                            }`}
+                          >
+                            <div className="flex justify-between items-start">
+                              <div className="min-w-0">
+                                <h4 className="font-extrabold text-slate-900 text-base truncate">{est.name}</h4>
+                                <p className="text-xs text-slate-500 truncate">{est.address?.street}, {est.address?.number} - {est.address?.neighborhood}</p>
+                              </div>
+
+                              <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase ${
+                                count === 0 ? 'bg-slate-100 text-slate-500' :
+                                allSettled ? 'bg-blue-100 text-blue-800' : 'bg-indigo-100 text-indigo-800'
+                              }`}>
+                                {count === 0 ? 'Sem Corridas' : allSettled ? 'Recebido' : 'A Receber'}
+                              </span>
+                            </div>
+
+                            {/* Detalhamento dos Valores */}
+                            <div className="grid grid-cols-3 gap-2 pt-3.5 pb-2 text-center border-t border-slate-100 mt-3">
+                              <div className="bg-slate-50 rounded-xl p-2 border border-slate-100">
+                                <p className="text-[9px] font-extrabold text-slate-400 uppercase">Corridas</p>
+                                <p className="text-sm font-black text-slate-800 mt-0.5">{count}</p>
+                              </div>
+                              <div className="bg-emerald-50/60 rounded-xl p-2 border border-emerald-200">
+                                <p className="text-[9px] font-extrabold text-emerald-800 uppercase">Repasse Motoboys</p>
+                                <p className="text-sm font-black text-emerald-700 mt-0.5">R$ {ridersCut.toFixed(2)}</p>
+                              </div>
+                              <div className="bg-amber-50 rounded-xl p-2 border border-amber-200">
+                                <p className="text-[9px] font-extrabold text-amber-800 uppercase">Sua Taxa (R$1)</p>
+                                <p className="text-sm font-black text-amber-700 mt-0.5">R$ {adminCut.toFixed(2)}</p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-100">
+                              <div>
+                                <span className="text-slate-400 font-medium">Total a Cobrar: </span>
+                                <strong className="text-indigo-900 font-black text-sm">R$ {totalCharged.toFixed(2)}</strong>
+                              </div>
+
+                              {count > 0 && !allSettled && (
+                                <button
+                                  onClick={() => handleSettleEstDeliveries(est.id, estDeliveries.map(d => d.id))}
+                                  className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-black transition-all shadow-sm flex items-center gap-1"
+                                >
+                                  <Check className="h-3.5 w-3.5" />
+                                  <span>Dar Baixa (Receber)</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
 
