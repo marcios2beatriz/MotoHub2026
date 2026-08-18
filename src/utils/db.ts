@@ -196,8 +196,8 @@ export const db = {
     inFlightOrderLocks.delete(`${opDate}_${cleanNumber}`);
   },
 
-  // Verifica se o número do pedido já foi lançado no mesmo dia operacional por qualquer motoboy
-  checkDuplicateOrderNumber(orderNumber: string, date: string, time: string = '12:00', excludeDeliveryId?: string): { isDuplicate: boolean; duplicateDelivery?: Delivery; riderName?: string } {
+  // Verifica se o número do pedido já foi lançado no mesmo dia operacional
+  checkDuplicateOrderNumber(orderNumber: string, date: string, time: string = '12:00', excludeDeliveryId?: string): { isDuplicate: boolean; duplicateDelivery?: Delivery; riderName?: string; establishmentName?: string } {
     const cleanNumber = orderNumber.trim().replace('#', '');
     if (!cleanNumber) return { isDuplicate: false };
 
@@ -216,10 +216,12 @@ export const db = {
 
     if (duplicate) {
       const rider = this.resolveUser(duplicate.riderId);
+      const est = this.resolveEstablishment(duplicate.establishmentId);
       return {
         isDuplicate: true,
         duplicateDelivery: duplicate,
-        riderName: rider?.name || 'Outro entregador'
+        riderName: rider?.name || 'Outro entregador',
+        establishmentName: est?.name || 'Estabelecimento'
       };
     }
 
@@ -666,7 +668,7 @@ export const db = {
     return `000.000.000-${rand()}${rand()}`;
   },
 
-  // --- SINCRONIZAÇÃO TOTAL EXCLUSIVA COM O SUPABASE COM DEDUPLICAÇÃO ---
+  // --- SINCRONIZAÇÃO TOTAL COM O SUPABASE ---
   async pullFromSupabase() {
     try {
       const { data: usersData } = await supabase.from('users').select('*');
@@ -742,7 +744,8 @@ export const db = {
 
       const { data: delData } = await supabase.from('deliveries').select('*');
       if (delData) {
-        const rawDeliveries = delData.map(d => {
+        // Preserva todas as entregas com id único cadastradas no banco de dados
+        memoryDeliveries = delData.map(d => {
           let orderNumber = d.order_number || undefined;
           let notes: string | undefined = undefined;
           let customerChat: string | undefined = undefined;
@@ -789,24 +792,6 @@ export const db = {
             paid: d.paid || false
           };
         });
-
-        // Deduplicação estrita: se houver dois registros com exatamente o mesmo id ou mesmo orderNumber+data+motoboy, mantém o mais recente
-        const seenOrderKeys = new Set<string>();
-        const deduplicatedDeliveries: Delivery[] = [];
-
-        rawDeliveries.forEach(del => {
-          const num = (del.orderNumber || '').trim().replace('#', '');
-          if (num && del.status !== 'cancelled') {
-            const key = `${del.riderId}_${del.date}_${num}`;
-            if (seenOrderKeys.has(key)) {
-              return; // Ignora o duplicado
-            }
-            seenOrderKeys.add(key);
-          }
-          deduplicatedDeliveries.push(del);
-        });
-
-        memoryDeliveries = deduplicatedDeliveries;
       }
 
       const { data: reqsData } = await supabase.from('partner_requests').select('*');

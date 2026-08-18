@@ -473,10 +473,16 @@ export default function RiderDashboard() {
       return;
     }
 
+    // Validação estrita de duplicidade para o motoboy com mensagem solicitada
     const dupCheck = db.checkDuplicateOrderNumber(cleanOrderNumber, operationalTodayStr, new Date().toTimeString().slice(0, 5), editingDelivery?.id);
     if (dupCheck.isDuplicate) {
       db.unlockOrder(cleanOrderNumber, operationalTodayStr, new Date().toTimeString().slice(0, 5));
-      alert(`⚠️ Erro: O pedido #${cleanOrderNumber} já foi lançado hoje por ${dupCheck.riderName}.\n\nNão é permitido lançar mais de uma corrida com o mesmo número de pedido.`);
+      const scheduledEst = getScheduledEstablishmentsToday()[0]?.name || dupCheck.establishmentName || 'seu estabelecimento';
+      alert(
+        `⚠️ Atenção: Não é possível lançar o pedido #${cleanOrderNumber}.\n\n` +
+        `Este número de pedido já consta lançado hoje por "${dupCheck.riderName}".\n\n` +
+        `Caso seja uma entrega duplicada ou dividida, por favor solicite o lançamento ao Administrador ou ao Estabelecimento (${scheduledEst}) onde você está escalado / lotado.`
+      );
       return;
     }
 
