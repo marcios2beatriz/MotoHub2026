@@ -72,6 +72,11 @@ export interface Delivery {
   paid?: boolean;
   lostAt?: string;
   lostReason?: string;
+  // Campos de Vinculação e Valores Adicionais
+  deliveryType?: 'standard' | 'same_address';
+  additionalValue?: number;
+  linkedOrderNumber?: string;
+  linkedDeliveryId?: string;
 }
 
 export interface Notification {
@@ -189,6 +194,17 @@ export const db = {
     }
 
     return { isDuplicate: false };
+  },
+
+  // Retorna pedidos já lançados no mesmo dia para facilitar a vinculação
+  getAvailableDeliveriesForLinking(date: string, time: string = '12:00', riderId?: string): Delivery[] {
+    const targetOpDate = getDeliveryOperationalDate(date, time);
+    return memoryDeliveries.filter(d => {
+      if (d.status === 'cancelled' || d.status === 'rejected') return false;
+      if (riderId && d.riderId !== riderId) return false;
+      const dOpDate = getDeliveryOperationalDate(d.date, d.time);
+      return isSameDayString(dOpDate, targetOpDate);
+    });
   },
 
   // --- SESSÃO DO USUÁRIO ATIVO ---
@@ -339,7 +355,7 @@ export const db = {
     await this.pullFromSupabase();
   },
 
-  // --- ESCALAS (SALVAMENTO EM LOTE ULTRA-RÁPIDO) ---
+  // --- ESCALAS ---
   getSchedules(): Schedule[] {
     return memorySchedules;
   },
@@ -381,7 +397,7 @@ export const db = {
     await this.pullFromSupabase();
   },
 
-  // --- CORRIDAS (SALVAMENTO EM LOTE ULTRA-RÁPIDO) ---
+  // --- CORRIDAS (SUPORTE COMPLETO A VINCULAÇÃO E ADICIONAIS) ---
   getDeliveries(): Delivery[] {
     return memoryDeliveries;
   },
@@ -393,6 +409,10 @@ export const db = {
         orderNumber: d.orderNumber || '',
         notes: d.notes || '',
         customerChat: d.customerChat || '',
+        deliveryType: d.deliveryType || 'standard',
+        additionalValue: Number(d.additionalValue || 0),
+        linkedOrderNumber: d.linkedOrderNumber || '',
+        linkedDeliveryId: d.linkedDeliveryId || '',
         updatedAt: d.updatedAt || new Date().toISOString()
       });
 
@@ -689,6 +709,10 @@ export const db = {
           let orderNumber = d.order_number || undefined;
           let notes: string | undefined = undefined;
           let customerChat: string | undefined = undefined;
+          let deliveryType: 'standard' | 'same_address' = 'standard';
+          let additionalValue: number = 0;
+          let linkedOrderNumber: string | undefined = undefined;
+          let linkedDeliveryId: string | undefined = undefined;
           let updatedAt = d.updated_at;
 
           if (d.order_number && d.order_number.startsWith('{')) {
@@ -697,6 +721,10 @@ export const db = {
               orderNumber = parsed.orderNumber || undefined;
               notes = parsed.notes || undefined;
               customerChat = parsed.customerChat || undefined;
+              deliveryType = parsed.deliveryType || 'standard';
+              additionalValue = Number(parsed.additionalValue || 0);
+              linkedOrderNumber = parsed.linkedOrderNumber || undefined;
+              linkedDeliveryId = parsed.linkedDeliveryId || undefined;
               updatedAt = parsed.updatedAt || d.updated_at;
             } catch (e) {}
           }
@@ -713,6 +741,10 @@ export const db = {
             orderNumber,
             notes,
             customerChat,
+            deliveryType,
+            additionalValue,
+            linkedOrderNumber,
+            linkedDeliveryId,
             updatedAt,
             paid: d.paid || false
           };
