@@ -399,8 +399,13 @@ export default function EstablishmentDashboard() {
     if (cleanOrderNumber) {
       const dupCheck = db.checkDuplicateOrderNumber(cleanOrderNumber, deliveryForm.date, deliveryForm.time, editingDelivery?.id);
       if (dupCheck.isDuplicate) {
-        alert(`⚠️ Erro: O pedido #${cleanOrderNumber} já foi lançado hoje por ${dupCheck.riderName}.\n\nNão é permitido lançar mais de uma corrida com o mesmo número de pedido.`);
-        return;
+        const confirmDuplicate = confirm(
+          `⚠️ Aviso: O pedido #${cleanOrderNumber} já consta lançado hoje para "${dupCheck.riderName}".\n\n` +
+          `Deseja confirmar o lançamento desta corrida dividida/adicional mesmo assim?`
+        );
+        if (!confirmDuplicate) {
+          return;
+        }
       }
     }
 
