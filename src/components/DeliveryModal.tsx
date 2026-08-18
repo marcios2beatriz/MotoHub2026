@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { X, Link2, Plus, DollarSign, Sparkles, AlertCircle } from 'lucide-react';
+import { X, Link2, Plus, DollarSign, Sparkles, AlertCircle, HelpCircle } from 'lucide-react';
 import { User, Establishment, Delivery, db } from '../utils/db';
 
 interface DeliveryModalProps {
@@ -20,6 +20,7 @@ interface DeliveryModalProps {
     notes: string;
     deliveryType?: 'standard' | 'same_address';
     additionalValue?: string;
+    additionalReason?: string;
     linkedOrderNumber?: string;
   };
   setDeliveryForm: React.Dispatch<React.SetStateAction<any>>;
@@ -77,7 +78,7 @@ export default function DeliveryModal({
               <h3 className="text-base font-extrabold text-slate-800">
                 {editingDelivery ? 'Editar Corrida' : 'Lançar Nova Corrida'}
               </h3>
-              <p className="text-xs text-slate-500">Defina valor base, tipo de entrega e vinculação</p>
+              <p className="text-xs text-slate-500">Defina valor base, adicionais com motivo e vinculação</p>
             </div>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1">
@@ -238,41 +239,58 @@ export default function DeliveryModal({
             />
           </div>
 
-          {/* VALOR DA CORRIDA E VALOR ADICIONAL */}
-          <div className="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+          {/* VALOR DA CORRIDA E VALOR ADICIONAL COM MOTIVO */}
+          <div className="space-y-2 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[10px] font-black text-slate-600 uppercase mb-1">
+                  Valor Base (R$) *
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  min="0.01"
+                  placeholder="8.00"
+                  value={deliveryForm.value}
+                  onChange={(e) => setDeliveryForm({ ...deliveryForm, value: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-black text-emerald-700 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-amber-800 uppercase mb-1 flex items-center gap-1">
+                  <Sparkles className="h-3 w-3 text-amber-500" />
+                  <span>+ Adicional (R$)</span>
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.00"
+                  placeholder="0.00"
+                  value={deliveryForm.additionalValue || ''}
+                  onChange={(e) => setDeliveryForm({ ...deliveryForm, additionalValue: e.target.value })}
+                  className="w-full px-3 py-2 border border-amber-300 rounded-xl text-xs font-black text-amber-900 bg-amber-50/50 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+              </div>
+            </div>
+
+            {/* JUSTIFICATIVA DO ADICIONAL */}
             <div>
-              <label className="block text-[10px] font-black text-slate-600 uppercase mb-1">
-                Valor Base (R$) *
+              <label className="block text-[10px] font-black text-amber-800 uppercase mb-1 flex items-center gap-1">
+                <HelpCircle className="h-3 w-3 text-amber-600" />
+                <span>Justificativa do Adicional (Por que está cobrando extra?)</span>
               </label>
               <input
-                type="number"
-                step="0.01"
-                required
-                min="0.01"
-                placeholder="8.00"
-                value={deliveryForm.value}
-                onChange={(e) => setDeliveryForm({ ...deliveryForm, value: e.target.value })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-black text-emerald-700 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                type="text"
+                placeholder="Ex: Distância / Bairro dos Cuités, Chuva, Taxa extra..."
+                value={deliveryForm.additionalReason || ''}
+                onChange={(e) => setDeliveryForm({ ...deliveryForm, additionalReason: e.target.value })}
+                className="w-full px-3 py-2 border border-amber-300/80 rounded-xl text-xs font-semibold text-amber-950 bg-amber-50/40 focus:outline-none focus:ring-1 focus:ring-amber-500 placeholder-amber-900/40"
               />
             </div>
 
-            <div>
-              <label className="block text-[10px] font-black text-amber-700 uppercase mb-1 flex items-center gap-1">
-                <Sparkles className="h-3 w-3 text-amber-500" />
-                <span>Valor Adicional (R$)</span>
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                min="0.00"
-                placeholder="0.00"
-                value={deliveryForm.additionalValue || ''}
-                onChange={(e) => setDeliveryForm({ ...deliveryForm, additionalValue: e.target.value })}
-                className="w-full px-3 py-2 border border-amber-300 rounded-xl text-xs font-black text-amber-800 bg-amber-50/50 focus:outline-none focus:ring-1 focus:ring-amber-500"
-              />
-            </div>
-
-            <div className="col-span-2 pt-1 border-t border-slate-200 flex justify-between items-center text-xs">
+            <div className="pt-2 border-t border-slate-200 flex justify-between items-center text-xs">
               <span className="text-slate-500 font-bold">Total Final da Corrida:</span>
               <span className="text-base font-black text-emerald-600">R$ {totalDisplay}</span>
             </div>
@@ -280,7 +298,7 @@ export default function DeliveryModal({
 
           {/* OBSERVAÇÕES */}
           <div>
-            <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">Observações (Opcional)</label>
+            <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">Observações Gerais (Opcional)</label>
             <textarea
               placeholder="Ex: Apartamento 302, bloco C, troco para 50..."
               value={deliveryForm.notes}

@@ -76,6 +76,7 @@ export default function EstablishmentDashboard() {
     notes: '',
     deliveryType: 'standard' as 'standard' | 'same_address',
     additionalValue: '',
+    additionalReason: '',
     linkedOrderNumber: ''
   });
 
@@ -355,6 +356,7 @@ export default function EstablishmentDashboard() {
       notes: '',
       deliveryType: 'standard',
       additionalValue: '',
+      additionalReason: '',
       linkedOrderNumber: ''
     });
     setShowDeliveryModal(true);
@@ -373,6 +375,7 @@ export default function EstablishmentDashboard() {
       notes: del.notes || '',
       deliveryType: del.deliveryType || 'standard',
       additionalValue: del.additionalValue ? del.additionalValue.toString() : '',
+      additionalReason: del.additionalReason || '',
       linkedOrderNumber: del.linkedOrderNumber || ''
     });
     setShowDeliveryModal(true);
@@ -414,6 +417,7 @@ export default function EstablishmentDashboard() {
         notes: deliveryForm.notes.trim() || undefined,
         deliveryType: deliveryForm.deliveryType,
         additionalValue: addVal > 0 ? addVal : undefined,
+        additionalReason: deliveryForm.additionalReason?.trim() || undefined,
         linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
         updatedAt: nowStr
       } : d);
@@ -431,6 +435,7 @@ export default function EstablishmentDashboard() {
         notes: deliveryForm.notes.trim() || undefined,
         deliveryType: deliveryForm.deliveryType,
         additionalValue: addVal > 0 ? addVal : undefined,
+        additionalReason: deliveryForm.additionalReason?.trim() || undefined,
         linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
         updatedAt: nowStr,
         paid: false
@@ -920,11 +925,14 @@ export default function EstablishmentDashboard() {
                             </span>
                           )}
 
-                          {/* Badge Valor Adicional */}
+                          {/* Badge Valor Adicional com Motivo */}
                           {hasAdditional && (
                             <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-black px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
                               <Sparkles className="h-2.5 w-2.5 text-amber-600" />
-                              <span>+ R$ {Number(del.additionalValue).toFixed(2)}</span>
+                              <span>
+                                + R$ {Number(del.additionalValue).toFixed(2)}
+                                {del.additionalReason ? ` (${del.additionalReason})` : ''}
+                              </span>
                             </span>
                           )}
 

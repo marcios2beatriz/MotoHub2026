@@ -72,9 +72,10 @@ export interface Delivery {
   paid?: boolean;
   lostAt?: string;
   lostReason?: string;
-  // Campos de Vinculação e Valores Adicionais
+  // Campos de Vinculação e Valores Adicionais com Justificativa
   deliveryType?: 'standard' | 'same_address';
   additionalValue?: number;
+  additionalReason?: string;
   linkedOrderNumber?: string;
   linkedDeliveryId?: string;
 }
@@ -397,7 +398,7 @@ export const db = {
     await this.pullFromSupabase();
   },
 
-  // --- CORRIDAS (SUPORTE COMPLETO A VINCULAÇÃO E ADICIONAIS) ---
+  // --- CORRIDAS (SUPORTE COMPLETO A VINCULAÇÃO, ADICIONAIS E JUSTIFICATIVA) ---
   getDeliveries(): Delivery[] {
     return memoryDeliveries;
   },
@@ -411,6 +412,7 @@ export const db = {
         customerChat: d.customerChat || '',
         deliveryType: d.deliveryType || 'standard',
         additionalValue: Number(d.additionalValue || 0),
+        additionalReason: d.additionalReason || '',
         linkedOrderNumber: d.linkedOrderNumber || '',
         linkedDeliveryId: d.linkedDeliveryId || '',
         updatedAt: d.updatedAt || new Date().toISOString()
@@ -711,6 +713,7 @@ export const db = {
           let customerChat: string | undefined = undefined;
           let deliveryType: 'standard' | 'same_address' = 'standard';
           let additionalValue: number = 0;
+          let additionalReason: string | undefined = undefined;
           let linkedOrderNumber: string | undefined = undefined;
           let linkedDeliveryId: string | undefined = undefined;
           let updatedAt = d.updated_at;
@@ -723,6 +726,7 @@ export const db = {
               customerChat = parsed.customerChat || undefined;
               deliveryType = parsed.deliveryType || 'standard';
               additionalValue = Number(parsed.additionalValue || 0);
+              additionalReason = parsed.additionalReason || undefined;
               linkedOrderNumber = parsed.linkedOrderNumber || undefined;
               linkedDeliveryId = parsed.linkedDeliveryId || undefined;
               updatedAt = parsed.updatedAt || d.updated_at;
@@ -743,6 +747,7 @@ export const db = {
             customerChat,
             deliveryType,
             additionalValue,
+            additionalReason,
             linkedOrderNumber,
             linkedDeliveryId,
             updatedAt,

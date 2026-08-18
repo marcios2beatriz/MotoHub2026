@@ -26,7 +26,8 @@ import {
   Sparkles,
   Filter,
   Hash,
-  Link2
+  Link2,
+  HelpCircle
 } from 'lucide-react';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
 import CustomerChatModal from '../components/CustomerChatModal';
@@ -81,6 +82,7 @@ export default function RiderDashboard() {
     notes: '',
     deliveryType: 'standard' as 'standard' | 'same_address',
     additionalValue: '',
+    additionalReason: '',
     linkedOrderNumber: ''
   });
 
@@ -484,6 +486,7 @@ export default function RiderDashboard() {
         notes: launchForm.notes.trim() || undefined,
         deliveryType: launchForm.deliveryType,
         additionalValue: addVal > 0 ? addVal : undefined,
+        additionalReason: launchForm.additionalReason?.trim() || undefined,
         linkedOrderNumber: launchForm.deliveryType === 'same_address' ? (launchForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
         scheduleId: activeSchedule?.id || d.scheduleId,
         updatedAt: nowStr
@@ -505,6 +508,7 @@ export default function RiderDashboard() {
         notes: launchForm.notes.trim() || undefined,
         deliveryType: launchForm.deliveryType,
         additionalValue: addVal > 0 ? addVal : undefined,
+        additionalReason: launchForm.additionalReason?.trim() || undefined,
         linkedOrderNumber: launchForm.deliveryType === 'same_address' ? (launchForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
         updatedAt: nowStr
       };
@@ -515,7 +519,7 @@ export default function RiderDashboard() {
 
     setShowLaunchModal(false);
     setEditingDelivery(null);
-    setLaunchForm({ establishmentId: '', value: '8.00', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', linkedOrderNumber: '' });
+    setLaunchForm({ establishmentId: '', value: '8.00', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', additionalReason: '', linkedOrderNumber: '' });
     loadData();
   };
 
@@ -662,7 +666,7 @@ export default function RiderDashboard() {
                   return;
                 }
                 setEditingDelivery(null);
-                setLaunchForm({ establishmentId: scheduledEstsToday[0].id, value: '8.00', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', linkedOrderNumber: '' });
+                setLaunchForm({ establishmentId: scheduledEstsToday[0].id, value: '8.00', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', additionalReason: '', linkedOrderNumber: '' });
                 setShowLaunchModal(true);
               }}
               className="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 transition-colors shadow-sm"
@@ -861,7 +865,7 @@ export default function RiderDashboard() {
                   {filteredTodayDeliveries.map((delivery) => {
                     const est = resolveEst(delivery.establishmentId);
                     const hasNotes = Boolean(delivery.notes && delivery.notes.trim());
-                    const notesCount = del.notes ? delivery.notes.split('\n').filter(l => l.trim()).length : 0;
+                    const notesCount = delivery.notes ? delivery.notes.split('\n').filter(l => l.trim()).length : 0;
                     const isSame = delivery.deliveryType === 'same_address';
                     const hasAdditional = Number(delivery.additionalValue || 0) > 0;
 
@@ -884,11 +888,14 @@ export default function RiderDashboard() {
                               </span>
                             )}
 
-                            {/* Badge Valor Adicional */}
+                            {/* Badge Valor Adicional com Motivo */}
                             {hasAdditional && (
                               <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
                                 <Sparkles className="h-3 w-3 text-amber-600" />
-                                <span>+ R$ {Number(delivery.additionalValue).toFixed(2)} Extra</span>
+                                <span>
+                                  + R$ {Number(delivery.additionalValue).toFixed(2)}
+                                  {delivery.additionalReason ? ` (${delivery.additionalReason})` : ' Extra'}
+                                </span>
                               </span>
                             )}
 
@@ -1280,7 +1287,10 @@ export default function RiderDashboard() {
                                 {hasAdditional && (
                                   <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
                                     <Sparkles className="h-3 w-3 text-amber-600" />
-                                    <span>+ R$ {Number(del.additionalValue).toFixed(2)} Extra</span>
+                                    <span>
+                                      + R$ {Number(del.additionalValue).toFixed(2)}
+                                      {del.additionalReason ? ` (${del.additionalReason})` : ' Extra'}
+                                    </span>
                                   </span>
                                 )}
 
@@ -1579,40 +1589,57 @@ export default function RiderDashboard() {
                 </div>
               </div>
 
-              {/* VALOR BASE + VALOR ADICIONAL */}
-              <div className="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
-                <div>
-                  <label className="block text-[10px] font-black text-slate-700 uppercase mb-1">
-                    Valor Base (R$)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    required
-                    value={launchForm.value}
-                    onChange={(e) => setLaunchForm({ ...launchForm, value: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm font-bold text-emerald-700 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                  />
+              {/* VALOR BASE + VALOR ADICIONAL COM JUSTIFICATIVA */}
+              <div className="space-y-2 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-700 uppercase mb-1">
+                      Valor Base (R$)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      required
+                      value={launchForm.value}
+                      onChange={(e) => setLaunchForm({ ...launchForm, value: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm font-bold text-emerald-700 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black text-amber-800 uppercase mb-1 flex items-center gap-1">
+                      <Sparkles className="h-3 w-3 text-amber-500" />
+                      <span>+ Adicional (R$)</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.00"
+                      placeholder="0.00"
+                      value={launchForm.additionalValue || ''}
+                      onChange={(e) => setLaunchForm({ ...launchForm, additionalValue: e.target.value })}
+                      className="w-full px-3 py-2 border border-amber-300 rounded-xl text-sm font-bold text-amber-900 bg-amber-50/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                    />
+                  </div>
                 </div>
 
+                {/* Justificativa do adicional */}
                 <div>
                   <label className="block text-[10px] font-black text-amber-800 uppercase mb-1 flex items-center gap-1">
-                    <Sparkles className="h-3 w-3 text-amber-500" />
-                    <span>+ Adicional (R$)</span>
+                    <HelpCircle className="h-3 w-3 text-amber-600" />
+                    <span>Justificativa do Adicional (Motivo)</span>
                   </label>
                   <input
-                    type="number"
-                    step="0.01"
-                    min="0.00"
-                    placeholder="0.00"
-                    value={launchForm.additionalValue || ''}
-                    onChange={(e) => setLaunchForm({ ...launchForm, additionalValue: e.target.value })}
-                    className="w-full px-3 py-2 border border-amber-300 rounded-xl text-sm font-bold text-amber-900 bg-amber-50/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                    type="text"
+                    placeholder="Ex: Distância / Bairro dos Cuités, Chuva, Taxa extra..."
+                    value={launchForm.additionalReason || ''}
+                    onChange={(e) => setLaunchForm({ ...launchForm, additionalReason: e.target.value })}
+                    className="w-full px-3 py-2 border border-amber-300/80 rounded-xl text-xs font-semibold text-amber-950 bg-amber-50/40 focus:outline-none focus:ring-1 focus:ring-amber-500 placeholder-amber-900/40"
                   />
                 </div>
 
-                <div className="col-span-2 pt-1 border-t border-slate-200 flex justify-between items-center text-xs">
+                <div className="pt-1.5 border-t border-slate-200 flex justify-between items-center text-xs">
                   <span className="text-slate-500 font-bold">Total da Corrida:</span>
                   <span className="text-base font-black text-emerald-600">
                     R$ {((parseFloat(launchForm.value || '0') || 0) + (parseFloat(launchForm.additionalValue || '0') || 0)).toFixed(2)}
@@ -1622,7 +1649,7 @@ export default function RiderDashboard() {
 
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                  Observações / Instruções (Opcional)
+                  Observações Gerais (Opcional)
                 </label>
                 <textarea
                   placeholder="Ex: Troco para 50, bloco B apto 201..."

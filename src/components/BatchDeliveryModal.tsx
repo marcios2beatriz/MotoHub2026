@@ -15,6 +15,7 @@ interface BatchRow {
   notes: string;
   deliveryType?: 'standard' | 'same_address';
   additionalValue?: string;
+  additionalReason?: string;
   linkedOrderNumber?: string;
 }
 
@@ -85,6 +86,7 @@ export default function BatchDeliveryModal({
         notes: '',
         deliveryType: 'standard',
         additionalValue: '',
+        additionalReason: '',
         linkedOrderNumber: ''
       };
     });
@@ -155,6 +157,7 @@ export default function BatchDeliveryModal({
       notes: '',
       deliveryType: 'standard',
       additionalValue: '',
+      additionalReason: '',
       linkedOrderNumber: ''
     };
 
@@ -174,6 +177,7 @@ export default function BatchDeliveryModal({
         notes: '',
         deliveryType: 'standard',
         additionalValue: '',
+        additionalReason: '',
         linkedOrderNumber: ''
       }]);
       return;
@@ -275,6 +279,7 @@ export default function BatchDeliveryModal({
         notes: '',
         deliveryType: isSame ? 'same_address' : 'standard',
         additionalValue: '',
+        additionalReason: '',
         linkedOrderNumber: ''
       });
     });
@@ -380,6 +385,7 @@ export default function BatchDeliveryModal({
           notes: r.notes.trim() || undefined,
           deliveryType: r.deliveryType || 'standard',
           additionalValue: addVal > 0 ? addVal : undefined,
+          additionalReason: r.additionalReason?.trim() || undefined,
           linkedOrderNumber: r.deliveryType === 'same_address' ? (r.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
           updatedAt: nowStr,
           paid: false
@@ -403,7 +409,7 @@ export default function BatchDeliveryModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-2 sm:p-4 z-[99999] overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-5xl w-full p-4 sm:p-6 space-y-4 shadow-2xl max-h-[94vh] flex flex-col border border-slate-200">
+      <div className="bg-white rounded-2xl max-w-6xl w-full p-4 sm:p-6 space-y-4 shadow-2xl max-h-[94vh] flex flex-col border border-slate-200">
         
         {/* Header */}
         <div className="flex justify-between items-center border-b border-slate-100 pb-3 flex-shrink-0">
@@ -416,10 +422,10 @@ export default function BatchDeliveryModal({
                 <span>Lançamento de Corridas em Lote</span>
                 <span className="bg-purple-100 text-purple-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase flex items-center gap-1">
                   <Link2 className="h-3 w-3" />
-                  Mesmo Endereço (R$4) & Adicionais
+                  Mesmo Endereço (R$4) & Adicional com Motivo
                 </span>
               </h3>
-              <p className="text-xs text-slate-500">Alterne entre entrega padrão (R$8) e mesmo endereço (R$4) por linha</p>
+              <p className="text-xs text-slate-500">Alterne entre entrega padrão (R$8) e mesmo endereço (R$4) e justifique adicionais</p>
             </div>
           </div>
           <button 
@@ -577,9 +583,10 @@ export default function BatchDeliveryModal({
                   <th className="p-2 w-28">Tipo / Endereço</th>
                   <th className="p-2 w-20">Horário</th>
                   <th className="p-2 w-20">Nº Pedido</th>
-                  <th className="p-2 w-24 text-right">Base (R$)</th>
-                  <th className="p-2 w-24 text-right">+ Adicional</th>
-                  <th className="p-2 w-24 text-right">Total</th>
+                  <th className="p-2 w-20 text-right">Base (R$)</th>
+                  <th className="p-2 w-20 text-right">+ Adicional</th>
+                  <th className="p-2 w-20 text-right">Total</th>
+                  <th className="p-2 w-44">Motivo do Adicional</th>
                   <th className="p-2">Vínculo / Obs</th>
                   <th className="p-2 w-10 text-center">Ações</th>
                 </tr>
@@ -677,6 +684,18 @@ export default function BatchDeliveryModal({
 
                       <td className="p-1.5 text-right font-black text-emerald-700">
                         R$ {rowTotal}
+                      </td>
+
+                      {/* Motivo do Adicional */}
+                      <td className="p-1.5">
+                        <input
+                          type="text"
+                          placeholder="Ex: Cuités, Chuva..."
+                          value={row.additionalReason || ''}
+                          onChange={(e) => handleUpdateRow(row.id, 'additionalReason', e.target.value)}
+                          className="w-full px-2 py-1 border border-amber-300/80 bg-amber-50/30 rounded text-xs font-medium text-amber-950 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          title="Justificativa do valor adicional"
+                        />
                       </td>
 
                       <td className="p-1.5">
