@@ -28,7 +28,10 @@ import {
   Hash,
   Link2,
   HelpCircle,
-  Loader2
+  Loader2,
+  Wallet,
+  Coins,
+  Receipt
 } from 'lucide-react';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
 import CustomerChatModal from '../components/CustomerChatModal';
@@ -37,6 +40,20 @@ import RiderNavigationMap from '../components/RiderNavigationMap';
 import ChatToastBanner, { ChatToast } from '../components/ChatToastBanner';
 import { sendDeviceNotification, playNotificationSound, requestNotificationPermission } from '../utils/notifications';
 import { gpsTracker, GpsState } from '../utils/gpsTracker';
+
+const ADMIN_FEE_PER_DELIVERY = 1.00;
+
+const getThisMonday = (): string => {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
+
+  const year = monday.getFullYear();
+  const month = String(monday.getMonth() + 1).padStart(2, '0');
+  const dateNum = String(monday.getDate()).padStart(2, '0');
+  return `${year}-${month}-${dateNum}`;
+};
 
 export default function RiderDashboard() {
   const navigate = useNavigate();
@@ -47,7 +64,7 @@ export default function RiderDashboard() {
   const [establishments, setEstablishments] = useState<Establishment[]>([]);
   const [routeHistory, setRouteHistory] = useState<RouteHistoryItem[]>([]);
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'schedules' | 'history' | 'notifications' | 'navigation'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'navigation' | 'schedules' | 'history' | 'earnings' | 'notifications'>('dashboard');
   const [historySubTab, setHistorySubTab] = useState<'deliveries' | 'routes'>('deliveries');
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -95,7 +112,7 @@ export default function RiderDashboard() {
   const [scheduleEstFilter, setScheduleEstFilter] = useState('');
   const [scheduleDateFilter, setScheduleDateFilter] = useState('');
 
-  // --- FILTROS DE TURNO INTELIGENTE NO HISTÓRICO ---
+  // --- FILTROS DE TURNO INTELIGENTE NO HISTÓRICO DE CORRIDAS ---
   const [filterMode, setFilterMode] = useState<'smart_shift' | 'date_range' | 'all'>('smart_shift');
   const [smartDate, setSmartDate] = useState<string>(db.getOperationalDateString());
   const [smartPeriod, setSmartPeriod] = useState<'all_shifts' | 'night_shift' | 'morning_shift' | 'afternoon_shift'>('all_shifts');
@@ -105,6 +122,13 @@ export default function RiderDashboard() {
   const [historyDateTo, setHistoryDateTo] = useState('');
 
   const [deliveryStatusFilter, setDeliveryStatusFilter] = useState<'all' | 'pending' | 'active' | 'rejected' | 'cancelled'>('all');
+
+  // --- FILTROS DA ABA HISTÓRICO DE GANHOS ---
+  const [earningsPeriodMode, setEarningsPeriodMode] = useState<'this_week' | 'last_week' | 'today' | 'this_month' | 'custom'>('this_week');
+  const [earningsCustomFrom, setEarningsCustomFrom] = useState<string>('');
+  const [earningsCustomTo, setEarningsCustomTo] = useState<string>('');
+  const [earningsPaidFilter, setEarningsPaidFilter] = useState<'all' | 'unpaid' | 'paid'>('all');
+  const [earningsEstFilter, setEarningsEstFilter] = useState<string>('');
 
   const resolveEst = (id: string): Establishment | undefined => {
     return db.resolveEstablishment(id);
@@ -647,6 +671,69 @@ export default function RiderDashboard() {
     .filter(d => d.status === 'active')
     .reduce((sum, d) => sum + Number(d.value || 0), 0);
 
+  // --- LÓGICA DO HISTÓRICO DE GANHOS ---
+  const getEarningsDateBounds = (): { start: string; end: string; label: string } => {
+    const now = new Date();
+    if (earningsPeriodMode === 'today') {
+      const todayStr = db.getOperationalDateString();
+      return { start: todayStr, end: todayStr, label: 'Hoje (Turno Atual)' };
+    }
+
+    if (earningsPeriodMode === 'this_week') {
+      const monStr = getThisMonday();
+      const [y, m, d] = monStr.split('-').map(Number);
+      const sun = new Date(y, m - 1, d + 6);
+      const sunStr = `${sun.getFullYear()}-${String(sun.getMonth() + 1).padStart(2, '0')}-${String(sun.getDate()).padStart(2, '0')}`;
+      return { start: monStr, end: sunStr, label: 'Esta Semana' };
+    }
+
+    if (earningsPeriodMode === 'last_week') {
+      const monStr = getThisMonday();
+      const [y, m, d] = monStr.split('-').map(Number);
+      const lastMon = new Date(y, m - 1, d - 7);
+      const lastSun = new Date(y, m - 1, d - 1);
+      const lastMonStr = `${lastMon.getFullYear()}-${String(lastMon.getMonth() + 1).padStart(2, '0')}-${String(lastMon.getDate()).padStart(2, '0')}`;
+      const lastSunStr = `${lastSun.getFullYear()}-${String(lastSun.getMonth() + 1).padStart(2, '0')}-${String(lastSun.getDate()).padStart(2, '0')}`;
+      return { start: lastMonStr, end: lastSunStr, label: 'Semana Passada' };
+    }
+
+    if (earningsPeriodMode === 'this_month') {
+      const y = now.getFullYear();
+      const m = now.getMonth();
+      const startStr = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+      const lastDay = new Date(y, m + 1, 0).getDate();
+      const endStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      return { start: startStr, end: endStr, label: 'Este Mês' };
+    }
+
+    return {
+      start: earningsCustomFrom || '1970-01-01',
+      end: earningsCustomTo || '2099-12-31',
+      label: 'Período Personalizado'
+    };
+  };
+
+  const earningsBounds = getEarningsDateBounds();
+
+  const filteredEarningsDeliveries = deliveries.filter(d => {
+    if (d.status !== 'active') return false; // Apenas corridas aprovadas contam no faturamento real
+
+    if (d.date < earningsBounds.start || d.date > earningsBounds.end) return false;
+
+    if (earningsEstFilter && !db.isSameEstablishment(d.establishmentId, earningsEstFilter)) return false;
+
+    if (earningsPaidFilter === 'unpaid' && d.paid) return false;
+    if (earningsPaidFilter === 'paid' && !d.paid) return false;
+
+    return true;
+  });
+
+  const earningsDeliveriesCount = filteredEarningsDeliveries.length;
+  const earningsGrossTotal = filteredEarningsDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
+  const earningsAdminCut = earningsDeliveriesCount * ADMIN_FEE_PER_DELIVERY;
+  const earningsRiderNet = Math.max(0, earningsGrossTotal - earningsAdminCut);
+  const isAllEarningsPaid = earningsDeliveriesCount > 0 && filteredEarningsDeliveries.every(d => d.paid);
+
   const activeNotesDelivery = deliveries.find(d => d.id === notesDeliveryId) || null;
   const activeCustomerChatDelivery = deliveries.find(d => d.id === customerChatDeliveryId) || null;
   const activeScheduleChat = schedules.find(s => s.id === activeScheduleChatId) || null;
@@ -719,47 +806,63 @@ export default function RiderDashboard() {
           </div>
         </div>
 
-        <div className="grid grid-cols-5 bg-white rounded-lg p-1 shadow-sm mb-6 border border-slate-200 gap-1 text-xs sm:text-sm sticky top-[68px] z-20">
+        {/* BARRA DE NAVEGAÇÃO ENTRE ABAS COM A NOVA ABA "GANHOS" */}
+        <div className="grid grid-cols-3 sm:grid-cols-6 bg-white rounded-xl p-1 shadow-sm mb-6 border border-slate-200 gap-1 text-xs sticky top-[68px] z-20">
           <button
             onClick={() => setActiveTab('dashboard')}
-            className={`py-2.5 font-medium rounded-md flex items-center justify-center space-x-1 transition-colors ${
-              activeTab === 'dashboard' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+            className={`py-2.5 font-bold rounded-lg flex items-center justify-center space-x-1 transition-colors ${
+              activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
             <TrendingUp className="h-4 w-4" />
             <span>Início</span>
           </button>
+          
           <button
             onClick={() => setActiveTab('navigation')}
-            className={`py-2.5 font-medium rounded-md flex items-center justify-center space-x-1 transition-colors ${
-              activeTab === 'navigation' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+            className={`py-2.5 font-bold rounded-lg flex items-center justify-center space-x-1 transition-colors ${
+              activeTab === 'navigation' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
             <Compass className="h-4 w-4 text-emerald-400" />
             <span>GPS App</span>
           </button>
+
           <button
             onClick={() => setActiveTab('schedules')}
-            className={`py-2.5 font-medium rounded-md flex items-center justify-center space-x-1 transition-colors ${
-              activeTab === 'schedules' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+            className={`py-2.5 font-bold rounded-lg flex items-center justify-center space-x-1 transition-colors ${
+              activeTab === 'schedules' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
             <Calendar className="h-4 w-4" />
             <span>Escalas</span>
           </button>
+
           <button
             onClick={() => setActiveTab('history')}
-            className={`py-2.5 font-medium rounded-md flex items-center justify-center space-x-1 transition-colors ${
-              activeTab === 'history' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+            className={`py-2.5 font-bold rounded-lg flex items-center justify-center space-x-1 transition-colors ${
+              activeTab === 'history' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
             <History className="h-4 w-4" />
             <span>Histórico</span>
           </button>
+
+          {/* NOVA ABA DE HISTÓRICO DE GANHOS */}
+          <button
+            onClick={() => setActiveTab('earnings')}
+            className={`py-2.5 font-bold rounded-lg flex items-center justify-center space-x-1 transition-colors ${
+              activeTab === 'earnings' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-700 bg-emerald-50/50 hover:bg-emerald-100/70'
+            }`}
+          >
+            <Wallet className="h-4 w-4" />
+            <span>Ganhos</span>
+          </button>
+
           <button
             onClick={() => setActiveTab('notifications')}
-            className={`py-2.5 font-medium rounded-md flex items-center justify-center space-x-1 relative ${
-              activeTab === 'notifications' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+            className={`py-2.5 font-bold rounded-lg flex items-center justify-center space-x-1 relative ${
+              activeTab === 'notifications' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
             <Bell className="h-4 w-4" />
@@ -1118,13 +1221,14 @@ export default function RiderDashboard() {
           </div>
         )}
 
+        {/* ABA: HISTÓRICO DE CORRIDAS & ROTAS GPS */}
         {activeTab === 'history' && (
           <div className="space-y-6">
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
                 <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                   <History className="h-5 w-5 text-indigo-600" />
-                  <span>Histórico Geral</span>
+                  <span>Histórico de Corridas</span>
                 </h2>
 
                 <div className="flex items-center gap-2">
@@ -1405,6 +1509,301 @@ export default function RiderDashboard() {
                   )}
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* NOVA ABA: HISTÓRICO DE GANHOS DO MOTOBOY */}
+        {activeTab === 'earnings' && (
+          <div className="space-y-6">
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6">
+              
+              {/* Header da Aba de Ganhos */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                <div>
+                  <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
+                    <Wallet className="h-6 w-6 text-emerald-600" />
+                    <span>Histórico de Ganhos & Repasses</span>
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Acompanhe seu faturamento líquido com desconto de R$ 1,00/corrida da taxa administrativa
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold text-slate-400 uppercase">Status:</span>
+                  <select
+                    value={earningsPaidFilter}
+                    onChange={(e) => setEarningsPaidFilter(e.target.value as any)}
+                    className="px-3 py-1.5 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  >
+                    <option value="all">Todas as Corridas</option>
+                    <option value="unpaid">A Repassar (Pendentes)</option>
+                    <option value="paid">Já Pagas (Baixadas)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* FILTROS DE PERÍODO */}
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-200/60 pb-2.5">
+                  <span className="text-xs font-black uppercase text-indigo-900 flex items-center gap-1.5 tracking-wider">
+                    <Filter className="h-4 w-4 text-emerald-600" />
+                    <span>Período Selecionado: {earningsBounds.label}</span>
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEarningsPeriodMode('this_week')}
+                    className={`py-2 rounded-xl text-xs font-black transition-all border ${
+                      earningsPeriodMode === 'this_week' 
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' 
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    📅 Esta Semana
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setEarningsPeriodMode('last_week')}
+                    className={`py-2 rounded-xl text-xs font-black transition-all border ${
+                      earningsPeriodMode === 'last_week' 
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' 
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    ⏮️ Semana Passada
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setEarningsPeriodMode('today')}
+                    className={`py-2 rounded-xl text-xs font-black transition-all border ${
+                      earningsPeriodMode === 'today' 
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' 
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    ⚡ Hoje (Turno)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setEarningsPeriodMode('this_month')}
+                    className={`py-2 rounded-xl text-xs font-black transition-all border ${
+                      earningsPeriodMode === 'this_month' 
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' 
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    📆 Este Mês
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setEarningsPeriodMode('custom')}
+                    className={`py-2 rounded-xl text-xs font-black transition-all border ${
+                      earningsPeriodMode === 'custom' 
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' 
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    🔍 Personalizado
+                  </button>
+                </div>
+
+                {earningsPeriodMode === 'custom' && (
+                  <div className="grid grid-cols-2 gap-3 pt-2">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data Inicial</label>
+                      <input
+                        type="date"
+                        value={earningsCustomFrom}
+                        onChange={(e) => setEarningsCustomFrom(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data Final</label>
+                      <input
+                        type="date"
+                        value={earningsCustomTo}
+                        onChange={(e) => setEarningsCustomTo(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-bold"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="pt-2 border-t border-slate-200/60">
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                    Filtrar por Estabelecimento
+                  </label>
+                  <select
+                    value={earningsEstFilter}
+                    onChange={(e) => setEarningsEstFilter(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-semibold"
+                  >
+                    <option value="">Todos os Meus Estabelecimentos</option>
+                    {riderHistoryEsts.map(est => (
+                      <option key={est.id} value={est.id}>{est.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* CARD DE GANHOS DO MOTOBOY (DESIGN EXATO DA IMAGEM DO USUÁRIO) */}
+              <div className="p-6 rounded-3xl border-2 border-indigo-200/90 bg-white shadow-md space-y-4">
+                
+                {/* Header do Card com Nome, Telefone e Badge de Status */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3.5 min-w-0">
+                    <div className="w-12 h-12 rounded-full bg-indigo-600 text-white font-black text-lg flex items-center justify-center flex-shrink-0 shadow-md">
+                      {user?.name ? user.name.charAt(0).toUpperCase() : 'M'}
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="font-extrabold text-slate-900 text-base sm:text-lg truncate">
+                        {user?.name}
+                      </h3>
+                      <p className="text-xs text-slate-500 font-mono mt-0.5">
+                        {user?.phone || 'Telefone não cadastrado'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <span className={`text-[11px] font-black px-3.5 py-1 rounded-full uppercase tracking-wider shadow-xs ${
+                    earningsDeliveriesCount === 0 
+                      ? 'bg-slate-100 text-slate-500' 
+                      : isAllEarningsPaid 
+                        ? 'bg-emerald-100 text-emerald-800' 
+                        : 'bg-amber-100 text-amber-900 border border-amber-300'
+                  }`}>
+                    {earningsDeliveriesCount === 0 ? 'SEM CORRIDAS' : isAllEarningsPaid ? 'PAGO' : 'A REPASSAR'}
+                  </span>
+                </div>
+
+                {/* Grid dos 3 Blocos (Corridas, Taxa Adm R$ 1, Líquido Motoboy) */}
+                <div className="grid grid-cols-3 gap-2.5 pt-2 text-center">
+                  
+                  {/* Bloco 1: Corridas */}
+                  <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 flex flex-col justify-center">
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider">CORRIDAS</p>
+                    <p className="text-2xl sm:text-3xl font-black text-slate-900 mt-1">
+                      {earningsDeliveriesCount}
+                    </p>
+                  </div>
+
+                  {/* Bloco 2: Taxa Adm (R$ 1) */}
+                  <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-3.5 flex flex-col justify-center">
+                    <p className="text-[10px] font-black text-amber-800 uppercase tracking-wider">TAXA ADM (R$1)</p>
+                    <p className="text-xl sm:text-2xl font-black text-amber-700 mt-1">
+                      R$ {earningsAdminCut.toFixed(2)}
+                    </p>
+                  </div>
+
+                  {/* Bloco 3: Líquido Motoboy */}
+                  <div className="bg-emerald-50 border-2 border-emerald-300 rounded-2xl p-3.5 flex flex-col justify-center">
+                    <p className="text-[10px] font-black text-emerald-800 uppercase tracking-wider">LÍQUIDO MOTOBOY</p>
+                    <p className="text-xl sm:text-2xl font-black text-emerald-700 mt-1">
+                      R$ {earningsRiderNet.toFixed(2)}
+                    </p>
+                  </div>
+
+                </div>
+
+                {/* Linha Inferior com Bruto Total e Status */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-3 border-t border-slate-100 text-xs">
+                  <div className="text-slate-600 font-bold">
+                    <span>Bruto Total: </span>
+                    <strong className="text-slate-900 font-black text-sm">
+                      R$ {earningsGrossTotal.toFixed(2)}
+                    </strong>
+                  </div>
+
+                  <div className="text-right">
+                    <span className="text-[11px] text-slate-400 font-semibold">
+                      {earningsDeliveriesCount > 0 
+                        ? `${earningsDeliveriesCount} corrida(s) no período de ${earningsBounds.label}` 
+                        : 'Nenhuma corrida registrada no período'}
+                    </span>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* LISTA DISCRIMINADA DAS CORRIDAS DO PERÍODO */}
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-black uppercase text-slate-700 tracking-wider flex items-center gap-1.5">
+                    <Receipt className="h-4 w-4 text-emerald-600" />
+                    <span>Detalhamento das Corridas do Período ({filteredEarningsDeliveries.length})</span>
+                  </h4>
+                </div>
+
+                {filteredEarningsDeliveries.length === 0 ? (
+                  <div className="text-center py-10 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-400">
+                    Nenhuma corrida aprovada neste período.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100 bg-white rounded-2xl border border-slate-200 overflow-hidden">
+                    {filteredEarningsDeliveries.map(del => {
+                      const est = resolveEst(del.establishmentId);
+                      const isSame = del.deliveryType === 'same_address';
+                      const hasAdd = Number(del.additionalValue || 0) > 0;
+                      const riderNetVal = Math.max(0, Number(del.value) - ADMIN_FEE_PER_DELIVERY);
+
+                      return (
+                        <div key={del.id} className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-slate-50 transition-colors">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {del.orderNumber && (
+                                <span className="bg-indigo-600 text-white font-black text-[10px] px-2 py-0.5 rounded-md">
+                                  #{del.orderNumber}
+                                </span>
+                              )}
+                              <p className="font-extrabold text-slate-800 text-xs">{est?.name || 'Estabelecimento'}</p>
+
+                              {isSame && (
+                                <span className="bg-purple-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-0.5">
+                                  <Link2 className="h-2.5 w-2.5" />
+                                  <span>Mesmo Endereço</span>
+                                </span>
+                              )}
+
+                              {hasAdd && (
+                                <span className="bg-amber-100 text-amber-900 text-[9px] font-bold px-1.5 py-0.5 rounded-full">
+                                  + R$ {Number(del.additionalValue).toFixed(2)} {del.additionalReason ? `(${del.additionalReason})` : ''}
+                                </span>
+                              )}
+
+                              <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${
+                                del.paid ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-900'
+                              }`}>
+                                {del.paid ? 'Pago' : 'A Repassar'}
+                              </span>
+                            </div>
+
+                            <p className="text-[11px] text-slate-400">
+                              {new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR')} às {del.time}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-3 justify-between sm:justify-end">
+                            <div className="text-right">
+                              <p className="text-[10px] text-slate-400 font-bold">Bruto: R$ {Number(del.value).toFixed(2)}</p>
+                              <p className="text-xs font-black text-emerald-600">Líquido: R$ {riderNetVal.toFixed(2)}</p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
             </div>
           </div>
         )}
