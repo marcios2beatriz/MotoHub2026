@@ -771,8 +771,14 @@ export default function AdminDashboard() {
     if (cleanOrderNumber) {
       const dupCheck = db.checkDuplicateOrderNumber(cleanOrderNumber, deliveryForm.date, deliveryForm.time, editingDelivery?.id);
       if (dupCheck.isDuplicate) {
-        alert(`⚠️ Erro: O pedido #${cleanOrderNumber} já foi lançado hoje por ${dupCheck.riderName}.\n\nNão é permitido lançar mais de uma corrida com o mesmo número de pedido.`);
-        return;
+        const confirmDuplicate = confirm(
+          `⚠️ Aviso: O pedido #${cleanOrderNumber} já consta lançado hoje para "${dupCheck.riderName}".\n\n` +
+          `Como Administrador, você pode autorizar pedidos divididos ou complementares.\n\n` +
+          `Deseja confirmar o lançamento desta corrida duplicada/dividida mesmo assim?`
+        );
+        if (!confirmDuplicate) {
+          return;
+        }
       }
     }
 

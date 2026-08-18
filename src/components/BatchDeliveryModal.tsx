@@ -313,7 +313,7 @@ export default function BatchDeliveryModal({
       return;
     }
 
-    // 1. Validação de duplicidade dentro do próprio lote
+    // 1. Verificação de repetição interna no lote
     const seenBatchNumbers = new Set<string>();
     const internalDuplicates: string[] = [];
 
@@ -329,11 +329,13 @@ export default function BatchDeliveryModal({
     }
 
     if (internalDuplicates.length > 0) {
-      alert(`⚠️ Erro: Existem números de pedidos duplicados dentro da própria tabela de lançamento:\n\n• Pedido(s): #${internalDuplicates.join(', #')}\n\nCada corrida deve possuir um número exclusivo.`);
-      return;
+      const confirmInternal = confirm(
+        `⚠️ Aviso: Há pedidos com o mesmo número dentro desta tabela de lançamento:\n\n• Pedido(s): #${internalDuplicates.join(', #')}\n\nDeseja confirmar o lançamento conjunto mesmo assim (ex: pedidos divididos entre motoboys)?`
+      );
+      if (!confirmInternal) return;
     }
 
-    // 2. Validação de duplicidade contra o banco de dados do dia operacional
+    // 2. Verificação de repetição contra o banco de dados do dia operacional
     const dbDuplicates: { orderNumber: string; riderName: string }[] = [];
     for (const r of validRows) {
       const num = r.orderNumber.trim().replace('#', '');
@@ -350,8 +352,10 @@ export default function BatchDeliveryModal({
 
     if (dbDuplicates.length > 0) {
       const details = dbDuplicates.map(d => `• Pedido #${d.orderNumber} (já lançado por ${d.riderName})`).join('\n');
-      alert(`⚠️ Erro: Os seguintes pedidos já foram lançados hoje no sistema:\n\n${details}\n\nNenhum pedido pode ser lançado mais de uma vez no mesmo dia.`);
-      return;
+      const confirmDb = confirm(
+        `⚠️ Aviso: Os seguintes pedidos já foram registrados hoje no sistema:\n\n${details}\n\nDeseja confirmar o lançamento complementar mesmo assim (ex: corrida dividida/adicional)?`
+      );
+      if (!confirmDb) return;
     }
 
     setIsSaving(true);
