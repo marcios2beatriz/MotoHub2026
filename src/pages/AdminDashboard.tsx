@@ -45,7 +45,8 @@ import {
   Percent,
   Wallet,
   Coins,
-  Receipt
+  Receipt,
+  Link2
 } from 'lucide-react';
 
 import L from 'leaflet';
@@ -179,7 +180,19 @@ export default function AdminDashboard() {
 
   const [showDeliveryModal, setShowDeliveryModal] = useState(false);
   const [editingDelivery, setEditingDelivery] = useState<Delivery | null>(null);
-  const [deliveryForm, setDeliveryForm] = useState({ riderId: '', establishmentId: '', date: '', time: '', value: '', orderNumber: '', notes: '' });
+  const [deliveryForm, setDeliveryForm] = useState({
+    riderId: '',
+    establishmentId: '',
+    date: '',
+    time: '',
+    value: '',
+    orderNumber: '',
+    notes: '',
+    deliveryType: 'standard' as 'standard' | 'same_address',
+    additionalValue: '',
+    additionalReason: '',
+    linkedOrderNumber: ''
+  });
 
   const [showBatchModal, setShowBatchModal] = useState(false);
 
@@ -745,8 +758,11 @@ export default function AdminDashboard() {
 
   const handleSaveDelivery = async (e: React.FormEvent) => {
     e.preventDefault();
-    const val = parseFloat(deliveryForm.value);
-    if (isNaN(val) || val <= 0) {
+    const baseVal = parseFloat(deliveryForm.value);
+    const addVal = parseFloat(deliveryForm.additionalValue || '0') || 0;
+    const finalVal = baseVal + addVal;
+
+    if (isNaN(finalVal) || finalVal <= 0) {
       alert('Erro: O valor da corrida deve ser maior que zero.');
       return;
     }
@@ -770,10 +786,14 @@ export default function AdminDashboard() {
         establishmentId: deliveryForm.establishmentId,
         date: deliveryForm.date,
         time: deliveryForm.time,
-        value: val,
+        value: finalVal,
         scheduleId: activeSchedule?.id || d.scheduleId,
         orderNumber: cleanOrderNumber || undefined,
         notes: deliveryForm.notes.trim() || undefined,
+        deliveryType: deliveryForm.deliveryType,
+        additionalValue: addVal > 0 ? addVal : undefined,
+        additionalReason: deliveryForm.additionalReason?.trim() || undefined,
+        linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
         updatedAt: nowStr
       } : d);
       await db.setDeliveries(updated);
@@ -784,11 +804,15 @@ export default function AdminDashboard() {
         establishmentId: deliveryForm.establishmentId,
         date: deliveryForm.date,
         time: deliveryForm.time,
-        value: val,
+        value: finalVal,
         status: 'active',
         scheduleId: activeSchedule?.id,
         orderNumber: cleanOrderNumber || undefined,
         notes: deliveryForm.notes.trim() || undefined,
+        deliveryType: deliveryForm.deliveryType,
+        additionalValue: addVal > 0 ? addVal : undefined,
+        additionalReason: deliveryForm.additionalReason?.trim() || undefined,
+        linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
         updatedAt: nowStr,
         paid: false
       };
@@ -958,7 +982,7 @@ export default function AdminDashboard() {
       const [y, m, d] = monStr.split('-').map(Number);
       const lastMon = new Date(y, m - 1, d - 7);
       const lastSun = new Date(y, m - 1, d - 1);
-      const lastMonStr = `${lastMon.getFullYear()}-${String(lastMon.getMonth() + 1).padStart(2, '0')}-${String(lastMon.getDate()).padStart(2, '0')}`;
+      const lastMonStr = `${lastMon.getFullYear()}-${String(lastMon.getMonth() + 1).padStart(2, '0')}-${String(lastSun.getDate()).padStart(2, '0')}`;
       const lastSunStr = `${lastSun.getFullYear()}-${String(lastSun.getMonth() + 1).padStart(2, '0')}-${String(lastSun.getDate()).padStart(2, '0')}`;
       return { start: lastMonStr, end: lastSunStr, label: 'Semana Passada' };
     }
@@ -1524,7 +1548,7 @@ export default function AdminDashboard() {
                         <MapIcon className="h-5 w-5" />
                       </div>
                       <div>
-                        <h3 className="font-extrabold text-sm sm:text-base">Monitoramento GPS - Tela Cheia</h3>
+                        <h3 className="font-extrabold text-sm sm:base">Monitoramento GPS - Tela Cheia</h3>
                         <p className="text-xs text-slate-400">{onlineRiderLocations.length} motoboy(s) online com sinal GPS ativo</p>
                       </div>
                     </div>
@@ -2051,7 +2075,7 @@ export default function AdminDashboard() {
                   <button
                     onClick={() => {
                       setEditingDelivery(null);
-                      setDeliveryForm({ riderId: '', establishmentId: '', date: db.getOperationalDateString(), time: new Date().toTimeString().slice(0,5), value: '', orderNumber: '', notes: '' });
+                      setDeliveryForm({ riderId: '', establishmentId: '', date: db.getOperationalDateString(), time: new Date().toTimeString().slice(0,5), value: '', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', additionalReason: '', linkedOrderNumber: '' });
                       setShowDeliveryModal(true);
                     }}
                     className="flex items-center justify-center space-x-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-md hover:shadow-lg"
@@ -2286,6 +2310,8 @@ export default function AdminDashboard() {
                     const isPending = del.status === 'pending';
                     const hasNotes = Boolean(del.notes && del.notes.trim());
                     const notesCount = del.notes ? del.notes.split('\n').filter(l => l.trim()).length : 0;
+                    const isSame = del.deliveryType === 'same_address';
+                    const hasAdditional = Number(del.additionalValue || 0) > 0;
 
                     return (
                       <div key={del.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/60 p-2 rounded-xl transition-colors">
@@ -2298,6 +2324,26 @@ export default function AdminDashboard() {
                             )}
                             <p className="font-extrabold text-slate-800 text-sm">{rider?.name || 'Motoboy'}</p>
                             <span className="text-xs text-slate-500 font-medium">• {est?.name || 'Estabelecimento'}</span>
+                            
+                            {/* Badge Mesmo Endereço com Vinculação */}
+                            {isSame && (
+                              <span className="bg-purple-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                                <Link2 className="h-3 w-3" />
+                                <span>Mesmo Endereço {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : ''}</span>
+                              </span>
+                            )}
+
+                            {/* Badge Valor Adicional com Motivo */}
+                            {hasAdditional && (
+                              <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <Sparkles className="h-3 w-3 text-amber-600" />
+                                <span>
+                                  + R$ {Number(del.additionalValue).toFixed(2)}
+                                  {del.additionalReason ? ` (${del.additionalReason})` : ' Extra'}
+                                </span>
+                              </span>
+                            )}
+
                             <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
                               del.status === 'active' ? 'bg-emerald-100 text-emerald-800' :
                               del.status === 'pending' ? 'bg-amber-100 text-amber-800 font-black animate-pulse' :
@@ -2370,7 +2416,11 @@ export default function AdminDashboard() {
                                 time: del.time,
                                 value: del.value.toString(),
                                 orderNumber: del.orderNumber || '',
-                                notes: del.notes || ''
+                                notes: del.notes || '',
+                                deliveryType: del.deliveryType || 'standard',
+                                additionalValue: del.additionalValue ? del.additionalValue.toString() : '',
+                                additionalReason: del.additionalReason || '',
+                                linkedOrderNumber: del.linkedOrderNumber || ''
                               });
                               setShowDeliveryModal(true);
                             }}
