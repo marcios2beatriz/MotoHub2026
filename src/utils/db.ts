@@ -406,17 +406,23 @@ export const db = {
   async setDeliveries(deliveries: Delivery[]) {
     memoryDeliveries = deliveries;
     const payload = deliveries.map(d => {
-      const serializedOrderNumber = JSON.stringify({
-        orderNumber: d.orderNumber || '',
-        notes: d.notes || '',
-        customerChat: d.customerChat || '',
-        deliveryType: d.deliveryType || 'standard',
-        additionalValue: Number(d.additionalValue || 0),
-        additionalReason: d.additionalReason || '',
-        linkedOrderNumber: d.linkedOrderNumber || '',
-        linkedDeliveryId: d.linkedDeliveryId || '',
-        updatedAt: d.updatedAt || new Date().toISOString()
-      });
+      // Cria payload ultra-compacto para nunca estourar o limite de varchar(255) da coluna order_number
+      const compactMeta: any = {};
+      if (d.orderNumber) compactMeta.o = d.orderNumber;
+      if (d.notes) compactMeta.n = d.notes.slice(0, 100);
+      if (d.customerChat) compactMeta.c = d.customerChat.slice(-100);
+      if (d.deliveryType && d.deliveryType !== 'standard') compactMeta.t = 'm';
+      if (d.additionalValue && Number(d.additionalValue) > 0) compactMeta.a = Number(d.additionalValue);
+      if (d.additionalReason) compactMeta.r = d.additionalReason.slice(0, 40);
+      if (d.linkedOrderNumber) compactMeta.l = d.linkedOrderNumber.slice(0, 10);
+
+      let serializedOrderNumber = Object.keys(compactMeta).length > 0 
+        ? JSON.stringify(compactMeta) 
+        : (d.orderNumber || '');
+
+      if (serializedOrderNumber.length > 250) {
+        serializedOrderNumber = serializedOrderNumber.slice(0, 250);
+      }
 
       return {
         id: d.id,
@@ -721,13 +727,13 @@ export const db = {
           if (d.order_number && d.order_number.startsWith('{')) {
             try {
               const parsed = JSON.parse(d.order_number);
-              orderNumber = parsed.orderNumber || undefined;
-              notes = parsed.notes || undefined;
-              customerChat = parsed.customerChat || undefined;
-              deliveryType = parsed.deliveryType || 'standard';
-              additionalValue = Number(parsed.additionalValue || 0);
-              additionalReason = parsed.additionalReason || undefined;
-              linkedOrderNumber = parsed.linkedOrderNumber || undefined;
+              orderNumber = parsed.orderNumber || parsed.o || undefined;
+              notes = parsed.notes || parsed.n || undefined;
+              customerChat = parsed.customerChat || parsed.c || undefined;
+              deliveryType = parsed.deliveryType || (parsed.t === 'm' ? 'same_address' : 'standard') || 'standard';
+              additionalValue = Number(parsed.additionalValue || parsed.a || 0);
+              additionalReason = parsed.additionalReason || parsed.r || undefined;
+              linkedOrderNumber = parsed.linkedOrderNumber || parsed.l || undefined;
               linkedDeliveryId = parsed.linkedDeliveryId || undefined;
               updatedAt = parsed.updatedAt || d.updated_at;
             } catch (e) {}
