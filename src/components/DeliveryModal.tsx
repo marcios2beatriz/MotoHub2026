@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
-import { X, Link2, Plus, DollarSign, Sparkles, AlertCircle, HelpCircle } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, Link2, Plus, DollarSign, Sparkles, AlertCircle, HelpCircle, Loader2 } from 'lucide-react';
 import { User, Establishment, Delivery, db } from '../utils/db';
 
 interface DeliveryModalProps {
@@ -25,6 +25,7 @@ interface DeliveryModalProps {
   };
   setDeliveryForm: React.Dispatch<React.SetStateAction<any>>;
   onSave: (e: React.FormEvent) => void;
+  isSubmitting?: boolean;
 }
 
 export default function DeliveryModal({
@@ -35,7 +36,8 @@ export default function DeliveryModal({
   establishments,
   deliveryForm,
   setDeliveryForm,
-  onSave
+  onSave,
+  isSubmitting = false
 }: DeliveryModalProps) {
   if (!isOpen) return null;
 
@@ -81,7 +83,12 @@ export default function DeliveryModal({
               <p className="text-xs text-slate-500">Defina valor base, adicionais com motivo e vinculação</p>
             </div>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1">
+          <button 
+            type="button"
+            disabled={isSubmitting}
+            onClick={onClose} 
+            className="text-slate-400 hover:text-slate-600 p-1 disabled:opacity-50"
+          >
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -96,6 +103,7 @@ export default function DeliveryModal({
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
+                disabled={isSubmitting}
                 onClick={() => handleSelectDeliveryType('standard')}
                 className={`py-2.5 px-3 rounded-xl border text-xs font-extrabold flex flex-col items-center justify-center transition-all ${
                   !isSameAddress
@@ -109,6 +117,7 @@ export default function DeliveryModal({
 
               <button
                 type="button"
+                disabled={isSubmitting}
                 onClick={() => handleSelectDeliveryType('same_address')}
                 className={`py-2.5 px-3 rounded-xl border text-xs font-extrabold flex flex-col items-center justify-center transition-all ${
                   isSameAddress
@@ -141,9 +150,10 @@ export default function DeliveryModal({
               {availableDeliveries.length > 0 ? (
                 <div>
                   <select
+                    disabled={isSubmitting}
                     value={deliveryForm.linkedOrderNumber || ''}
                     onChange={(e) => setDeliveryForm({ ...deliveryForm, linkedOrderNumber: e.target.value })}
-                    className="w-full px-3 py-2 border border-purple-300 rounded-lg text-xs bg-white font-bold text-purple-900 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                    className="w-full px-3 py-2 border border-purple-300 rounded-lg text-xs bg-white font-bold text-purple-900 focus:outline-none focus:ring-1 focus:ring-purple-500 disabled:opacity-50"
                   >
                     <option value="">Selecione o pedido do mesmo endereço...</option>
                     {availableDeliveries.map(d => (
@@ -157,10 +167,11 @@ export default function DeliveryModal({
                 <div className="relative">
                   <input
                     type="text"
+                    disabled={isSubmitting}
                     placeholder="Digite o Nº do Pedido Principal (Ex: 1042)"
                     value={deliveryForm.linkedOrderNumber || ''}
                     onChange={(e) => setDeliveryForm({ ...deliveryForm, linkedOrderNumber: e.target.value })}
-                    className="w-full px-3 py-2 border border-purple-300 rounded-lg text-xs bg-white font-bold text-purple-900 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                    className="w-full px-3 py-2 border border-purple-300 rounded-lg text-xs bg-white font-bold text-purple-900 focus:outline-none focus:ring-1 focus:ring-purple-500 disabled:opacity-50"
                   />
                 </div>
               )}
@@ -176,9 +187,10 @@ export default function DeliveryModal({
               <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">Motoboy</label>
               <select
                 required
+                disabled={isSubmitting}
                 value={deliveryForm.riderId}
                 onChange={(e) => setDeliveryForm({ ...deliveryForm, riderId: e.target.value })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
               >
                 <option value="">Selecione...</option>
                 {activeRiders.map(r => (
@@ -191,9 +203,10 @@ export default function DeliveryModal({
               <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">Estabelecimento</label>
               <select
                 required
+                disabled={isSubmitting}
                 value={deliveryForm.establishmentId}
                 onChange={(e) => setDeliveryForm({ ...deliveryForm, establishmentId: e.target.value })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
               >
                 <option value="">Selecione...</option>
                 {activeEsts.map(e => (
@@ -210,9 +223,10 @@ export default function DeliveryModal({
               <input
                 type="date"
                 required
+                disabled={isSubmitting}
                 value={deliveryForm.date}
                 onChange={(e) => setDeliveryForm({ ...deliveryForm, date: e.target.value })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
               />
             </div>
             <div>
@@ -220,9 +234,10 @@ export default function DeliveryModal({
               <input
                 type="time"
                 required
+                disabled={isSubmitting}
                 value={deliveryForm.time}
                 onChange={(e) => setDeliveryForm({ ...deliveryForm, time: e.target.value })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
               />
             </div>
           </div>
@@ -232,10 +247,11 @@ export default function DeliveryModal({
             <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">Nº do Pedido</label>
             <input
               type="text"
+              disabled={isSubmitting}
               placeholder="Ex: 1042"
               value={deliveryForm.orderNumber}
               onChange={(e) => setDeliveryForm({ ...deliveryForm, orderNumber: e.target.value })}
-              className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
             />
           </div>
 
@@ -251,10 +267,11 @@ export default function DeliveryModal({
                   step="0.01"
                   required
                   min="0.01"
+                  disabled={isSubmitting}
                   placeholder="8.00"
                   value={deliveryForm.value}
                   onChange={(e) => setDeliveryForm({ ...deliveryForm, value: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-black text-emerald-700 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-black text-emerald-700 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:opacity-50"
                 />
               </div>
 
@@ -267,10 +284,11 @@ export default function DeliveryModal({
                   type="number"
                   step="0.01"
                   min="0.00"
+                  disabled={isSubmitting}
                   placeholder="0.00"
                   value={deliveryForm.additionalValue || ''}
                   onChange={(e) => setDeliveryForm({ ...deliveryForm, additionalValue: e.target.value })}
-                  className="w-full px-3 py-2 border border-amber-300 rounded-xl text-xs font-black text-amber-900 bg-amber-50/50 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  className="w-full px-3 py-2 border border-amber-300 rounded-xl text-xs font-black text-amber-900 bg-amber-50/50 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:opacity-50"
                 />
               </div>
             </div>
@@ -283,10 +301,11 @@ export default function DeliveryModal({
               </label>
               <input
                 type="text"
+                disabled={isSubmitting}
                 placeholder="Ex: Distância / Bairro dos Cuités, Chuva, Taxa extra..."
                 value={deliveryForm.additionalReason || ''}
                 onChange={(e) => setDeliveryForm({ ...deliveryForm, additionalReason: e.target.value })}
-                className="w-full px-3 py-2 border border-amber-300/80 rounded-xl text-xs font-semibold text-amber-950 bg-amber-50/40 focus:outline-none focus:ring-1 focus:ring-amber-500 placeholder-amber-900/40"
+                className="w-full px-3 py-2 border border-amber-300/80 rounded-xl text-xs font-semibold text-amber-950 bg-amber-50/40 focus:outline-none focus:ring-1 focus:ring-amber-500 placeholder-amber-900/40 disabled:opacity-50"
               />
             </div>
 
@@ -300,11 +319,12 @@ export default function DeliveryModal({
           <div>
             <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">Observações Gerais (Opcional)</label>
             <textarea
+              disabled={isSubmitting}
               placeholder="Ex: Apartamento 302, bloco C, troco para 50..."
               value={deliveryForm.notes}
               onChange={(e) => setDeliveryForm({ ...deliveryForm, notes: e.target.value })}
               rows={2}
-              className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs focus:outline-none resize-none"
+              className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs focus:outline-none resize-none disabled:opacity-50"
             />
           </div>
 
@@ -312,16 +332,25 @@ export default function DeliveryModal({
           <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={onClose}
-              className="px-4 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors"
+              className="px-4 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50"
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black transition-all shadow-md"
+              disabled={isSubmitting}
+              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white rounded-xl text-xs font-black transition-all shadow-md flex items-center gap-1.5"
             >
-              Salvar Corrida
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>Salvando...</span>
+                </>
+              ) : (
+                <span>Salvar Corrida</span>
+              )}
             </button>
           </div>
         </form>

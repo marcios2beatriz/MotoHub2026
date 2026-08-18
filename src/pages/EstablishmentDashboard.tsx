@@ -64,6 +64,7 @@ export default function EstablishmentDashboard() {
   const [sortOrder, setSortOrder] = useState<'recent' | 'oldest' | 'highest_value'>('recent');
 
   const [showDeliveryModal, setShowDeliveryModal] = useState(false);
+  const [isSubmittingDelivery, setIsSubmittingDelivery] = useState(false);
   const [showBatchModal, setShowBatchModal] = useState(false);
   const [editingDelivery, setEditingDelivery] = useState<Delivery | null>(null);
   const [deliveryForm, setDeliveryForm] = useState({
@@ -383,7 +384,7 @@ export default function EstablishmentDashboard() {
 
   const handleSaveDelivery = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentEst) return;
+    if (!currentEst || isSubmittingDelivery) return;
 
     const baseVal = parseFloat(deliveryForm.value);
     const addVal = parseFloat(deliveryForm.additionalValue || '0') || 0;
@@ -403,49 +404,58 @@ export default function EstablishmentDashboard() {
       }
     }
 
-    const allDeliveries = db.getDeliveries();
-    const nowStr = new Date().toISOString();
+    setIsSubmittingDelivery(true);
 
-    if (editingDelivery) {
-      const updated = allDeliveries.map(d => d.id === editingDelivery.id ? {
-        ...d,
-        riderId: deliveryForm.riderId,
-        date: deliveryForm.date,
-        time: deliveryForm.time,
-        value: finalVal,
-        orderNumber: cleanOrderNumber || undefined,
-        notes: deliveryForm.notes.trim() || undefined,
-        deliveryType: deliveryForm.deliveryType,
-        additionalValue: addVal > 0 ? addVal : undefined,
-        additionalReason: deliveryForm.additionalReason?.trim() || undefined,
-        linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
-        updatedAt: nowStr
-      } : d);
-      await db.setDeliveries(updated);
-    } else {
-      const newDelivery: Delivery = {
-        id: 'd_' + Date.now(),
-        riderId: deliveryForm.riderId,
-        establishmentId: currentEst.id,
-        date: deliveryForm.date,
-        time: deliveryForm.time,
-        value: finalVal,
-        status: 'active',
-        orderNumber: cleanOrderNumber || undefined,
-        notes: deliveryForm.notes.trim() || undefined,
-        deliveryType: deliveryForm.deliveryType,
-        additionalValue: addVal > 0 ? addVal : undefined,
-        additionalReason: deliveryForm.additionalReason?.trim() || undefined,
-        linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
-        updatedAt: nowStr,
-        paid: false
-      };
-      await db.setDeliveries([...allDeliveries, newDelivery]);
+    try {
+      const allDeliveries = db.getDeliveries();
+      const nowStr = new Date().toISOString();
+
+      if (editingDelivery) {
+        const updated = allDeliveries.map(d => d.id === editingDelivery.id ? {
+          ...d,
+          riderId: deliveryForm.riderId,
+          date: deliveryForm.date,
+          time: deliveryForm.time,
+          value: finalVal,
+          orderNumber: cleanOrderNumber || undefined,
+          notes: deliveryForm.notes.trim() || undefined,
+          deliveryType: deliveryForm.deliveryType,
+          additionalValue: addVal > 0 ? addVal : undefined,
+          additionalReason: deliveryForm.additionalReason?.trim() || undefined,
+          linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+          updatedAt: nowStr
+        } : d);
+        await db.setDeliveries(updated);
+      } else {
+        const newDelivery: Delivery = {
+          id: 'd_' + Date.now(),
+          riderId: deliveryForm.riderId,
+          establishmentId: currentEst.id,
+          date: deliveryForm.date,
+          time: deliveryForm.time,
+          value: finalVal,
+          status: 'active',
+          orderNumber: cleanOrderNumber || undefined,
+          notes: deliveryForm.notes.trim() || undefined,
+          deliveryType: deliveryForm.deliveryType,
+          additionalValue: addVal > 0 ? addVal : undefined,
+          additionalReason: deliveryForm.additionalReason?.trim() || undefined,
+          linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+          updatedAt: nowStr,
+          paid: false
+        };
+        await db.setDeliveries([...allDeliveries, newDelivery]);
+      }
+
+      setShowDeliveryModal(false);
+      setEditingDelivery(null);
+      loadData();
+    } catch (err) {
+      console.error('Erro ao gravar corrida:', err);
+      alert('Erro ao salvar corrida. Tente novamente.');
+    } finally {
+      setIsSubmittingDelivery(false);
     }
-
-    setShowDeliveryModal(false);
-    setEditingDelivery(null);
-    loadData();
   };
 
   const handleSaveNotes = async (deliveryId: string, updatedNotes: string) => {
@@ -1108,6 +1118,7 @@ export default function EstablishmentDashboard() {
         deliveryForm={deliveryForm}
         setDeliveryForm={setDeliveryForm}
         onSave={handleSaveDelivery}
+        isSubmitting={isSubmittingDelivery}
       />
 
       <BatchDeliveryModal
