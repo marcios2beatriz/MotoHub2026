@@ -25,7 +25,8 @@ import {
   RotateCw,
   Sparkles,
   Filter,
-  Hash
+  Hash,
+  Link2
 } from 'lucide-react';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
 import CustomerChatModal from '../components/CustomerChatModal';
@@ -75,9 +76,12 @@ export default function RiderDashboard() {
   const [editingDelivery, setEditingDelivery] = useState<Delivery | null>(null);
   const [launchForm, setLaunchForm] = useState({
     establishmentId: '',
-    value: '',
+    value: '8.00',
     orderNumber: '',
-    notes: ''
+    notes: '',
+    deliveryType: 'standard' as 'standard' | 'same_address',
+    additionalValue: '',
+    linkedOrderNumber: ''
   });
 
   const [notesDeliveryId, setNotesDeliveryId] = useState<string | null>(null);
@@ -421,7 +425,6 @@ export default function RiderDashboard() {
     return uniqueEsts;
   };
 
-  // Estabelecimentos onde o motoboy já esteve ou está escalado (para o dropdown de filtro do histórico)
   const getRiderHistoryEstablishments = () => {
     const scheduledEstIds = new Set(schedules.map(s => s.establishmentId));
     const deliveryEstIds = new Set(deliveries.map(d => d.establishmentId));
@@ -433,12 +436,20 @@ export default function RiderDashboard() {
     );
   };
 
+  // Pedidos disponíveis para vincular no dia de hoje
+  const availableDeliveriesForLinking = todayDeliveries.filter(d => 
+    (!editingDelivery || d.id !== editingDelivery.id) && d.orderNumber
+  );
+
   const handleLaunchDelivery = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
 
-    const val = parseFloat(launchForm.value.replace(',', '.'));
-    if (isNaN(val) || val <= 0) {
+    const baseVal = parseFloat(launchForm.value.replace(',', '.'));
+    const addVal = parseFloat((launchForm.additionalValue || '0').replace(',', '.')) || 0;
+    const finalVal = baseVal + addVal;
+
+    if (isNaN(finalVal) || finalVal <= 0) {
       alert('Erro: O valor da corrida deve ser maior que zero.');
       return;
     }
@@ -454,7 +465,6 @@ export default function RiderDashboard() {
       return;
     }
 
-    // Validação de duplicidade: impede que o mesmo pedido seja lançado mais de uma vez hoje por qualquer motoboy
     const dupCheck = db.checkDuplicateOrderNumber(cleanOrderNumber, operationalTodayStr, new Date().toTimeString().slice(0, 5), editingDelivery?.id);
     if (dupCheck.isDuplicate) {
       alert(`⚠️ Erro: O pedido #${cleanOrderNumber} já foi lançado hoje por ${dupCheck.riderName}.\n\nNão é permitido lançar mais de uma corrida com o mesmo número de pedido.`);
@@ -469,9 +479,12 @@ export default function RiderDashboard() {
       const updated = allDeliveries.map(d => d.id === editingDelivery.id ? {
         ...d,
         establishmentId: launchForm.establishmentId,
-        value: val,
+        value: finalVal,
         orderNumber: cleanOrderNumber,
         notes: launchForm.notes.trim() || undefined,
+        deliveryType: launchForm.deliveryType,
+        additionalValue: addVal > 0 ? addVal : undefined,
+        linkedOrderNumber: launchForm.deliveryType === 'same_address' ? (launchForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
         scheduleId: activeSchedule?.id || d.scheduleId,
         updatedAt: nowStr
       } : d);
@@ -485,11 +498,14 @@ export default function RiderDashboard() {
         establishmentId: launchForm.establishmentId,
         date: operationalTodayStr,
         time: new Date().toTimeString().slice(0, 5),
-        value: val,
+        value: finalVal,
         status: 'pending',
         scheduleId: activeSchedule?.id,
         orderNumber: cleanOrderNumber,
         notes: launchForm.notes.trim() || undefined,
+        deliveryType: launchForm.deliveryType,
+        additionalValue: addVal > 0 ? addVal : undefined,
+        linkedOrderNumber: launchForm.deliveryType === 'same_address' ? (launchForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
         updatedAt: nowStr
       };
 
@@ -499,7 +515,7 @@ export default function RiderDashboard() {
 
     setShowLaunchModal(false);
     setEditingDelivery(null);
-    setLaunchForm({ establishmentId: '', value: '', orderNumber: '', notes: '' });
+    setLaunchForm({ establishmentId: '', value: '8.00', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', linkedOrderNumber: '' });
     loadData();
   };
 
@@ -568,7 +584,6 @@ export default function RiderDashboard() {
     return d.status === deliveryStatusFilter;
   });
 
-  // Filtro Inteligente do Histórico usando getDeliveryOperationalDate
   const historyDeliveries = deliveries.filter(d => {
     let matchesEst = true;
     if (historyEstFilter) {
@@ -619,6 +634,8 @@ export default function RiderDashboard() {
     setSmartDate(db.getOperationalDateString(d));
   };
 
+  const isSameAddress = launchForm.deliveryType === 'same_address';
+
   return (
     <div className="min-h-screen bg-slate-50 pb-16 relative">
       <ChatToastBanner toast={activeToast} onClose={() => setActiveToast(null)} />
@@ -645,7 +662,7 @@ export default function RiderDashboard() {
                   return;
                 }
                 setEditingDelivery(null);
-                setLaunchForm({ establishmentId: scheduledEstsToday[0].id, value: '', orderNumber: '', notes: '' });
+                setLaunchForm({ establishmentId: scheduledEstsToday[0].id, value: '8.00', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', linkedOrderNumber: '' });
                 setShowLaunchModal(true);
               }}
               className="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 transition-colors shadow-sm"
@@ -844,10 +861,12 @@ export default function RiderDashboard() {
                   {filteredTodayDeliveries.map((delivery) => {
                     const est = resolveEst(delivery.establishmentId);
                     const hasNotes = Boolean(delivery.notes && delivery.notes.trim());
-                    const notesCount = delivery.notes ? delivery.notes.split('\n').filter(l => l.trim()).length : 0;
+                    const notesCount = del.notes ? delivery.notes.split('\n').filter(l => l.trim()).length : 0;
+                    const isSame = delivery.deliveryType === 'same_address';
+                    const hasAdditional = Number(delivery.additionalValue || 0) > 0;
 
                     return (
-                      <div key={delivery.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div key={delivery.id} className={`py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${isSame ? 'bg-purple-50/40 p-2 rounded-xl border border-purple-100' : ''}`}>
                         <div className="min-w-0 space-y-1.5 flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             {delivery.orderNumber && (
@@ -856,6 +875,23 @@ export default function RiderDashboard() {
                               </span>
                             )}
                             <p className="font-bold text-slate-800 text-sm">{est?.name || 'Estabelecimento'}</p>
+
+                            {/* Badge Mesmo Endereço com Vinculação */}
+                            {isSame && (
+                              <span className="bg-purple-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                                <Link2 className="h-3 w-3" />
+                                <span>Mesmo Endereço {delivery.linkedOrderNumber ? `(Pedido #${delivery.linkedOrderNumber})` : ''}</span>
+                              </span>
+                            )}
+
+                            {/* Badge Valor Adicional */}
+                            {hasAdditional && (
+                              <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <Sparkles className="h-3 w-3 text-amber-600" />
+                                <span>+ R$ {Number(delivery.additionalValue).toFixed(2)} Extra</span>
+                              </span>
+                            )}
+
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                               delivery.status === 'active' 
                                 ? 'bg-emerald-100 text-emerald-800' 
@@ -1220,9 +1256,11 @@ export default function RiderDashboard() {
                         const est = resolveEst(del.establishmentId);
                         const hasNotes = Boolean(del.notes && del.notes.trim());
                         const notesCount = del.notes ? del.notes.split('\n').filter(l => l.trim()).length : 0;
+                        const isSame = del.deliveryType === 'same_address';
+                        const hasAdditional = Number(del.additionalValue || 0) > 0;
 
                         return (
-                          <div key={del.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/50 px-2 rounded-lg">
+                          <div key={del.id} className={`py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/50 px-2 rounded-lg ${isSame ? 'bg-purple-50/30' : ''}`}>
                             <div className="space-y-1.5 flex-1">
                               <div className="flex items-center gap-2 flex-wrap">
                                 {del.orderNumber && (
@@ -1231,6 +1269,21 @@ export default function RiderDashboard() {
                                   </span>
                                 )}
                                 <p className="font-bold text-slate-800 text-sm">{est?.name || 'Estabelecimento'}</p>
+
+                                {isSame && (
+                                  <span className="bg-purple-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                                    <Link2 className="h-3 w-3" />
+                                    <span>Mesmo Endereço {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : ''}</span>
+                                  </span>
+                                )}
+
+                                {hasAdditional && (
+                                  <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
+                                    <Sparkles className="h-3 w-3 text-amber-600" />
+                                    <span>+ R$ {Number(del.additionalValue).toFixed(2)} Extra</span>
+                                  </span>
+                                )}
+
                                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                                   del.status === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
                                 }`}>
@@ -1382,8 +1435,8 @@ export default function RiderDashboard() {
 
       {/* Modal de Lançamento de Corrida pelo Motoboy */}
       {showLaunchModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-100">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-slate-100 pb-3">
               <h3 className="text-base font-extrabold text-slate-800 flex items-center gap-2">
                 <Plus className="h-5 w-5 text-indigo-600" />
@@ -1398,6 +1451,89 @@ export default function RiderDashboard() {
             </div>
 
             <form onSubmit={handleLaunchDelivery} className="space-y-3.5">
+              
+              {/* SELEÇÃO DO TIPO: PADRÃO VS MESMO ENDEREÇO */}
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">
+                  Tipo de Corrida
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setLaunchForm({ ...launchForm, deliveryType: 'standard', value: '8.00' })}
+                    className={`py-2.5 px-3 rounded-xl border text-xs font-extrabold flex flex-col items-center justify-center transition-all ${
+                      !isSameAddress
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm ring-2 ring-indigo-200'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span>Padrão</span>
+                    <span className="text-[10px] font-bold mt-0.5 opacity-90">R$ 8,00</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setLaunchForm({ ...launchForm, deliveryType: 'same_address', value: '4.00' })}
+                    className={`py-2.5 px-3 rounded-xl border text-xs font-extrabold flex flex-col items-center justify-center transition-all ${
+                      isSameAddress
+                        ? 'bg-purple-600 text-white border-purple-600 shadow-sm ring-2 ring-purple-200'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1">
+                      <Link2 className="h-3.5 w-3.5" />
+                      <span>Mesmo Endereço</span>
+                    </div>
+                    <span className="text-[10px] font-bold mt-0.5 opacity-90">R$ 4,00</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* VÍNCULO AO PEDIDO PRINCIPAL (QUANDO MESMO ENDEREÇO) */}
+              {isSameAddress && (
+                <div className="bg-purple-50/80 border border-purple-200 p-3 rounded-xl space-y-2 animate-fadeIn">
+                  <div className="flex items-center justify-between text-xs text-purple-900 font-extrabold">
+                    <span className="flex items-center gap-1">
+                      <Link2 className="h-3.5 w-3.5 text-purple-700" />
+                      <span>Vincular ao Pedido Principal:</span>
+                    </span>
+                    <span className="text-[9px] uppercase tracking-wider bg-purple-200/80 text-purple-900 px-1.5 py-0.5 rounded-full font-bold">
+                      Mesmo Local
+                    </span>
+                  </div>
+
+                  {availableDeliveriesForLinking.length > 0 ? (
+                    <div>
+                      <select
+                        value={launchForm.linkedOrderNumber || ''}
+                        onChange={(e) => setLaunchForm({ ...launchForm, linkedOrderNumber: e.target.value })}
+                        className="w-full px-3 py-2 border border-purple-300 rounded-lg text-xs bg-white font-bold text-purple-900 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                      >
+                        <option value="">Selecione o pedido do mesmo endereço...</option>
+                        {availableDeliveriesForLinking.map(d => (
+                          <option key={d.id} value={d.orderNumber}>
+                            Pedido #{d.orderNumber} ({d.time} - R$ {Number(d.value).toFixed(2)})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Digite o Nº do Pedido Principal (Ex: 1042)"
+                        value={launchForm.linkedOrderNumber || ''}
+                        onChange={(e) => setLaunchForm({ ...launchForm, linkedOrderNumber: e.target.value })}
+                        className="w-full px-3 py-2 border border-purple-300 rounded-lg text-xs bg-white font-bold text-purple-900 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                      />
+                    </div>
+                  )}
+                  <p className="text-[10px] text-purple-700 font-medium">
+                    Esta entrega é compartilhada no mesmo prédio/rua de outro pedido já despachado.
+                  </p>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
                   Estabelecimento Escalado
@@ -1441,26 +1577,46 @@ export default function RiderDashboard() {
                   />
                   <Hash className="h-4 w-4 text-slate-400 absolute left-2.5 top-2.5" />
                 </div>
-                <p className="text-[10px] text-slate-400 mt-1">
-                  Digite somente números (ex: 12, 104, 1042). O sistema valida se já foi lançado hoje.
-                </p>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                  Valor da Corrida (R$)
-                </label>
-                <div className="relative">
+              {/* VALOR BASE + VALOR ADICIONAL */}
+              <div className="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <div>
+                  <label className="block text-[10px] font-black text-slate-700 uppercase mb-1">
+                    Valor Base (R$)
+                  </label>
                   <input
                     type="number"
                     step="0.01"
                     min="0.01"
                     required
-                    placeholder="0.00"
                     value={launchForm.value}
                     onChange={(e) => setLaunchForm({ ...launchForm, value: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm font-bold text-emerald-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm font-bold text-emerald-700 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-amber-800 uppercase mb-1 flex items-center gap-1">
+                    <Sparkles className="h-3 w-3 text-amber-500" />
+                    <span>+ Adicional (R$)</span>
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.00"
+                    placeholder="0.00"
+                    value={launchForm.additionalValue || ''}
+                    onChange={(e) => setLaunchForm({ ...launchForm, additionalValue: e.target.value })}
+                    className="w-full px-3 py-2 border border-amber-300 rounded-xl text-sm font-bold text-amber-900 bg-amber-50/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  />
+                </div>
+
+                <div className="col-span-2 pt-1 border-t border-slate-200 flex justify-between items-center text-xs">
+                  <span className="text-slate-500 font-bold">Total da Corrida:</span>
+                  <span className="text-base font-black text-emerald-600">
+                    R$ {((parseFloat(launchForm.value || '0') || 0) + (parseFloat(launchForm.additionalValue || '0') || 0)).toFixed(2)}
+                  </span>
                 </div>
               </div>
 

@@ -26,7 +26,8 @@ import {
   Layers,
   Sparkles,
   Hash,
-  FileText
+  FileText,
+  Link2
 } from 'lucide-react';
 import L from 'leaflet';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
@@ -35,7 +36,6 @@ import DeliveryModal from '../components/DeliveryModal';
 import BatchDeliveryModal from '../components/BatchDeliveryModal';
 import { realtimeGps } from '../utils/realtimeGps';
 
-// Tempo máximo em minutos para considerar o motoboy online
 const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
 
 export default function EstablishmentDashboard() {
@@ -71,9 +71,12 @@ export default function EstablishmentDashboard() {
     establishmentId: '',
     date: db.getOperationalDateString(),
     time: new Date().toTimeString().slice(0, 5),
-    value: '',
+    value: '8.00',
     orderNumber: '',
-    notes: ''
+    notes: '',
+    deliveryType: 'standard' as 'standard' | 'same_address',
+    additionalValue: '',
+    linkedOrderNumber: ''
   });
 
   const [notesDeliveryId, setNotesDeliveryId] = useState<string | null>(null);
@@ -168,13 +171,11 @@ export default function EstablishmentDashboard() {
     }
   });
 
-  // Conjunto de IDs dos motoboys escalados hoje para este estabelecimento
   const scheduledRiderIds = new Set(todaySchedules.map(s => {
     const r = db.resolveUser(s.riderId);
     return r ? r.id : s.riderId;
   }));
 
-  // Filtrar apenas motoboys ONLINE que estão escalados para este estabelecimento hoje
   const onlineScheduledRiderLocations = riderLocations.filter(loc => {
     if (!loc.lat || !loc.lng || isNaN(loc.lat) || isNaN(loc.lng)) return false;
     
@@ -349,9 +350,12 @@ export default function EstablishmentDashboard() {
       establishmentId: currentEst.id,
       date: todayStr,
       time: new Date().toTimeString().slice(0, 5),
-      value: '',
+      value: '8.00',
       orderNumber: '',
-      notes: ''
+      notes: '',
+      deliveryType: 'standard',
+      additionalValue: '',
+      linkedOrderNumber: ''
     });
     setShowDeliveryModal(true);
   };
@@ -364,9 +368,12 @@ export default function EstablishmentDashboard() {
       establishmentId: del.establishmentId,
       date: del.date,
       time: del.time,
-      value: del.value.toString(),
+      value: (del.deliveryType === 'same_address' ? '4.00' : '8.00'),
       orderNumber: del.orderNumber || '',
-      notes: del.notes || ''
+      notes: del.notes || '',
+      deliveryType: del.deliveryType || 'standard',
+      additionalValue: del.additionalValue ? del.additionalValue.toString() : '',
+      linkedOrderNumber: del.linkedOrderNumber || ''
     });
     setShowDeliveryModal(true);
   };
@@ -375,8 +382,11 @@ export default function EstablishmentDashboard() {
     e.preventDefault();
     if (!currentEst) return;
 
-    const val = parseFloat(deliveryForm.value);
-    if (isNaN(val) || val <= 0) {
+    const baseVal = parseFloat(deliveryForm.value);
+    const addVal = parseFloat(deliveryForm.additionalValue || '0') || 0;
+    const finalVal = baseVal + addVal;
+
+    if (isNaN(finalVal) || finalVal <= 0) {
       alert('Erro: O valor da corrida deve ser maior que zero.');
       return;
     }
@@ -399,9 +409,12 @@ export default function EstablishmentDashboard() {
         riderId: deliveryForm.riderId,
         date: deliveryForm.date,
         time: deliveryForm.time,
-        value: val,
+        value: finalVal,
         orderNumber: cleanOrderNumber || undefined,
         notes: deliveryForm.notes.trim() || undefined,
+        deliveryType: deliveryForm.deliveryType,
+        additionalValue: addVal > 0 ? addVal : undefined,
+        linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
         updatedAt: nowStr
       } : d);
       await db.setDeliveries(updated);
@@ -412,10 +425,13 @@ export default function EstablishmentDashboard() {
         establishmentId: currentEst.id,
         date: deliveryForm.date,
         time: deliveryForm.time,
-        value: val,
+        value: finalVal,
         status: 'active',
         orderNumber: cleanOrderNumber || undefined,
         notes: deliveryForm.notes.trim() || undefined,
+        deliveryType: deliveryForm.deliveryType,
+        additionalValue: addVal > 0 ? addVal : undefined,
+        linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
         updatedAt: nowStr,
         paid: false
       };
@@ -882,9 +898,11 @@ export default function EstablishmentDashboard() {
                   const rider = db.resolveUser(del.riderId);
                   const hasNotes = Boolean(del.notes && del.notes.trim());
                   const notesCount = del.notes ? del.notes.split('\n').filter(l => l.trim()).length : 0;
+                  const isSame = del.deliveryType === 'same_address';
+                  const hasAdditional = Number(del.additionalValue || 0) > 0;
 
                   return (
-                    <div key={del.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                    <div key={del.id} className={`py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${isSame ? 'bg-purple-50/30 p-2 rounded-xl border border-purple-100' : ''}`}>
                       <div className="min-w-0 space-y-1">
                         <div className="flex items-center space-x-2 flex-wrap gap-y-1">
                           {del.orderNumber && (
@@ -893,6 +911,23 @@ export default function EstablishmentDashboard() {
                             </span>
                           )}
                           <p className="font-extrabold text-slate-800 text-sm truncate">{rider?.name || 'Motoboy'}</p>
+
+                          {/* Badge Mesmo Endereço com Vinculação */}
+                          {isSame && (
+                            <span className="bg-purple-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                              <Link2 className="h-2.5 w-2.5" />
+                              <span>Mesmo Endereço {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : ''}</span>
+                            </span>
+                          )}
+
+                          {/* Badge Valor Adicional */}
+                          {hasAdditional && (
+                            <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-black px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
+                              <Sparkles className="h-2.5 w-2.5 text-amber-600" />
+                              <span>+ R$ {Number(del.additionalValue).toFixed(2)}</span>
+                            </span>
+                          )}
+
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                             del.status === 'active' ? 'bg-emerald-100 text-emerald-800' :
                             del.status === 'pending' ? 'bg-amber-100 text-amber-800 font-black animate-pulse' :

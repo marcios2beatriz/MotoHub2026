@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Layers, Check, Sparkles, FileText, Loader2, RotateCcw } from 'lucide-react';
+import { X, Plus, Trash2, Layers, Check, Sparkles, FileText, Loader2, RotateCcw, Link2 } from 'lucide-react';
 import { User, Establishment, Delivery, db } from '../utils/db';
 
 interface BatchRow {
@@ -13,6 +13,9 @@ interface BatchRow {
   value: string;
   orderNumber: string;
   notes: string;
+  deliveryType?: 'standard' | 'same_address';
+  additionalValue?: string;
+  linkedOrderNumber?: string;
 }
 
 interface BatchDeliveryModalProps {
@@ -77,41 +80,39 @@ export default function BatchDeliveryModal({
         establishmentId: initialEst,
         date: initialDate,
         time: `${hStr}:${mStr}`,
-        value: '',
+        value: '8.00',
         orderNumber: '',
-        notes: ''
+        notes: '',
+        deliveryType: 'standard',
+        additionalValue: '',
+        linkedOrderNumber: ''
       };
     });
 
     setRows(initialRows);
   };
 
-  // Toda vez que o modal abre, reseta e pré-preenche com o motoboy e estabelecimento padrão
   useEffect(() => {
     if (isOpen) {
       resetToEmptyBatch();
     }
   }, [isOpen, defaultRiderId, defaultEstablishmentId]);
 
-  // Atualização automática ao mudar motoboy global -> reflete imediatamente em todas as linhas da tabela
   const handleGlobalRiderChange = (newRiderId: string) => {
     setGlobalRiderId(newRiderId);
     setRows(prev => prev.map(r => ({ ...r, riderId: newRiderId })));
   };
 
-  // Atualização automática ao mudar estabelecimento global -> reflete imediatamente em todas as linhas da tabela
   const handleGlobalEstChange = (newEstId: string) => {
     setGlobalEstId(newEstId);
     setRows(prev => prev.map(r => ({ ...r, establishmentId: newEstId })));
   };
 
-  // Atualização automática ao mudar data global -> reflete imediatamente em todas as linhas da tabela
   const handleGlobalDateChange = (newDate: string) => {
     setGlobalDate(newDate);
     setRows(prev => prev.map(r => ({ ...r, date: newDate })));
   };
 
-  // Atualização automática ao mudar horário inicial -> recalcula a sequência horária das linhas
   const handleGlobalStartTimeChange = (newStartTime: string) => {
     setGlobalStartTime(newStartTime);
     const [startH, startM] = (newStartTime || '18:00').split(':').map(Number);
@@ -149,9 +150,12 @@ export default function BatchDeliveryModal({
       establishmentId: globalEstId || (activeEsts[0]?.id || ''),
       date: globalDate || db.getOperationalDateString(),
       time: nextTime,
-      value: '',
+      value: '8.00',
       orderNumber: '',
-      notes: ''
+      notes: '',
+      deliveryType: 'standard',
+      additionalValue: '',
+      linkedOrderNumber: ''
     };
 
     setRows(prev => [...prev, newRow]);
@@ -165,17 +169,48 @@ export default function BatchDeliveryModal({
         establishmentId: globalEstId || (activeEsts[0]?.id || ''),
         date: globalDate || db.getOperationalDateString(),
         time: globalStartTime || '18:00',
-        value: '',
+        value: '8.00',
         orderNumber: '',
-        notes: ''
+        notes: '',
+        deliveryType: 'standard',
+        additionalValue: '',
+        linkedOrderNumber: ''
       }]);
       return;
     }
     setRows(prev => prev.filter(r => r.id !== id));
   };
 
-  const handleUpdateRow = (id: string, field: keyof BatchRow, val: string) => {
-    setRows(prev => prev.map(r => r.id === id ? { ...r, [field]: val } : r));
+  const handleUpdateRow = (id: string, field: keyof BatchRow, val: any) => {
+    setRows(prev => prev.map(r => {
+      if (r.id !== id) return r;
+
+      if (field === 'deliveryType') {
+        const nextType = val as 'standard' | 'same_address';
+        const nextVal = nextType === 'same_address' ? '4.00' : '8.00';
+        return {
+          ...r,
+          deliveryType: nextType,
+          value: nextVal
+        };
+      }
+
+      return { ...r, [field]: val };
+    }));
+  };
+
+  const handleToggleSameAddress = (id: string, prevRowOrderNumber?: string) => {
+    setRows(prev => prev.map(r => {
+      if (r.id !== id) return r;
+      const isCurrentlySame = r.deliveryType === 'same_address';
+      const nextType = isCurrentlySame ? 'standard' : 'same_address';
+      return {
+        ...r,
+        deliveryType: nextType,
+        value: nextType === 'same_address' ? '4.00' : '8.00',
+        linkedOrderNumber: nextType === 'same_address' ? (r.linkedOrderNumber || prevRowOrderNumber || '') : ''
+      };
+    }));
   };
 
   const handleApplyGlobalSettings = () => {
@@ -208,9 +243,10 @@ export default function BatchDeliveryModal({
       const cleanLine = line.replace(/R\$/g, '').trim();
       const parts = cleanLine.split(/[\t,; ]+/).filter(Boolean);
 
-      let val = '';
+      let val = '8.00';
       let orderNum = '';
       let timeStr = '';
+      let isSame = false;
 
       const totalMins = (((startH || 18) * 60 + (startM || 0)) + idx * 10) % 1440;
       const calcH = String(Math.floor(totalMins / 60)).padStart(2, '0');
@@ -219,25 +255,28 @@ export default function BatchDeliveryModal({
 
       parts.forEach(part => {
         const normalized = part.replace(',', '.');
-        if (!val && !isNaN(Number(normalized)) && Number(normalized) > 0) {
-          val = Number(normalized).toFixed(2);
+        if (!isNaN(Number(normalized)) && Number(normalized) > 0) {
+          const numVal = Number(normalized);
+          val = numVal.toFixed(2);
+          if (numVal === 4) isSame = true;
         } else if (!orderNum && (/^\d+$/.test(part) || /^#\d+/.test(part))) {
           orderNum = part.replace('#', '');
         }
       });
 
-      if (val) {
-        parsedRows.push({
-          id: 'row_' + Date.now() + '_' + idx,
-          riderId: globalRiderId || (activeRiders[0]?.id || ''),
-          establishmentId: globalEstId || (activeEsts[0]?.id || ''),
-          date: globalDate || db.getOperationalDateString(),
-          time: timeStr,
-          value: val,
-          orderNumber: orderNum,
-          notes: ''
-        });
-      }
+      parsedRows.push({
+        id: 'row_' + Date.now() + '_' + idx,
+        riderId: globalRiderId || (activeRiders[0]?.id || ''),
+        establishmentId: globalEstId || (activeEsts[0]?.id || ''),
+        date: globalDate || db.getOperationalDateString(),
+        time: timeStr,
+        value: val,
+        orderNumber: orderNum,
+        notes: '',
+        deliveryType: isSame ? 'same_address' : 'standard',
+        additionalValue: '',
+        linkedOrderNumber: ''
+      });
     });
 
     if (parsedRows.length > 0) {
@@ -251,11 +290,15 @@ export default function BatchDeliveryModal({
 
   // Métricas calculadas
   const validRows = rows.filter(r => {
-    const val = parseFloat(r.value.replace(',', '.'));
-    return !isNaN(val) && val > 0 && r.riderId && r.establishmentId && r.date;
+    const baseVal = parseFloat(r.value.replace(',', '.'));
+    return !isNaN(baseVal) && baseVal > 0 && r.riderId && r.establishmentId && r.date;
   });
 
-  const totalBatchValue = validRows.reduce((sum, r) => sum + parseFloat(r.value.replace(',', '.')), 0);
+  const totalBatchValue = validRows.reduce((sum, r) => {
+    const b = parseFloat(r.value.replace(',', '.')) || 0;
+    const a = parseFloat((r.additionalValue || '0').replace(',', '.')) || 0;
+    return sum + (b + a);
+  }, 0);
 
   const handleSaveBatch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -313,7 +356,9 @@ export default function BatchDeliveryModal({
       const nowStr = new Date().toISOString();
 
       const newDeliveries: Delivery[] = validRows.map((r, idx) => {
-        const val = parseFloat(r.value.replace(',', '.'));
+        const baseVal = parseFloat(r.value.replace(',', '.')) || 0;
+        const addVal = parseFloat((r.additionalValue || '0').replace(',', '.')) || 0;
+        const totalVal = baseVal + addVal;
         const operationalDate = r.date || db.getOperationalDateString();
 
         const matchSchedule = schedules.find(s => 
@@ -328,11 +373,14 @@ export default function BatchDeliveryModal({
           establishmentId: r.establishmentId,
           date: operationalDate,
           time: r.time || '18:00',
-          value: val,
+          value: totalVal,
           status: globalStatus,
           scheduleId: matchSchedule?.id,
           orderNumber: r.orderNumber.trim() ? r.orderNumber.trim().replace('#', '') : undefined,
           notes: r.notes.trim() || undefined,
+          deliveryType: r.deliveryType || 'standard',
+          additionalValue: addVal > 0 ? addVal : undefined,
+          linkedOrderNumber: r.deliveryType === 'same_address' ? (r.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
           updatedAt: nowStr,
           paid: false
         };
@@ -354,8 +402,8 @@ export default function BatchDeliveryModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-3 sm:p-4 z-[99999] overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-4xl w-full p-4 sm:p-6 space-y-4 shadow-2xl max-h-[92vh] flex flex-col border border-slate-200">
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-2 sm:p-4 z-[99999] overflow-y-auto">
+      <div className="bg-white rounded-2xl max-w-5xl w-full p-4 sm:p-6 space-y-4 shadow-2xl max-h-[94vh] flex flex-col border border-slate-200">
         
         {/* Header */}
         <div className="flex justify-between items-center border-b border-slate-100 pb-3 flex-shrink-0">
@@ -364,13 +412,14 @@ export default function BatchDeliveryModal({
               <Layers className="h-5 w-5" />
             </div>
             <div>
-              <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
+              <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2 flex-wrap">
                 <span>Lançamento de Corridas em Lote</span>
-                <span className="bg-indigo-100 text-indigo-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase">
-                  Turno Inteligente
+                <span className="bg-purple-100 text-purple-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase flex items-center gap-1">
+                  <Link2 className="h-3 w-3" />
+                  Mesmo Endereço (R$4) & Adicionais
                 </span>
               </h3>
-              <p className="text-xs text-slate-500">Corridas de 18:00h até as 02:59h pertencem ao mesmo expediente</p>
+              <p className="text-xs text-slate-500">Alterne entre entrega padrão (R$8) e mesmo endereço (R$4) por linha</p>
             </div>
           </div>
           <button 
@@ -408,7 +457,7 @@ export default function BatchDeliveryModal({
                 className="text-xs font-bold text-indigo-600 hover:underline flex items-center gap-1"
               >
                 <FileText className="h-3.5 w-3.5" />
-                <span>{showPasteMode ? 'Ver Tabela' : 'Colar Lista de Valores'}</span>
+                <span>{showPasteMode ? 'Ver Tabela' : 'Colar Lista'}</span>
               </button>
               <button
                 type="button"
@@ -450,7 +499,7 @@ export default function BatchDeliveryModal({
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data do Expediente</label>
+              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data</label>
               <input
                 type="date"
                 value={globalDate}
@@ -491,14 +540,13 @@ export default function BatchDeliveryModal({
               <span>Cole a lista de corridas (uma por linha)</span>
             </h4>
             <p className="text-[11px] text-slate-500">
-              Você pode colar valores de uma planilha ou mensagem. Exemplo:<br/>
-              <code>12.50 #1042</code> ou <code>15,00</code> ou <code>18.00 Pedido 55</code>
+              Exemplos aceitos: <code>8.00 #1042</code> ou <code>4.00 #1043</code> ou <code>10.50</code>
             </p>
             <textarea
               rows={8}
               value={pastedText}
               onChange={(e) => setPastedText(e.target.value)}
-              placeholder="12.50 #1042&#10;15.00 #1043&#10;10.00 #1044&#10;22.50"
+              placeholder="8.00 #1042&#10;4.00 #1043&#10;8.00 #1044&#10;12.00 #1045"
               className="w-full p-3 border border-slate-300 rounded-xl text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
             />
             <div className="flex justify-end gap-2">
@@ -524,100 +572,150 @@ export default function BatchDeliveryModal({
             <table className="w-full text-left text-xs text-slate-700">
               <thead className="bg-slate-100 text-slate-600 font-extrabold uppercase sticky top-0 z-10 border-b border-slate-200 text-[10px]">
                 <tr>
-                  <th className="p-2.5 w-8">#</th>
-                  <th className="p-2.5 w-36">Motoboy</th>
-                  <th className="p-2.5 w-36">Estabelecimento</th>
-                  <th className="p-2.5 w-24">Horário</th>
-                  <th className="p-2.5 w-28">Valor (R$) *</th>
-                  <th className="p-2.5 w-28">Nº Pedido</th>
-                  <th className="p-2.5">Obs</th>
-                  <th className="p-2.5 w-10 text-center">Ações</th>
+                  <th className="p-2 w-7 text-center">#</th>
+                  <th className="p-2 w-32">Motoboy</th>
+                  <th className="p-2 w-28">Tipo / Endereço</th>
+                  <th className="p-2 w-20">Horário</th>
+                  <th className="p-2 w-20">Nº Pedido</th>
+                  <th className="p-2 w-24 text-right">Base (R$)</th>
+                  <th className="p-2 w-24 text-right">+ Adicional</th>
+                  <th className="p-2 w-24 text-right">Total</th>
+                  <th className="p-2">Vínculo / Obs</th>
+                  <th className="p-2 w-10 text-center">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
-                {rows.map((row, index) => (
-                  <tr key={row.id} className="hover:bg-slate-50/70">
-                    <td className="p-2 text-center font-bold text-slate-400">{index + 1}</td>
-                    
-                    <td className="p-1.5">
-                      <select
-                        value={row.riderId}
-                        onChange={(e) => handleUpdateRow(row.id, 'riderId', e.target.value)}
-                        className="w-full px-2 py-1 border border-slate-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
-                      >
-                        <option value="">Selecione...</option>
-                        {activeRiders.map(r => (
-                          <option key={r.id} value={r.id}>{r.name}</option>
-                        ))}
-                      </select>
-                    </td>
+                {rows.map((row, index) => {
+                  const isSame = row.deliveryType === 'same_address';
+                  const baseNum = parseFloat(row.value.replace(',', '.')) || 0;
+                  const addNum = parseFloat((row.additionalValue || '0').replace(',', '.')) || 0;
+                  const rowTotal = (baseNum + addNum).toFixed(2);
+                  const prevOrderNumber = index > 0 ? rows[index - 1]?.orderNumber : undefined;
 
-                    <td className="p-1.5">
-                      <select
-                        value={row.establishmentId}
-                        onChange={(e) => handleUpdateRow(row.id, 'establishmentId', e.target.value)}
-                        className="w-full px-2 py-1 border border-slate-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
-                      >
-                        <option value="">Selecione...</option>
-                        {activeEsts.map(e => (
-                          <option key={e.id} value={e.id}>{e.name}</option>
-                        ))}
-                      </select>
-                    </td>
+                  return (
+                    <tr key={row.id} className={`hover:bg-slate-50/70 ${isSame ? 'bg-purple-50/40' : ''}`}>
+                      <td className="p-2 text-center font-bold text-slate-400">{index + 1}</td>
+                      
+                      <td className="p-1.5">
+                        <select
+                          value={row.riderId}
+                          onChange={(e) => handleUpdateRow(row.id, 'riderId', e.target.value)}
+                          className="w-full px-2 py-1 border border-slate-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
+                        >
+                          <option value="">Selecione...</option>
+                          {activeRiders.map(r => (
+                            <option key={r.id} value={r.id}>{r.name}</option>
+                          ))}
+                        </select>
+                      </td>
 
-                    <td className="p-1.5">
-                      <input
-                        type="time"
-                        value={row.time}
-                        onChange={(e) => handleUpdateRow(row.id, 'time', e.target.value)}
-                        className="w-full px-2 py-1 border border-slate-200 rounded text-xs font-mono text-center focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      />
-                    </td>
+                      {/* Botão Tipo de Corrida */}
+                      <td className="p-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleSameAddress(row.id, prevOrderNumber)}
+                          className={`w-full px-2 py-1 rounded text-[10px] font-black transition-all flex items-center justify-center gap-1 border ${
+                            isSame 
+                              ? 'bg-purple-600 text-white border-purple-600 shadow-xs' 
+                              : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                          }`}
+                          title="Alternar entre Entrega Padrão (R$8) e Mesmo Endereço (R$4)"
+                        >
+                          {isSame ? (
+                            <>
+                              <Link2 className="h-3 w-3" />
+                              <span>Mesmo (R$4)</span>
+                            </>
+                          ) : (
+                            <span>Padrão (R$8)</span>
+                          )}
+                        </button>
+                      </td>
 
-                    <td className="p-1.5">
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0.01"
-                        placeholder="0.00"
-                        value={row.value}
-                        onChange={(e) => handleUpdateRow(row.id, 'value', e.target.value)}
-                        className="w-full px-2 py-1 border border-emerald-300 bg-emerald-50/40 rounded text-xs font-black text-emerald-800 text-right focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      />
-                    </td>
+                      <td className="p-1.5">
+                        <input
+                          type="time"
+                          value={row.time}
+                          onChange={(e) => handleUpdateRow(row.id, 'time', e.target.value)}
+                          className="w-full px-1.5 py-1 border border-slate-200 rounded text-xs font-mono text-center focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </td>
 
-                    <td className="p-1.5">
-                      <input
-                        type="text"
-                        placeholder="Ex: 1042"
-                        value={row.orderNumber}
-                        onChange={(e) => handleUpdateRow(row.id, 'orderNumber', e.target.value)}
-                        className="w-full px-2 py-1 border border-slate-200 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      />
-                    </td>
+                      <td className="p-1.5">
+                        <input
+                          type="text"
+                          placeholder="Nº Pedido"
+                          value={row.orderNumber}
+                          onChange={(e) => handleUpdateRow(row.id, 'orderNumber', e.target.value)}
+                          className="w-full px-2 py-1 border border-slate-200 rounded text-xs text-center font-bold font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </td>
 
-                    <td className="p-1.5">
-                      <input
-                        type="text"
-                        placeholder="Obs..."
-                        value={row.notes}
-                        onChange={(e) => handleUpdateRow(row.id, 'notes', e.target.value)}
-                        className="w-full px-2 py-1 border border-slate-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      />
-                    </td>
+                      <td className="p-1.5">
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          value={row.value}
+                          onChange={(e) => handleUpdateRow(row.id, 'value', e.target.value)}
+                          className="w-full px-2 py-1 border border-slate-300 rounded text-xs font-bold text-slate-800 text-right focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </td>
 
-                    <td className="p-1.5 text-center">
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveRow(row.id)}
-                        className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-red-50"
-                        title="Remover linha"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      <td className="p-1.5">
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0.00"
+                          placeholder="+ 0.00"
+                          value={row.additionalValue || ''}
+                          onChange={(e) => handleUpdateRow(row.id, 'additionalValue', e.target.value)}
+                          className="w-full px-2 py-1 border border-amber-300 bg-amber-50/50 rounded text-xs font-bold text-amber-900 text-right focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          title="Valor adicional por km extra, chuva, etc."
+                        />
+                      </td>
+
+                      <td className="p-1.5 text-right font-black text-emerald-700">
+                        R$ {rowTotal}
+                      </td>
+
+                      <td className="p-1.5">
+                        {isSame ? (
+                          <div className="flex items-center gap-1">
+                            <Link2 className="h-3.5 w-3.5 text-purple-600 flex-shrink-0" />
+                            <input
+                              type="text"
+                              placeholder="Vincular a #1042"
+                              value={row.linkedOrderNumber || ''}
+                              onChange={(e) => handleUpdateRow(row.id, 'linkedOrderNumber', e.target.value)}
+                              className="w-full px-2 py-1 border border-purple-300 bg-purple-50/60 rounded text-xs font-bold text-purple-900 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                              title="Número do pedido principal entregue no mesmo local"
+                            />
+                          </div>
+                        ) : (
+                          <input
+                            type="text"
+                            placeholder="Obs..."
+                            value={row.notes}
+                            onChange={(e) => handleUpdateRow(row.id, 'notes', e.target.value)}
+                            className="w-full px-2 py-1 border border-slate-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          />
+                        )}
+                      </td>
+
+                      <td className="p-1.5 text-center">
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveRow(row.id)}
+                          className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-red-50"
+                          title="Remover linha"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
