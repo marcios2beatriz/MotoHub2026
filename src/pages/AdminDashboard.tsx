@@ -127,6 +127,7 @@ export default function AdminDashboard() {
   const [delRiderFilter, setDelRiderFilter] = useState<string>('all');
   const [delEstFilter, setDelEstFilter] = useState<string>('all');
   const [delStatusFilter, setDelStatusFilter] = useState<string>('all');
+  const [delFeatureFilter, setDelFeatureFilter] = useState<'all' | 'with_additional' | 'linked' | 'standard'>('all');
   const [delDateFrom, setDelDateFrom] = useState<string>('');
   const [delDateTo, setDelDateTo] = useState<string>('');
   const [delSearchQuery, setDelSearchQuery] = useState<string>('');
@@ -139,6 +140,7 @@ export default function AdminDashboard() {
   const [financeCustomFrom, setFinanceCustomFrom] = useState<string>('');
   const [financeCustomTo, setFinanceCustomTo] = useState<string>('');
   const [financePaidFilter, setFinancePaidFilter] = useState<'unpaid' | 'paid' | 'all'>('unpaid');
+  const [financeFeatureFilter, setFinanceFeatureFilter] = useState<'all' | 'with_additional' | 'linked' | 'standard'>('all');
   const [financeRiderSearch, setFinanceRiderSearch] = useState<string>('');
   const [financeEstSearch, setFinanceEstSearch] = useState<string>('');
   const [financeActiveSection, setFinanceActiveSection] = useState<'riders' | 'establishments'>('riders');
@@ -1022,6 +1024,11 @@ export default function AdminDashboard() {
     if (financePaidFilter === 'unpaid' && d.paid) return false;
     if (financePaidFilter === 'paid' && !d.paid) return false;
 
+    // Filtro de adicional / vinculado
+    if (financeFeatureFilter === 'with_additional' && (!d.additionalValue || Number(d.additionalValue) <= 0)) return false;
+    if (financeFeatureFilter === 'linked' && (d.deliveryType !== 'same_address' && !d.linkedOrderNumber)) return false;
+    if (financeFeatureFilter === 'standard' && (d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber) || (d.additionalValue && Number(d.additionalValue) > 0))) return false;
+
     return true;
   });
 
@@ -1166,6 +1173,18 @@ export default function AdminDashboard() {
       const hasNotes = Boolean(d.notes && d.notes.trim().length > 0);
       if (delNotesFilter === 'with_notes' && !hasNotes) return false;
       if (delNotesFilter === 'without_notes' && hasNotes) return false;
+
+      // Filtro de com adicional / vinculado / padrão
+      if (delFeatureFilter === 'with_additional') {
+        const hasAdd = Number(d.additionalValue || 0) > 0;
+        if (!hasAdd) return false;
+      } else if (delFeatureFilter === 'linked') {
+        const isLinked = d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber);
+        if (!isLinked) return false;
+      } else if (delFeatureFilter === 'standard') {
+        const isStandard = d.deliveryType !== 'same_address' && !d.linkedOrderNumber && (!d.additionalValue || Number(d.additionalValue) <= 0);
+        if (!isStandard) return false;
+      }
 
       if (delOrderNumberFilter.trim()) {
         const cleanTarget = delOrderNumberFilter.trim().toLowerCase().replace('#', '');
@@ -2188,7 +2207,7 @@ export default function AdminDashboard() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1 border-t border-slate-200">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 pt-1 border-t border-slate-200">
                   <div>
                     <label className="block text-[10px] font-bold text-indigo-700 uppercase mb-1 flex items-center gap-1">
                       <Hash className="h-3 w-3" />
@@ -2204,6 +2223,23 @@ export default function AdminDashboard() {
                       />
                       <Hash className="h-3.5 w-3.5 text-indigo-400 absolute left-2.5 top-2.5" />
                     </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-purple-700 uppercase mb-1 flex items-center gap-1">
+                      <Link2 className="h-3 w-3" />
+                      <span>Tipo / Adicional</span>
+                    </label>
+                    <select
+                      value={delFeatureFilter}
+                      onChange={(e) => setDelFeatureFilter(e.target.value as any)}
+                      className="w-full px-2.5 py-1.5 border border-purple-300 bg-purple-50/50 rounded-lg text-xs font-bold text-purple-900 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                    >
+                      <option value="all">Todos os Tipos</option>
+                      <option value="with_additional">✨ Com Adicional</option>
+                      <option value="linked">🔗 Vinculadas (Mesmo Endereço)</option>
+                      <option value="standard">Padrão (Sem Adicional/Vínculo)</option>
+                    </select>
                   </div>
 
                   <div>
@@ -2508,6 +2544,17 @@ export default function AdminDashboard() {
                       <option value="unpaid">⏳ A Pagar / Pendentes de Baixa</option>
                       <option value="paid">✅ Já Pagas / Baixadas</option>
                       <option value="all">🌐 Todas as Corridas</option>
+                    </select>
+
+                    <select
+                      value={financeFeatureFilter}
+                      onChange={(e) => setFinanceFeatureFilter(e.target.value as any)}
+                      className="px-2.5 py-1 bg-white border border-purple-300 rounded-lg text-xs font-bold text-purple-900 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                    >
+                      <option value="all">Todos os Tipos</option>
+                      <option value="with_additional">✨ Com Adicional</option>
+                      <option value="linked">🔗 Vinculadas</option>
+                      <option value="standard">Padrão</option>
                     </select>
                   </div>
                 </div>

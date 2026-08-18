@@ -57,6 +57,7 @@ export default function EstablishmentDashboard() {
 
   const [riderFilter, setRiderFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [featureFilter, setFeatureFilter] = useState<'all' | 'with_additional' | 'linked' | 'standard'>('all');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [orderNumberFilter, setOrderNumberFilter] = useState<string>('');
@@ -519,6 +520,18 @@ export default function EstablishmentDashboard() {
       if (notesFilter === 'with_notes' && !hasNotes) return false;
       if (notesFilter === 'without_notes' && hasNotes) return false;
 
+      // Filtro de com adicional / vinculado / padrão
+      if (featureFilter === 'with_additional') {
+        const hasAdd = Number(d.additionalValue || 0) > 0;
+        if (!hasAdd) return false;
+      } else if (featureFilter === 'linked') {
+        const isLinked = d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber);
+        if (!isLinked) return false;
+      } else if (featureFilter === 'standard') {
+        const isStandard = d.deliveryType !== 'same_address' && !d.linkedOrderNumber && (!d.additionalValue || Number(d.additionalValue) <= 0);
+        if (!isStandard) return false;
+      }
+
       if (orderNumberFilter.trim()) {
         const cleanTarget = orderNumberFilter.trim().toLowerCase().replace('#', '');
         const orderNum = (d.orderNumber || '').toLowerCase().replace('#', '');
@@ -843,7 +856,7 @@ export default function EstablishmentDashboard() {
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1 border-t border-slate-200">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 pt-1 border-t border-slate-200">
                 <div>
                   <label className="block text-[10px] font-bold text-indigo-700 uppercase mb-1 flex items-center gap-1">
                     <Hash className="h-3 w-3" />
@@ -859,6 +872,23 @@ export default function EstablishmentDashboard() {
                     />
                     <Hash className="h-3.5 w-3.5 text-indigo-400 absolute left-2.5 top-2.5" />
                   </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-purple-700 uppercase mb-1 flex items-center gap-1">
+                    <Link2 className="h-3 w-3" />
+                    <span>Tipo / Adicional</span>
+                  </label>
+                  <select
+                    value={featureFilter}
+                    onChange={(e) => setFeatureFilter(e.target.value as any)}
+                    className="w-full px-2.5 py-1.5 border border-purple-300 bg-purple-50/50 rounded-lg text-xs font-bold text-purple-900 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                  >
+                    <option value="all">Todos os Tipos</option>
+                    <option value="with_additional">✨ Com Adicional</option>
+                    <option value="linked">🔗 Vinculadas (Mesmo Endereço)</option>
+                    <option value="standard">Padrão</option>
+                  </select>
                 </div>
 
                 <div>
