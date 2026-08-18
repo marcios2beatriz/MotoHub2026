@@ -142,25 +142,19 @@ export default function RiderDashboard() {
     const freshUser = allUsers.find(u => u.id === user.id) || user;
     
     const allSchedules = db.getSchedules().filter(s => {
-      if (s.riderId === freshUser.id) return true;
-      const riderOfSch = allUsers.find(u => u.id === s.riderId);
-      return riderOfSch && riderOfSch.email.toLowerCase() === freshUser.email.toLowerCase();
+      return db.isSameUser(s.riderId, freshUser.id) || s.riderId === freshUser.id;
     });
 
     const allDeliveries = db.getDeliveries().filter(d => {
-      if (d.riderId === freshUser.id) return true;
-      const riderOfDel = allUsers.find(u => u.id === d.riderId);
-      return riderOfDel && riderOfDel.email.toLowerCase() === freshUser.email.toLowerCase();
+      return db.isSameUser(d.riderId, freshUser.id) || d.riderId === freshUser.id;
     });
 
     const allNotifications = db.getNotifications().filter(n => {
-      if (n.riderId === freshUser.id) return true;
-      const riderOfNotif = allUsers.find(u => u.id === n.riderId);
-      return riderOfNotif && riderOfNotif.email.toLowerCase() === freshUser.email.toLowerCase();
+      return db.isSameUser(n.riderId, freshUser.id) || n.riderId === freshUser.id;
     });
 
     const allEsts = db.getEstablishments().filter(e => e.active);
-    const myRoutes = db.getRouteHistory().filter(r => r.riderId === freshUser.id);
+    const myRoutes = db.getRouteHistory().filter(r => db.isSameUser(r.riderId, freshUser.id));
     
     const sortedSchedules = [...allSchedules].sort((a, b) => a.date.localeCompare(b.date) || a.shift.localeCompare(b.shift) || a.id.localeCompare(b.id));
     const sortedDeliveries = [...allDeliveries].sort((a, b) => 
@@ -424,6 +418,10 @@ export default function RiderDashboard() {
       }
     });
 
+    if (uniqueEsts.length === 0 && establishments.length > 0) {
+      return establishments;
+    }
+
     return uniqueEsts;
   };
 
@@ -432,10 +430,12 @@ export default function RiderDashboard() {
     const deliveryEstIds = new Set(deliveries.map(d => d.establishmentId));
     const allRelatedEstIds = new Set([...scheduledEstIds, ...deliveryEstIds]);
 
-    return establishments.filter(e => 
+    const result = establishments.filter(e => 
       allRelatedEstIds.has(e.id) || 
       Array.from(allRelatedEstIds).some(id => db.isSameEstablishment(e.id, id))
     );
+
+    return result.length > 0 ? result : establishments;
   };
 
   // Pedidos disponíveis para vincular no dia de hoje
@@ -662,7 +662,7 @@ export default function RiderDashboard() {
             <button
               onClick={() => {
                 if (scheduledEstsToday.length === 0) {
-                  alert('Aviso: Você não possui escalas ativas hoje neste turno. Fale com o administrador.');
+                  alert('Aviso: Nenhum estabelecimento parceiro cadastrado no momento. Fale com o administrador.');
                   return;
                 }
                 setEditingDelivery(null);
