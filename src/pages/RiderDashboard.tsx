@@ -112,6 +112,10 @@ export default function RiderDashboard() {
   const [scheduleEstFilter, setScheduleEstFilter] = useState('');
   const [scheduleDateFilter, setScheduleDateFilter] = useState('');
 
+  // --- FILTROS DE CORRIDAS (STATUS + TIPO/ADICIONAL) ---
+  const [deliveryStatusFilter, setDeliveryStatusFilter] = useState<'all' | 'active' | 'pending' | 'rejected' | 'cancelled'>('all');
+  const [deliveryFeatureFilter, setDeliveryFeatureFilter] = useState<'all' | 'with_additional' | 'linked' | 'standard'>('all');
+
   // --- FILTROS DE TURNO INTELIGENTE NO HISTÓRICO DE CORRIDAS ---
   const [filterMode, setFilterMode] = useState<'smart_shift' | 'date_range' | 'all'>('smart_shift');
   const [smartDate, setSmartDate] = useState<string>(db.getOperationalDateString());
@@ -120,14 +124,14 @@ export default function RiderDashboard() {
   const [historyEstFilter, setHistoryEstFilter] = useState('');
   const [historyDateFrom, setHistoryDateFrom] = useState('');
   const [historyDateTo, setHistoryDateTo] = useState('');
-
-  const [deliveryStatusFilter, setDeliveryStatusFilter] = useState<'all' | 'pending' | 'active' | 'rejected' | 'cancelled'>('all');
+  const [historyOrderNumberFilter, setHistoryOrderNumberFilter] = useState('');
 
   // --- FILTROS DA ABA HISTÓRICO DE GANHOS ---
   const [earningsPeriodMode, setEarningsPeriodMode] = useState<'this_week' | 'last_week' | 'today' | 'this_month' | 'custom'>('this_week');
   const [earningsCustomFrom, setEarningsCustomFrom] = useState<string>('');
   const [earningsCustomTo, setEarningsCustomTo] = useState<string>('');
   const [earningsPaidFilter, setEarningsPaidFilter] = useState<'all' | 'unpaid' | 'paid'>('all');
+  const [earningsFeatureFilter, setEarningsFeatureFilter] = useState<'all' | 'with_additional' | 'linked' | 'standard'>('all');
   const [earningsEstFilter, setEarningsEstFilter] = useState<string>('');
 
   const resolveEst = (id: string): Establishment | undefined => {
@@ -462,7 +466,6 @@ export default function RiderDashboard() {
     );
   };
 
-  // Pedidos disponíveis para vincular no dia de hoje
   const availableDeliveriesForLinking = todayDeliveries.filter(d => 
     (!editingDelivery || d.id !== editingDelivery.id) && d.orderNumber
   );
@@ -491,13 +494,11 @@ export default function RiderDashboard() {
       return;
     }
 
-    // Trava atômica em voo para evitar duplo clique em milissegundos
     if (!db.lockOrder(cleanOrderNumber, operationalTodayStr, new Date().toTimeString().slice(0, 5))) {
       alert('Aviso: Este pedido já está sendo gravado no momento.');
       return;
     }
 
-    // Validação estrita de duplicidade para o motoboy com mensagem solicitada
     const dupCheck = db.checkDuplicateOrderNumber(cleanOrderNumber, operationalTodayStr, new Date().toTimeString().slice(0, 5), editingDelivery?.id);
     if (dupCheck.isDuplicate) {
       db.unlockOrder(cleanOrderNumber, operationalTodayStr, new Date().toTimeString().slice(0, 5));
@@ -630,17 +631,48 @@ export default function RiderDashboard() {
   const todaySchedule = schedules.find(s => isSameDayString(s.date, operationalTodayStr));
   const riderHistoryEsts = getRiderHistoryEstablishments();
 
+  // Filtragem de Corridas de Hoje com Status e Tipo
   const filteredTodayDeliveries = todayDeliveries.filter(d => {
-    if (deliveryStatusFilter === 'all') return true;
-    return d.status === deliveryStatusFilter;
+    if (deliveryStatusFilter !== 'all' && d.status !== deliveryStatusFilter) return false;
+
+    if (deliveryFeatureFilter === 'with_additional') {
+      const hasAdd = Number(d.additionalValue || 0) > 0;
+      if (!hasAdd) return false;
+    } else if (deliveryFeatureFilter === 'linked') {
+      const isLinked = d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber);
+      if (!isLinked) return false;
+    } else if (deliveryFeatureFilter === 'standard') {
+      const isStandard = d.deliveryType !== 'same_address' && !d.linkedOrderNumber && (!d.additionalValue || Number(d.additionalValue) <= 0);
+      if (!isStandard) return false;
+    }
+
+    return true;
   });
 
+  // Filtragem de Histórico com Turno Inteligente + Tipo
   const historyDeliveries = deliveries.filter(d => {
     let matchesEst = true;
     if (historyEstFilter) {
       matchesEst = db.isSameEstablishment(d.establishmentId, historyEstFilter);
     }
     if (!matchesEst) return false;
+
+    if (historyOrderNumberFilter.trim()) {
+      const cleanNum = historyOrderNumberFilter.trim().toLowerCase().replace('#', '');
+      const dNum = (d.orderNumber || '').toLowerCase().replace('#', '');
+      if (!dNum.includes(cleanNum)) return false;
+    }
+
+    if (deliveryFeatureFilter === 'with_additional') {
+      const hasAdd = Number(d.additionalValue || 0) > 0;
+      if (!hasAdd) return false;
+    } else if (deliveryFeatureFilter === 'linked') {
+      const isLinked = d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber);
+      if (!isLinked) return false;
+    } else if (deliveryFeatureFilter === 'standard') {
+      const isStandard = d.deliveryType !== 'same_address' && !d.linkedOrderNumber && (!d.additionalValue || Number(d.additionalValue) <= 0);
+      if (!isStandard) return false;
+    }
 
     if (filterMode === 'smart_shift') {
       if (!smartDate) return true;
@@ -716,7 +748,7 @@ export default function RiderDashboard() {
   const earningsBounds = getEarningsDateBounds();
 
   const filteredEarningsDeliveries = deliveries.filter(d => {
-    if (d.status !== 'active') return false; // Apenas corridas aprovadas contam no faturamento real
+    if (d.status !== 'active') return false;
 
     if (d.date < earningsBounds.start || d.date > earningsBounds.end) return false;
 
@@ -724,6 +756,10 @@ export default function RiderDashboard() {
 
     if (earningsPaidFilter === 'unpaid' && d.paid) return false;
     if (earningsPaidFilter === 'paid' && !d.paid) return false;
+
+    if (earningsFeatureFilter === 'with_additional' && (!d.additionalValue || Number(d.additionalValue) <= 0)) return false;
+    if (earningsFeatureFilter === 'linked' && (d.deliveryType !== 'same_address' && !d.linkedOrderNumber)) return false;
+    if (earningsFeatureFilter === 'standard' && (d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber) || (d.additionalValue && Number(d.additionalValue) > 0))) return false;
 
     return true;
   });
@@ -806,7 +842,7 @@ export default function RiderDashboard() {
           </div>
         </div>
 
-        {/* BARRA DE NAVEGAÇÃO ENTRE ABAS COM A NOVA ABA "GANHOS" */}
+        {/* BARRA DE NAVEGAÇÃO ENTRE ABAS COM A ABA GANHOS */}
         <div className="grid grid-cols-3 sm:grid-cols-6 bg-white rounded-xl p-1 shadow-sm mb-6 border border-slate-200 gap-1 text-xs sticky top-[68px] z-20">
           <button
             onClick={() => setActiveTab('dashboard')}
@@ -848,7 +884,6 @@ export default function RiderDashboard() {
             <span>Histórico</span>
           </button>
 
-          {/* NOVA ABA DE HISTÓRICO DE GANHOS */}
           <button
             onClick={() => setActiveTab('earnings')}
             className={`py-2.5 font-bold rounded-lg flex items-center justify-center space-x-1 transition-colors ${
@@ -959,6 +994,7 @@ export default function RiderDashboard() {
               </div>
             )}
 
+            {/* SEÇÃO: CORRIDAS DE HOJE COM FILTROS DE STATUS E TIPO */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <h3 className="text-lg font-bold text-slate-800 flex items-center space-x-2">
@@ -966,8 +1002,18 @@ export default function RiderDashboard() {
                   <span>Corridas de Hoje</span>
                 </h3>
                 
-                <div className="flex items-center space-x-2">
-                  <span className="text-xs text-slate-500 font-medium">Filtrar:</span>
+                <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+                  <select
+                    value={deliveryFeatureFilter}
+                    onChange={(e) => setDeliveryFeatureFilter(e.target.value as any)}
+                    className="px-2.5 py-1.5 border border-purple-300 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 bg-purple-50/70 font-bold text-purple-900"
+                  >
+                    <option value="all">Todos os Tipos</option>
+                    <option value="with_additional">✨ Com Adicional</option>
+                    <option value="linked">🔗 Vinculadas (Mesmo Local)</option>
+                    <option value="standard">Padrão</option>
+                  </select>
+
                   <select
                     value={deliveryStatusFilter}
                     onChange={(e) => setDeliveryStatusFilter(e.target.value as any)}
@@ -1256,7 +1302,7 @@ export default function RiderDashboard() {
 
               {historySubTab === 'deliveries' ? (
                 <>
-                  {/* CARD DE FILTRO DE TURNO E PERÍODO */}
+                  {/* CARD DE FILTRO DE TURNO, PERÍODO E TIPO */}
                   <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-3">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/70 pb-2.5">
                       <p className="text-xs font-black uppercase text-indigo-900 flex items-center gap-1.5 tracking-wider">
@@ -1352,20 +1398,56 @@ export default function RiderDashboard() {
                       </div>
                     )}
 
-                    <div className="pt-1">
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                        Filtrar por Estabelecimento ({riderHistoryEsts.length} disponível{riderHistoryEsts.length !== 1 ? 'is' : ''})
-                      </label>
-                      <select
-                        value={historyEstFilter}
-                        onChange={(e) => setHistoryEstFilter(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      >
-                        <option value="">Todos os Meus Estabelecimentos Escalados</option>
-                        {riderHistoryEsts.map(est => (
-                          <option key={est.id} value={est.id}>{est.name}</option>
-                        ))}
-                      </select>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1 border-t border-slate-200">
+                      <div>
+                        <label className="block text-[10px] font-bold text-purple-700 uppercase mb-1 flex items-center gap-1">
+                          <Link2 className="h-3 w-3" />
+                          <span>Tipo / Adicional</span>
+                        </label>
+                        <select
+                          value={deliveryFeatureFilter}
+                          onChange={(e) => setDeliveryFeatureFilter(e.target.value as any)}
+                          className="w-full px-3 py-2 border border-purple-300 bg-purple-50/50 rounded-xl text-xs font-bold text-purple-900 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                        >
+                          <option value="all">Todos os Tipos</option>
+                          <option value="with_additional">✨ Com Adicional</option>
+                          <option value="linked">🔗 Vinculadas (Mesmo Endereço)</option>
+                          <option value="standard">Padrão</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold text-indigo-700 uppercase mb-1 flex items-center gap-1">
+                          <Hash className="h-3 w-3" />
+                          <span>Nº do Pedido</span>
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder="Ex: 1042"
+                            value={historyOrderNumberFilter}
+                            onChange={(e) => setHistoryOrderNumberFilter(e.target.value)}
+                            className="w-full pl-8 pr-3 py-2 border border-indigo-200 bg-indigo-50/50 rounded-xl text-xs font-bold text-indigo-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          />
+                          <Hash className="h-3.5 w-3.5 text-indigo-400 absolute left-2.5 top-2.5" />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                          Estabelecimento
+                        </label>
+                        <select
+                          value={historyEstFilter}
+                          onChange={(e) => setHistoryEstFilter(e.target.value)}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        >
+                          <option value="">Todos os Estabelecimentos</option>
+                          {riderHistoryEsts.map(est => (
+                            <option key={est.id} value={est.id}>{est.name}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                   </div>
 
@@ -1513,7 +1595,7 @@ export default function RiderDashboard() {
           </div>
         )}
 
-        {/* NOVA ABA: HISTÓRICO DE GANHOS DO MOTOBOY */}
+        {/* ABA: HISTÓRICO DE GANHOS DO MOTOBOY */}
         {activeTab === 'earnings' && (
           <div className="space-y-6">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6">
@@ -1530,8 +1612,18 @@ export default function RiderDashboard() {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-bold text-slate-400 uppercase">Status:</span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <select
+                    value={earningsFeatureFilter}
+                    onChange={(e) => setEarningsFeatureFilter(e.target.value as any)}
+                    className="px-3 py-1.5 border border-purple-300 rounded-xl text-xs font-bold text-purple-900 bg-purple-50 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                  >
+                    <option value="all">Todos os Tipos</option>
+                    <option value="with_additional">✨ Com Adicional</option>
+                    <option value="linked">🔗 Vinculadas</option>
+                    <option value="standard">Padrão</option>
+                  </select>
+
                   <select
                     value={earningsPaidFilter}
                     onChange={(e) => setEarningsPaidFilter(e.target.value as any)}
@@ -1655,7 +1747,7 @@ export default function RiderDashboard() {
                 </div>
               </div>
 
-              {/* CARD DE GANHOS DO MOTOBOY (DESIGN EXATO DA IMAGEM DO USUÁRIO) */}
+              {/* CARD DE GANHOS DO MOTOBOY */}
               <div className="p-6 rounded-3xl border-2 border-indigo-200/90 bg-white shadow-md space-y-4">
                 
                 {/* Header do Card com Nome, Telefone e Badge de Status */}
@@ -2057,7 +2149,7 @@ export default function RiderDashboard() {
                     placeholder="Ex: Distância / Bairro dos Cuités, Chuva, Taxa extra..."
                     value={launchForm.additionalReason || ''}
                     onChange={(e) => setLaunchForm({ ...launchForm, additionalReason: e.target.value })}
-                    className="w-full px-3 py-2 border border-amber-300/80 rounded-xl text-xs font-semibold text-amber-950 bg-amber-50/40 focus:outline-none focus:ring-1 focus:ring-amber-500 placeholder-amber-900/40"
+                    className="w-full px-2 py-1 border border-amber-300/80 rounded-xl text-xs font-semibold text-amber-950 bg-amber-50/40 focus:outline-none focus:ring-1 focus:ring-amber-500 placeholder-amber-900/40"
                   />
                 </div>
 
