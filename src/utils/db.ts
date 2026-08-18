@@ -429,7 +429,7 @@ export const db = {
     await this.pullFromSupabase();
   },
 
-  // --- CORRIDAS (SUPORTE COMPLETO A VINCULAÇÃO, ADICIONAIS E JUSTIFICATIVA) ---
+  // --- CORRIDAS (SUPORTE COMPLETO A VINCULAÇÃO, ADICIONAIS, JUSTIFICATIVA E STATUS DE PAGAMENTO) ---
   getDeliveries(): Delivery[] {
     return memoryDeliveries;
   },
@@ -437,7 +437,7 @@ export const db = {
   async setDeliveries(deliveries: Delivery[]) {
     memoryDeliveries = deliveries;
     const payload = deliveries.map(d => {
-      // Cria payload ultra-compacto para nunca estourar o limite de varchar(255) da coluna order_number
+      // Cria payload compacto para armazenar metadados adicionais e o status de pagamento
       const compactMeta: any = {};
       if (d.orderNumber) compactMeta.o = d.orderNumber;
       if (d.notes) compactMeta.n = d.notes.slice(0, 100);
@@ -446,6 +446,7 @@ export const db = {
       if (d.additionalValue && Number(d.additionalValue) > 0) compactMeta.a = Number(d.additionalValue);
       if (d.additionalReason) compactMeta.r = d.additionalReason.slice(0, 40);
       if (d.linkedOrderNumber) compactMeta.l = d.linkedOrderNumber.slice(0, 10);
+      if (d.paid) compactMeta.p = 1;
 
       let serializedOrderNumber = Object.keys(compactMeta).length > 0 
         ? JSON.stringify(compactMeta) 
@@ -755,6 +756,7 @@ export const db = {
           let linkedOrderNumber: string | undefined = undefined;
           let linkedDeliveryId: string | undefined = undefined;
           let updatedAt = d.updated_at;
+          let paid = Boolean(d.paid);
 
           if (d.order_number && d.order_number.startsWith('{')) {
             try {
@@ -768,6 +770,9 @@ export const db = {
               linkedOrderNumber = parsed.linkedOrderNumber || parsed.l || undefined;
               linkedDeliveryId = parsed.linkedDeliveryId || undefined;
               updatedAt = parsed.updatedAt || d.updated_at;
+              if (parsed.p === 1 || parsed.p === true || parsed.paid === true) {
+                paid = true;
+              }
             } catch (e) {}
           }
 
@@ -789,7 +794,7 @@ export const db = {
             linkedOrderNumber,
             linkedDeliveryId,
             updatedAt,
-            paid: d.paid || false
+            paid
           };
         });
       }
@@ -799,7 +804,7 @@ export const db = {
         memoryRequests = reqsData.map(r => ({
           id: r.id,
           establishmentName: r.establishment_name,
-          ownerName: r.owner_name,
+          ownerName: r.ownerName,
           phone: r.phone,
           address: r.address,
           status: r.status,
