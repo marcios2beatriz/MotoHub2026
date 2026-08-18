@@ -27,7 +27,8 @@ import {
   Filter,
   Hash,
   Link2,
-  HelpCircle
+  HelpCircle,
+  Loader2
 } from 'lucide-react';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
 import CustomerChatModal from '../components/CustomerChatModal';
@@ -74,6 +75,7 @@ export default function RiderDashboard() {
   const prevScheduleChatRef = useRef<Record<string, string>>({});
 
   const [showLaunchModal, setShowLaunchModal] = useState(false);
+  const [isSubmittingDelivery, setIsSubmittingDelivery] = useState(false);
   const [editingDelivery, setEditingDelivery] = useState<Delivery | null>(null);
   const [launchForm, setLaunchForm] = useState({
     establishmentId: '',
@@ -430,12 +432,10 @@ export default function RiderDashboard() {
     const deliveryEstIds = new Set(deliveries.map(d => d.establishmentId));
     const allRelatedEstIds = new Set([...scheduledEstIds, ...deliveryEstIds]);
 
-    const result = establishments.filter(e => 
+    return establishments.filter(e => 
       allRelatedEstIds.has(e.id) || 
       Array.from(allRelatedEstIds).some(id => db.isSameEstablishment(e.id, id))
     );
-
-    return result.length > 0 ? result : establishments;
   };
 
   // Pedidos disponíveis para vincular no dia de hoje
@@ -445,7 +445,7 @@ export default function RiderDashboard() {
 
   const handleLaunchDelivery = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    if (!user || isSubmittingDelivery) return;
 
     const baseVal = parseFloat(launchForm.value.replace(',', '.'));
     const addVal = parseFloat((launchForm.additionalValue || '0').replace(',', '.')) || 0;
@@ -467,60 +467,77 @@ export default function RiderDashboard() {
       return;
     }
 
+    // Trava atômica em voo para evitar duplo clique em milissegundos
+    if (!db.lockOrder(cleanOrderNumber, operationalTodayStr, new Date().toTimeString().slice(0, 5))) {
+      alert('Aviso: Este pedido já está sendo gravado no momento.');
+      return;
+    }
+
     const dupCheck = db.checkDuplicateOrderNumber(cleanOrderNumber, operationalTodayStr, new Date().toTimeString().slice(0, 5), editingDelivery?.id);
     if (dupCheck.isDuplicate) {
+      db.unlockOrder(cleanOrderNumber, operationalTodayStr, new Date().toTimeString().slice(0, 5));
       alert(`⚠️ Erro: O pedido #${cleanOrderNumber} já foi lançado hoje por ${dupCheck.riderName}.\n\nNão é permitido lançar mais de uma corrida com o mesmo número de pedido.`);
       return;
     }
 
-    const allDeliveries = db.getDeliveries();
-    const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && isSameDayString(s.date, operationalTodayStr));
-    const nowStr = new Date().toISOString();
+    setIsSubmittingDelivery(true);
 
-    if (editingDelivery) {
-      const updated = allDeliveries.map(d => d.id === editingDelivery.id ? {
-        ...d,
-        establishmentId: launchForm.establishmentId,
-        value: finalVal,
-        orderNumber: cleanOrderNumber,
-        notes: launchForm.notes.trim() || undefined,
-        deliveryType: launchForm.deliveryType,
-        additionalValue: addVal > 0 ? addVal : undefined,
-        additionalReason: launchForm.additionalReason?.trim() || undefined,
-        linkedOrderNumber: launchForm.deliveryType === 'same_address' ? (launchForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
-        scheduleId: activeSchedule?.id || d.scheduleId,
-        updatedAt: nowStr
-      } : d);
+    try {
+      const allDeliveries = db.getDeliveries();
+      const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && isSameDayString(s.date, operationalTodayStr));
+      const nowStr = new Date().toISOString();
 
-      await db.setDeliveries(updated);
-      alert('Corrida atualizada com sucesso!');
-    } else {
-      const newDelivery: Delivery = {
-        id: 'd_' + Date.now(),
-        riderId: user.id,
-        establishmentId: launchForm.establishmentId,
-        date: operationalTodayStr,
-        time: new Date().toTimeString().slice(0, 5),
-        value: finalVal,
-        status: 'pending',
-        scheduleId: activeSchedule?.id,
-        orderNumber: cleanOrderNumber,
-        notes: launchForm.notes.trim() || undefined,
-        deliveryType: launchForm.deliveryType,
-        additionalValue: addVal > 0 ? addVal : undefined,
-        additionalReason: launchForm.additionalReason?.trim() || undefined,
-        linkedOrderNumber: launchForm.deliveryType === 'same_address' ? (launchForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
-        updatedAt: nowStr
-      };
+      if (editingDelivery) {
+        const updated = allDeliveries.map(d => d.id === editingDelivery.id ? {
+          ...d,
+          establishmentId: launchForm.establishmentId,
+          value: finalVal,
+          orderNumber: cleanOrderNumber,
+          notes: launchForm.notes.trim() || undefined,
+          deliveryType: launchForm.deliveryType,
+          additionalValue: addVal > 0 ? addVal : undefined,
+          additionalReason: launchForm.additionalReason?.trim() || undefined,
+          linkedOrderNumber: launchForm.deliveryType === 'same_address' ? (launchForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+          scheduleId: activeSchedule?.id || d.scheduleId,
+          updatedAt: nowStr
+        } : d);
 
-      await db.setDeliveries([...allDeliveries, newDelivery]);
-      alert(`🎉 Corrida #${cleanOrderNumber} lançada com sucesso! Aguardando aprovação.`);
+        await db.setDeliveries(updated);
+        alert('Corrida atualizada com sucesso!');
+      } else {
+        const newDelivery: Delivery = {
+          id: 'd_' + Date.now(),
+          riderId: user.id,
+          establishmentId: launchForm.establishmentId,
+          date: operationalTodayStr,
+          time: new Date().toTimeString().slice(0, 5),
+          value: finalVal,
+          status: 'pending',
+          scheduleId: activeSchedule?.id,
+          orderNumber: cleanOrderNumber,
+          notes: launchForm.notes.trim() || undefined,
+          deliveryType: launchForm.deliveryType,
+          additionalValue: addVal > 0 ? addVal : undefined,
+          additionalReason: launchForm.additionalReason?.trim() || undefined,
+          linkedOrderNumber: launchForm.deliveryType === 'same_address' ? (launchForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+          updatedAt: nowStr
+        };
+
+        await db.setDeliveries([...allDeliveries, newDelivery]);
+        alert(`🎉 Corrida #${cleanOrderNumber} lançada com sucesso! Aguardando aprovação.`);
+      }
+
+      setShowLaunchModal(false);
+      setEditingDelivery(null);
+      setLaunchForm({ establishmentId: '', value: '8.00', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', additionalReason: '', linkedOrderNumber: '' });
+      loadData();
+    } catch (err) {
+      console.error('Erro ao salvar corrida:', err);
+      alert('Erro ao gravar corrida. Tente novamente.');
+    } finally {
+      setIsSubmittingDelivery(false);
+      db.unlockOrder(cleanOrderNumber, operationalTodayStr, new Date().toTimeString().slice(0, 5));
     }
-
-    setShowLaunchModal(false);
-    setEditingDelivery(null);
-    setLaunchForm({ establishmentId: '', value: '8.00', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', additionalReason: '', linkedOrderNumber: '' });
-    loadData();
   };
 
   const handleSendCustomerMessage = (text: string) => {
@@ -1663,16 +1680,25 @@ export default function RiderDashboard() {
               <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
                 <button
                   type="button"
+                  disabled={isSubmittingDelivery}
                   onClick={() => { setShowLaunchModal(false); setEditingDelivery(null); }}
-                  className="px-4 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors"
+                  className="px-4 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50"
                 >
                   Cancelar
                 </button>
                 <button 
                   type="submit" 
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-extrabold transition-all shadow-md"
+                  disabled={isSubmittingDelivery}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white rounded-xl text-xs font-extrabold transition-all shadow-md flex items-center gap-1.5"
                 >
-                  {editingDelivery ? 'Salvar Alterações' : 'Lançar Corrida'}
+                  {isSubmittingDelivery ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Gravando...</span>
+                    </>
+                  ) : (
+                    <span>{editingDelivery ? 'Salvar Alterações' : 'Lançar Corrida'}</span>
+                  )}
                 </button>
               </div>
             </form>
