@@ -150,46 +150,106 @@ export function getDeliveryOperationalDate(dateStr: string, timeStr: string = '1
   return cleanDate;
 }
 
-// Chave unicamente para persistir a sessão de login no navegador
+// Chaves para persistência local
 const SESSION_USER_KEY = 'motohub_session_user';
-const DELIVERIES_STORAGE_BACKUP_KEY = 'motohub_deliveries_local_backup_v2';
+const DELIVERIES_STORAGE_BACKUP_KEY = 'motohub_deliveries_master_recovery_v3';
 
-// Parser ultra-resiliente para extrair o número do pedido mesmo se o JSON tiver sido truncado
-function extractOrderNumberFromRaw(raw?: string): string | undefined {
+// ── EXTRAÇÃO INTELIGENTE E RESILIENTE DE NÚMERO DO PEDIDO ──
+function extractOrderNumberDeep(raw?: string): string | undefined {
   if (!raw) return undefined;
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
 
-  // 1. Tenta parse JSON padrão
+  // 1. Tenta extração via JSON
   if (trimmed.startsWith('{')) {
     try {
       const parsed = JSON.parse(trimmed);
       if (parsed.orderNumber) return String(parsed.orderNumber).replace('#', '').trim();
       if (parsed.o) return String(parsed.o).replace('#', '').trim();
-    } catch {
-      // 2. Fallback de Regex se o JSON estiver incompleto/truncado
-      const matchShort = trimmed.match(/"o"\s*:\s*"([^"]+)"/);
-      if (matchShort && matchShort[1]) return matchShort[1].replace('#', '').trim();
+      if (parsed.num) return String(parsed.num).replace('#', '').trim();
+      if (parsed.number) return String(parsed.number).replace('#', '').trim();
+    } catch {}
 
-      const matchLong = trimmed.match(/"orderNumber"\s*:\s*"([^"]+)"/);
-      if (matchLong && matchLong[1]) return matchLong[1].replace('#', '').trim();
+    // 2. Extração via Regex em JSON truncado ou corrompido
+    const regexList = [
+      /"(?:o|orderNumber|order_number|num|number)"\s*:\s*"([^"]+)"/i,
+      /"(?:o|orderNumber|order_number|num|number)"\s*:\s*(\d{1,8})/i,
+      /#(\d{1,6})/
+    ];
 
-      const matchNumeric = trimmed.match(/"(?:o|orderNumber)"\s*:\s*(\d{1,6})/);
-      if (matchNumeric && matchNumeric[1]) return matchNumeric[1];
+    for (const reg of regexList) {
+      const match = trimmed.match(reg);
+      if (match && match[1]) {
+        return match[1].replace('#', '').trim();
+      }
     }
   }
 
-  // 3. Se for uma string normal de número (ex: "1516" ou "#1516")
+  // 3. String direta com hashtag ou números (ex: "#1042", "1042", "Pedido 1042")
   if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
-    const clean = trimmed.replace('#', '').trim();
-    if (clean) return clean;
+    const hashMatch = trimmed.match(/#(\d{1,6})/);
+    if (hashMatch && hashMatch[1]) return hashMatch[1];
+
+    const cleanNum = trimmed.replace(/\D/g, '');
+    if (cleanNum && cleanNum.length <= 6) return cleanNum;
+
+    return trimmed.replace('#', '').trim();
   }
 
   return undefined;
 }
 
-// Recupera cache local de backup para nunca perder números ou notas de corridas
-function loadDeliveriesLocalBackup(): Delivery[] {
+// ── VARREDURA COMPLETA DE TODAS AS CHAVES DO LOCALSTORAGE PARA RESGATAR PEDIDOS ──
+function scanAllLocalStorageDeliveries(): Map<string, { orderNumber?: string; notes?: string; customerChat?: string; additionalValue?: number; additionalReason?: string; linkedOrderNumber?: string; deliveryType?: 'standard' | 'same_address'; paid?: boolean }> {
+  const recoveredMap = new Map<string, any>();
+
+  try {
+    const allKeys = Object.keys(localStorage);
+    for (const key of allKeys) {
+      if (key.includes('deliv') || key.includes('motohub') || key.includes('nav') || key.includes('backup') || key.includes('route')) {
+        try {
+          const val = localStorage.getItem(key);
+          if (!val) continue;
+          const parsed = JSON.parse(val);
+
+          const candidateArray: any[] = Array.isArray(parsed) 
+            ? parsed 
+            : (parsed.deliveries && Array.isArray(parsed.deliveries) ? parsed.deliveries : (parsed.id ? [parsed] : []));
+
+          for (const item of candidateArray) {
+            if (item && item.id) {
+              const num = item.orderNumber || item.order_number || extractOrderNumberDeep(item.order_number);
+              if (num || item.notes || item.paid !== undefined) {
+                const existing = recoveredMap.get(item.id) || {};
+                recoveredMap.set(item.id, {
+                  ...existing,
+                  orderNumber: num ? String(num).replace('#', '').trim() : existing.orderNumber,
+                  notes: item.notes || existing.notes,
+                  customerChat: item.customerChat || existing.customerChat,
+                  additionalValue: item.additionalValue !== undefined ? Number(item.additionalValue) : existing.additionalValue,
+                  additionalReason: item.additionalReason || existing.additionalReason,
+                  linkedOrderNumber: item.linkedOrderNumber ? String(item.linkedOrderNumber).replace('#', '').trim() : existing.linkedOrderNumber,
+                  deliveryType: item.deliveryType || existing.deliveryType,
+                  paid: item.paid !== undefined ? Boolean(item.paid) : existing.paid
+                });
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+
+  return recoveredMap;
+}
+
+function saveMasterDeliveriesBackup(dels: Delivery[]) {
+  try {
+    localStorage.setItem(DELIVERIES_STORAGE_BACKUP_KEY, JSON.stringify(dels));
+  } catch {}
+}
+
+function loadMasterDeliveriesBackup(): Delivery[] {
   try {
     const data = localStorage.getItem(DELIVERIES_STORAGE_BACKUP_KEY);
     return data ? JSON.parse(data) : [];
@@ -198,30 +258,22 @@ function loadDeliveriesLocalBackup(): Delivery[] {
   }
 }
 
-function saveDeliveriesLocalBackup(dels: Delivery[]) {
-  try {
-    localStorage.setItem(DELIVERIES_STORAGE_BACKUP_KEY, JSON.stringify(dels));
-  } catch {}
-}
-
-// Cache em memória de tempo de execução sincronizado com o Supabase
+// Cache em memória
 let memoryUsers: User[] = [];
 let memoryEstablishments: Establishment[] = [];
 let memorySchedules: Schedule[] = [];
-let memoryDeliveries: Delivery[] = loadDeliveriesLocalBackup();
+let memoryDeliveries: Delivery[] = loadMasterDeliveriesBackup();
 let memoryNotifications: Notification[] = [];
 let memoryRequests: PartnerRequest[] = [];
 let memoryLocations: Record<string, RiderLocation> = {};
 let memoryRouteHistory: RouteHistoryItem[] = [];
 
-// Trava de segurança para evitar múltiplos lançamentos em milissegundos
 const inFlightOrderLocks = new Set<string>();
 
 export const db = {
   isSameDayString,
   getDeliveryOperationalDate,
 
-  // Bloqueio em voo temporário (lock)
   lockOrder(orderNumber: string, date: string, time: string = '12:00'): boolean {
     const cleanNumber = orderNumber.trim().replace('#', '');
     if (!cleanNumber) return true;
@@ -229,7 +281,7 @@ export const db = {
     const lockKey = `${opDate}_${cleanNumber}`;
 
     if (inFlightOrderLocks.has(lockKey)) {
-      return false; // Já está sendo processado em voo!
+      return false;
     }
 
     inFlightOrderLocks.add(lockKey);
@@ -247,7 +299,6 @@ export const db = {
     inFlightOrderLocks.delete(`${opDate}_${cleanNumber}`);
   },
 
-  // Verifica se o número do pedido já foi lançado no mesmo dia operacional
   checkDuplicateOrderNumber(orderNumber: string, date: string, time: string = '12:00', excludeDeliveryId?: string): { isDuplicate: boolean; duplicateDelivery?: Delivery; riderName?: string; establishmentName?: string } {
     const cleanNumber = orderNumber.trim().replace('#', '');
     if (!cleanNumber) return { isDuplicate: false };
@@ -279,7 +330,6 @@ export const db = {
     return { isDuplicate: false };
   },
 
-  // Retorna pedidos já lançados no mesmo dia para facilitar a vinculação
   getAvailableDeliveriesForLinking(date: string, time: string = '12:00', riderId?: string): Delivery[] {
     const targetOpDate = getDeliveryOperationalDate(date, time);
     return memoryDeliveries.filter(d => {
@@ -290,7 +340,6 @@ export const db = {
     });
   },
 
-  // --- SESSÃO DO USUÁRIO ATIVO ---
   getCurrentUser(): User | null {
     try {
       const data = localStorage.getItem(SESSION_USER_KEY);
@@ -308,7 +357,6 @@ export const db = {
     }
   },
 
-  // --- USUÁRIOS ---
   getUsers(): User[] {
     return memoryUsers;
   },
@@ -404,7 +452,6 @@ export const db = {
     await this.pullFromSupabase();
   },
 
-  // --- ESTABELECIMENTOS ---
   getEstablishments(): Establishment[] {
     return memoryEstablishments;
   },
@@ -438,7 +485,6 @@ export const db = {
     await this.pullFromSupabase();
   },
 
-  // --- ESCALAS ---
   getSchedules(): Schedule[] {
     return memorySchedules;
   },
@@ -466,10 +512,7 @@ export const db = {
     });
 
     if (payload.length > 0) {
-      const { error } = await supabase.from('schedules').upsert(payload, { onConflict: 'id' });
-      if (error) {
-        console.error('Erro ao gravar escalas no Supabase:', error);
-      }
+      await supabase.from('schedules').upsert(payload, { onConflict: 'id' });
     }
     await this.pullFromSupabase();
   },
@@ -480,21 +523,23 @@ export const db = {
     await this.pullFromSupabase();
   },
 
-  // --- CORRIDAS (SUPORTE COMPLETO A VINCULAÇÃO, ADICIONAIS, JUSTIFICATIVA E STATUS DE PAGAMENTO) ---
+  // ── GERENCIAMENTO E SERIALIZAÇÃO DE CORRIDAS ──
   getDeliveries(): Delivery[] {
     return memoryDeliveries;
   },
 
   async setDeliveries(deliveries: Delivery[]) {
     memoryDeliveries = deliveries;
-    saveDeliveriesLocalBackup(deliveries);
+    saveMasterDeliveriesBackup(deliveries);
 
     const payload = deliveries.map(d => {
-      // Cria payload seguro que sempre coloca o número do pedido no início
       const cleanOrderNum = d.orderNumber ? String(d.orderNumber).replace('#', '').trim() : '';
 
-      const compactMeta: any = {};
-      if (cleanOrderNum) compactMeta.o = cleanOrderNum;
+      // Monta objeto compacto garantindo o campo "o" (orderNumber) sempre presente
+      const compactMeta: any = {
+        o: cleanOrderNum
+      };
+
       if (d.deliveryType && d.deliveryType !== 'standard') compactMeta.t = 'm';
       if (d.additionalValue && Number(d.additionalValue) > 0) compactMeta.a = Number(d.additionalValue);
       if (d.additionalReason) compactMeta.r = d.additionalReason.slice(0, 30);
@@ -502,13 +547,7 @@ export const db = {
       if (d.paid) compactMeta.p = 1;
       if (d.notes) compactMeta.n = d.notes.slice(0, 60);
 
-      // Se tiver metadados extras além do número, serializa em JSON compacto; senão, salva o número puro
-      let serializedOrderNumber = '';
-      if (Object.keys(compactMeta).length > 1 || compactMeta.t || compactMeta.a || compactMeta.p) {
-        serializedOrderNumber = JSON.stringify(compactMeta);
-      } else {
-        serializedOrderNumber = cleanOrderNum;
-      }
+      const serializedOrderNumber = JSON.stringify(compactMeta);
 
       return {
         id: d.id,
@@ -519,34 +558,30 @@ export const db = {
         value: d.value,
         status: d.status,
         schedule_id: d.scheduleId || null,
-        order_number: serializedOrderNumber || null
+        order_number: serializedOrderNumber
       };
     });
 
     if (payload.length > 0) {
-      const { error } = await supabase.from('deliveries').upsert(payload, { onConflict: 'id' });
-      if (error) {
-        console.error('Erro ao gravar entregas no Supabase:', error);
-      }
+      await supabase.from('deliveries').upsert(payload, { onConflict: 'id' });
     }
     await this.pullFromSupabase();
   },
 
   async deleteDelivery(id: string) {
     memoryDeliveries = memoryDeliveries.filter(d => d.id !== id);
-    saveDeliveriesLocalBackup(memoryDeliveries);
+    saveMasterDeliveriesBackup(memoryDeliveries);
     await supabase.from('deliveries').delete().eq('id', id);
     await this.pullFromSupabase();
   },
 
   async clearAllDeliveries() {
     memoryDeliveries = [];
-    saveDeliveriesLocalBackup([]);
+    saveMasterDeliveriesBackup([]);
     await supabase.from('deliveries').delete().neq('id', '');
     await this.pullFromSupabase();
   },
 
-  // --- NOTIFICAÇÕES ---
   getNotifications(): Notification[] {
     return memoryNotifications;
   },
@@ -568,7 +603,6 @@ export const db = {
     await this.pullFromSupabase();
   },
 
-  // --- SOLICITAÇÕES DE PARCERIA ---
   getPartnerRequests(): PartnerRequest[] {
     return memoryRequests;
   },
@@ -597,7 +631,6 @@ export const db = {
     await this.pullFromSupabase();
   },
 
-  // --- HISTÓRICO DE ROTAS ---
   getRouteHistory(): RouteHistoryItem[] {
     return memoryRouteHistory;
   },
@@ -615,7 +648,6 @@ export const db = {
     }
   },
 
-  // --- LOCALIZAÇÃO GPS DOS MOTOBOYS ---
   getRiderLocations(): RiderLocation[] {
     return Object.values(memoryLocations);
   },
@@ -651,7 +683,6 @@ export const db = {
     } catch (e) {}
   },
 
-  // --- RESOLVERS & HELPERS ---
   getLocalDateString(date: Date = new Date()): string {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -725,7 +756,7 @@ export const db = {
     return `000.000.000-${rand()}${rand()}`;
   },
 
-  // --- SINCRONIZAÇÃO TOTAL COM O SUPABASE ---
+  // ── SINCRONIZAÇÃO E RESTAURAÇÃO TOTAL DOS DADOS DO SUPABASE ──
   async pullFromSupabase() {
     try {
       const { data: usersData } = await supabase.from('users').select('*');
@@ -801,23 +832,27 @@ export const db = {
 
       const { data: delData } = await supabase.from('deliveries').select('*');
       if (delData) {
-        const localBackupMap = new Map<string, Delivery>();
-        memoryDeliveries.forEach(d => localBackupMap.set(d.id, d));
+        // Varredura profunda do localStorage
+        const recoveredFromStorage = scanAllLocalStorageDeliveries();
+        const currentMemoryMap = new Map<string, Delivery>();
+        memoryDeliveries.forEach(d => currentMemoryMap.set(d.id, d));
 
-        // Mapeia todas as entregas do banco com extração resiliente de orderNumber
+        // Mapeamento e restauração dos números de todas as entregas
         memoryDeliveries = delData.map(d => {
-          const localItem = localBackupMap.get(d.id);
+          const fromStorage = recoveredFromStorage.get(d.id);
+          const fromMemory = currentMemoryMap.get(d.id);
 
-          let orderNumber: string | undefined = extractOrderNumberFromRaw(d.order_number);
-          let notes: string | undefined = localItem?.notes;
-          let customerChat: string | undefined = localItem?.customerChat;
-          let deliveryType: 'standard' | 'same_address' = localItem?.deliveryType || 'standard';
-          let additionalValue: number = localItem?.additionalValue || 0;
-          let additionalReason: string | undefined = localItem?.additionalReason;
-          let linkedOrderNumber: string | undefined = localItem?.linkedOrderNumber;
-          let linkedDeliveryId: string | undefined = localItem?.linkedDeliveryId;
+          // 1. Extração profunda de order_number
+          let orderNumber: string | undefined = extractOrderNumberDeep(d.order_number);
+          let notes: string | undefined = fromStorage?.notes || fromMemory?.notes;
+          let customerChat: string | undefined = fromStorage?.customerChat || fromMemory?.customerChat;
+          let deliveryType: 'standard' | 'same_address' = fromStorage?.deliveryType || fromMemory?.deliveryType || 'standard';
+          let additionalValue: number = fromStorage?.additionalValue || fromMemory?.additionalValue || 0;
+          let additionalReason: string | undefined = fromStorage?.additionalReason || fromMemory?.additionalReason;
+          let linkedOrderNumber: string | undefined = fromStorage?.linkedOrderNumber || fromMemory?.linkedOrderNumber;
+          let linkedDeliveryId: string | undefined = undefined;
           let updatedAt = d.updated_at;
-          let paid = Boolean(d.paid || localItem?.paid);
+          let paid = Boolean(d.paid || fromStorage?.paid || fromMemory?.paid);
 
           if (d.order_number && d.order_number.startsWith('{')) {
             try {
@@ -849,9 +884,12 @@ export const db = {
             } catch (e) {}
           }
 
-          // Se por algum motivo o banco não trouxe o orderNumber mas o cache local tinha, preserva o número!
-          if (!orderNumber && localItem?.orderNumber) {
-            orderNumber = localItem.orderNumber;
+          // 2. Se o banco não trouxe número, usa a restauração encontrada do storage ou memória
+          if (!orderNumber && fromStorage?.orderNumber) {
+            orderNumber = fromStorage.orderNumber;
+          }
+          if (!orderNumber && fromMemory?.orderNumber) {
+            orderNumber = fromMemory.orderNumber;
           }
 
           return {
@@ -876,8 +914,8 @@ export const db = {
           };
         });
 
-        // Salva backup local atualizado
-        saveDeliveriesLocalBackup(memoryDeliveries);
+        // Salva backup permanente master com todos os números restaurados
+        saveMasterDeliveriesBackup(memoryDeliveries);
       }
 
       const { data: reqsData } = await supabase.from('partner_requests').select('*');
