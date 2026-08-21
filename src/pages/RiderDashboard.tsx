@@ -435,7 +435,8 @@ export default function RiderDashboard() {
     db.setNotifications(updatedAll);
   };
 
-  const getScheduledEstablishmentsToday = () => {
+  // RETORNA ESTRITAMENTE APENAS OS ESTABELECIMENTOS ONDE O MOTOBOY ESTÁ ESCALADO HOJE
+  const getScheduledEstablishmentsToday = (): Establishment[] => {
     const todaySchedules = schedules.filter(s => isSameDayString(s.date, operationalTodayStr));
     const resolvedEsts = todaySchedules
       .map(s => db.resolveEstablishment(s.establishmentId))
@@ -447,10 +448,6 @@ export default function RiderDashboard() {
         uniqueEsts.push(e);
       }
     });
-
-    if (uniqueEsts.length === 0 && establishments.length > 0) {
-      return establishments;
-    }
 
     return uniqueEsts;
   };
@@ -473,6 +470,17 @@ export default function RiderDashboard() {
   const handleLaunchDelivery = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || isSubmittingDelivery) return;
+
+    const scheduledEsts = getScheduledEstablishmentsToday();
+    if (scheduledEsts.length === 0) {
+      alert('Acesso negado: Você não está escalado em nenhum estabelecimento para o dia de hoje.');
+      return;
+    }
+
+    if (!scheduledEsts.some(e => db.isSameEstablishment(e.id, launchForm.establishmentId))) {
+      alert('Erro: Você só pode lançar corridas para o estabelecimento em que está escalado hoje.');
+      return;
+    }
 
     const baseVal = parseFloat(launchForm.value.replace(',', '.'));
     const addVal = parseFloat((launchForm.additionalValue || '0').replace(',', '.')) || 0;
@@ -724,7 +732,7 @@ export default function RiderDashboard() {
       const [y, m, d] = monStr.split('-').map(Number);
       const lastMon = new Date(y, m - 1, d - 7);
       const lastSun = new Date(y, m - 1, d - 1);
-      const lastMonStr = `${lastMon.getFullYear()}-${String(lastMon.getMonth() + 1).padStart(2, '0')}-${String(lastMon.getDate()).padStart(2, '0')}`;
+      const lastMonStr = `${lastMon.getFullYear()}-${String(lastMon.getMonth() + 1).padStart(2, '0')}-${String(lastSun.getDate()).padStart(2, '0')}`;
       const lastSunStr = `${lastSun.getFullYear()}-${String(lastSun.getMonth() + 1).padStart(2, '0')}-${String(lastSun.getDate()).padStart(2, '0')}`;
       return { start: lastMonStr, end: lastSunStr, label: 'Semana Passada' };
     }
@@ -807,12 +815,13 @@ export default function RiderDashboard() {
             </button>
             <button
               onClick={() => {
-                if (scheduledEstsToday.length === 0) {
-                  alert('Aviso: Nenhum estabelecimento parceiro cadastrado no momento. Fale com o administrador.');
+                const scheduled = getScheduledEstablishmentsToday();
+                if (scheduled.length === 0) {
+                  alert('Acesso restrito: Você não possui nenhuma escala ativa para o dia de hoje.\n\nPara lançar corridas, solicite ao administrador ou ao gerente da sua loja a sua inclusão na escala.');
                   return;
                 }
                 setEditingDelivery(null);
-                setLaunchForm({ establishmentId: scheduledEstsToday[0].id, value: '8.00', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', additionalReason: '', linkedOrderNumber: '' });
+                setLaunchForm({ establishmentId: scheduled[0].id, value: '8.00', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', additionalReason: '', linkedOrderNumber: '' });
                 setShowLaunchModal(true);
               }}
               className="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 transition-colors shadow-sm"
@@ -988,8 +997,8 @@ export default function RiderDashboard() {
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3 text-amber-800">
                 <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-bold text-sm">Escalas Futuras</p>
-                  <p className="text-xs text-amber-700 mt-0.5">Você não possui escalas para hoje. Verifique na aba "Escalas" seus próximos turnos.</p>
+                  <p className="font-bold text-sm">Sem Escala para Hoje</p>
+                  <p className="text-xs text-amber-700 mt-0.5">Você não está escalado em nenhum estabelecimento hoje. Para lançar corridas, solicite sua escala ao gerente ou administrador.</p>
                 </div>
               </div>
             )}
@@ -1170,10 +1179,10 @@ export default function RiderDashboard() {
                   <select
                     value={scheduleEstFilter}
                     onChange={(e) => setScheduleEstFilter(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
                   >
                     <option value="">Todos os Estabelecimentos</option>
-                    {establishments.map(est => (
+                    {riderHistoryEsts.map(est => (
                       <option key={est.id} value={est.id}>{est.name}</option>
                     ))}
                   </select>
