@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, Schedule, Delivery, Notification, Establishment, RouteHistoryItem, getDeliveryOperationalDate, isSameDayString } from '../utils/db';
+import { NEIGHBORHOOD_RATES } from '../utils/neighborhoods';
 import { 
   DollarSign, 
   Calendar, 
@@ -31,7 +32,9 @@ import {
   Loader2,
   Wallet,
   Coins,
-  Receipt
+  Receipt,
+  Search,
+  Tag
 } from 'lucide-react';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
 import CustomerChatModal from '../components/CustomerChatModal';
@@ -64,12 +67,16 @@ export default function RiderDashboard() {
   const [establishments, setEstablishments] = useState<Establishment[]>([]);
   const [routeHistory, setRouteHistory] = useState<RouteHistoryItem[]>([]);
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'navigation' | 'schedules' | 'history' | 'earnings' | 'notifications'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'navigation' | 'schedules' | 'history' | 'earnings' | 'rates' | 'notifications'>('dashboard');
   const [historySubTab, setHistorySubTab] = useState<'deliveries' | 'routes'>('deliveries');
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [activeToast, setActiveToast] = useState<ChatToast | null>(null);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  // Estados para busca na aba de tarifas
+  const [rateSearch, setRateSearch] = useState('');
+  const [ratePriceFilter, setRatePriceFilter] = useState<number | 'all'>('all');
 
   const [gpsState, setGpsState] = useState<GpsState>({
     currentLocation: null,
@@ -778,6 +785,15 @@ export default function RiderDashboard() {
   const earningsRiderNet = Math.max(0, earningsGrossTotal - earningsAdminCut);
   const isAllEarningsPaid = earningsDeliveriesCount > 0 && filteredEarningsDeliveries.every(d => d.paid);
 
+  // --- FILTRAGEM DA TABELA DE BAIRROS ---
+  const filteredNeighborhoods = NEIGHBORHOOD_RATES.filter(item => {
+    const matchesSearch = item.name.toLowerCase().includes(rateSearch.toLowerCase().trim());
+    const matchesPrice = ratePriceFilter === 'all' || item.price === ratePriceFilter;
+    return matchesSearch && matchesPrice;
+  });
+
+  const uniquePrices = Array.from(new Set(NEIGHBORHOOD_RATES.map(item => item.price))).sort((a, b) => a - b);
+
   const activeNotesDelivery = deliveries.find(d => d.id === notesDeliveryId) || null;
   const activeCustomerChatDelivery = deliveries.find(d => d.id === customerChatDeliveryId) || null;
   const activeScheduleChat = schedules.find(s => s.id === activeScheduleChatId) || null;
@@ -851,8 +867,8 @@ export default function RiderDashboard() {
           </div>
         </div>
 
-        {/* BARRA DE NAVEGAÇÃO ENTRE ABAS COM A ABA GANHOS */}
-        <div className="grid grid-cols-3 sm:grid-cols-6 bg-white rounded-xl p-1 shadow-sm mb-6 border border-slate-200 gap-1 text-xs sticky top-[68px] z-20">
+        {/* BARRA DE NAVEGAÇÃO ENTRE ABAS COM A ABA GANHOS E TABELA DE PREÇOS */}
+        <div className="grid grid-cols-4 sm:grid-cols-7 bg-white rounded-xl p-1 shadow-sm mb-6 border border-slate-200 gap-1 text-xs sticky top-[68px] z-20">
           <button
             onClick={() => setActiveTab('dashboard')}
             className={`py-2.5 font-bold rounded-lg flex items-center justify-center space-x-1 transition-colors ${
@@ -901,6 +917,16 @@ export default function RiderDashboard() {
           >
             <Wallet className="h-4 w-4" />
             <span>Ganhos</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('rates')}
+            className={`py-2.5 font-bold rounded-lg flex items-center justify-center space-x-1 transition-colors ${
+              activeTab === 'rates' ? 'bg-amber-500 text-slate-950 shadow-sm font-black' : 'text-amber-800 bg-amber-50/50 hover:bg-amber-100/70'
+            }`}
+          >
+            <Tag className="h-4 w-4" />
+            <span>Tarifas</span>
           </button>
 
           <button
@@ -1080,7 +1106,7 @@ export default function RiderDashboard() {
                               </span>
                             )}
 
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
                               delivery.status === 'active' 
                                 ? 'bg-emerald-100 text-emerald-800' 
                                 : delivery.status === 'pending'
@@ -1903,6 +1929,140 @@ export default function RiderDashboard() {
                     })}
                   </div>
                 )}
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* NOVA ABA INFORMATIVA: TABELA DE TARIFAS E PREÇOS POR BAIRRO */}
+        {activeTab === 'rates' && (
+          <div className="space-y-6 animate-fadeIn">
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6">
+              
+              {/* Header da Tabela */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                <div>
+                  <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
+                    <Tag className="h-6 w-6 text-amber-500" />
+                    <span>Tabela Informativa de Tarifas por Bairro</span>
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Consulte os valores padrão das corridas de acordo com a localidade da entrega
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-1.5 bg-amber-50 text-amber-900 border border-amber-200 px-3 py-1.5 rounded-xl text-xs font-extrabold w-fit">
+                  <Sparkles className="h-3.5 w-3.5 text-amber-600" />
+                  <span>{filteredNeighborhoods.length} bairros listados</span>
+                </div>
+              </div>
+
+              {/* BARRA DE PESQUISA E FILTROS DE PREÇO */}
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Digite o nome do bairro para consultar o valor (Ex: Bodocongó, Cuités, Catolé)..."
+                    value={rateSearch}
+                    onChange={(e) => setRateSearch(e.target.value)}
+                    className="w-full pl-10 pr-4 py-3 bg-white border border-slate-300 rounded-xl text-xs sm:text-sm font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 transition-all shadow-xs"
+                  />
+                  <Search className="h-4 w-4 text-slate-400 absolute left-3.5 top-3.5" />
+                  {rateSearch && (
+                    <button
+                      onClick={() => setRateSearch('')}
+                      className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 p-0.5"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Filtro Rápido por Valor */}
+                <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                  <span className="text-[11px] font-black uppercase text-slate-500 mr-1">Faixa de Preço:</span>
+                  <button
+                    onClick={() => setRatePriceFilter('all')}
+                    className={`px-3 py-1 rounded-xl text-xs font-bold transition-all border ${
+                      ratePriceFilter === 'all'
+                        ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-sm font-black'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    Todos
+                  </button>
+                  {uniquePrices.map(price => (
+                    <button
+                      key={price}
+                      onClick={() => setRatePriceFilter(price)}
+                      className={`px-3 py-1 rounded-xl text-xs font-bold transition-all border ${
+                        ratePriceFilter === price
+                          ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-sm font-black'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      R$ {price.toFixed(2)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* GRID DOS BAIRROS */}
+              {filteredNeighborhoods.length === 0 ? (
+                <div className="text-center py-12 bg-slate-50 border border-slate-200 rounded-2xl text-slate-400 space-y-2">
+                  <Tag className="h-10 w-10 mx-auto text-slate-300" />
+                  <p className="text-sm font-medium">Nenhum bairro encontrado com o termo "{rateSearch}".</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                  {filteredNeighborhoods.map((item, idx) => {
+                    const isHigh = item.price >= 12;
+                    const isMedium = item.price === 10;
+                    const isStandard = item.price === 8;
+                    const isLow = item.price === 7;
+
+                    return (
+                      <div 
+                        key={idx}
+                        className="bg-white border border-slate-200/90 hover:border-amber-400 p-3.5 rounded-2xl flex items-center justify-between shadow-xs transition-all hover:scale-[1.01]"
+                      >
+                        <div className="flex items-center space-x-2.5 min-w-0 pr-2">
+                          <div className={`p-2 rounded-xl flex-shrink-0 ${
+                            isHigh ? 'bg-purple-100 text-purple-700' :
+                            isMedium ? 'bg-blue-100 text-blue-700' :
+                            isStandard ? 'bg-indigo-100 text-indigo-700' :
+                            'bg-emerald-100 text-emerald-700'
+                          }`}>
+                            <MapPin className="h-4 w-4" />
+                          </div>
+                          <span className="font-extrabold text-slate-800 text-xs sm:text-sm truncate">
+                            {item.name}
+                          </span>
+                        </div>
+
+                        <div className="text-right flex-shrink-0">
+                          <span className={`text-xs sm:text-sm font-black px-2.5 py-1 rounded-xl shadow-xs border ${
+                            isHigh ? 'bg-purple-50 text-purple-800 border-purple-200' :
+                            isMedium ? 'bg-blue-50 text-blue-800 border-blue-200' :
+                            isStandard ? 'bg-indigo-50 text-indigo-800 border-indigo-200' :
+                            'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          }`}>
+                            R$ {item.price.toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Informação de Rodapé */}
+              <div className="bg-amber-50/60 border border-amber-200/70 p-3.5 rounded-2xl text-[11px] text-amber-900 font-medium flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 text-amber-600 flex-shrink-0" />
+                <span>
+                  Esta tabela de bairros serve como base de referência padrão para cobrança e lançamento das corridas.
+                </span>
               </div>
 
             </div>
