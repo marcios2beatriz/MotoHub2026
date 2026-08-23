@@ -8,6 +8,8 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://rqieirvzutdcul
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_pjEo4HVVSPTMF-fQDwKpLQ_o9HAIOWR';
 export const supabase = createClient(supabaseUrl, supabaseKey);
 
+export type PaymentMethodType = 'already_paid' | 'money' | 'card_debit' | 'card_credit' | 'pix_delivery';
+
 export interface User {
   id: string;
   name: string;
@@ -79,7 +81,7 @@ export interface Delivery {
   linkedOrderNumber?: string;
   linkedDeliveryId?: string;
   // Pagamento na Entrega
-  paymentMethod?: 'already_paid' | 'money' | 'card_debit' | 'card_credit' | 'pix_delivery';
+  paymentMethod?: PaymentMethodType;
   orderCollectionAmount?: number; // Valor total do pedido a cobrar do cliente
   changeFor?: number; // Troco para R$ X (se pagamento em dinheiro)
 }
@@ -204,7 +206,7 @@ function extractOrderNumberDeep(raw?: string): string | undefined {
 }
 
 // ── VARREDURA COMPLETA DE TODAS AS CHAVES DO LOCALSTORAGE PARA RESGATAR PEDIDOS ──
-function scanAllLocalStorageDeliveries(): Map<string, { orderNumber?: string; notes?: string; customerChat?: string; additionalValue?: number; additionalReason?: string; linkedOrderNumber?: string; deliveryType?: 'standard' | 'same_address'; paid?: boolean; paymentMethod?: string; orderCollectionAmount?: number; changeFor?: number }> {
+function scanAllLocalStorageDeliveries(): Map<string, { orderNumber?: string; notes?: string; customerChat?: string; additionalValue?: number; additionalReason?: string; linkedOrderNumber?: string; deliveryType?: 'standard' | 'same_address'; paid?: boolean; paymentMethod?: PaymentMethodType; orderCollectionAmount?: number; changeFor?: number }> {
   const recoveredMap = new Map<string, any>();
 
   try {
@@ -235,7 +237,7 @@ function scanAllLocalStorageDeliveries(): Map<string, { orderNumber?: string; no
                   linkedOrderNumber: item.linkedOrderNumber ? String(item.linkedOrderNumber).replace('#', '').trim() : existing.linkedOrderNumber,
                   deliveryType: item.deliveryType || existing.deliveryType,
                   paid: item.paid !== undefined ? Boolean(item.paid) : existing.paid,
-                  paymentMethod: item.paymentMethod || existing.paymentMethod,
+                  paymentMethod: (item.paymentMethod as PaymentMethodType) || existing.paymentMethod,
                   orderCollectionAmount: item.orderCollectionAmount !== undefined ? Number(item.orderCollectionAmount) : existing.orderCollectionAmount,
                   changeFor: item.changeFor !== undefined ? Number(item.changeFor) : existing.changeFor
                 });
@@ -861,7 +863,7 @@ export const db = {
           let additionalReason: string | undefined = fromStorage?.additionalReason || fromMemory?.additionalReason;
           let linkedOrderNumber: string | undefined = fromStorage?.linkedOrderNumber || fromMemory?.linkedOrderNumber;
           let linkedDeliveryId: string | undefined = undefined;
-          let paymentMethod: 'already_paid' | 'money' | 'card_debit' | 'card_credit' | 'pix_delivery' = fromStorage?.paymentMethod || fromMemory?.paymentMethod || 'already_paid';
+          let paymentMethod: PaymentMethodType = fromStorage?.paymentMethod || fromMemory?.paymentMethod || 'already_paid';
           let orderCollectionAmount: number | undefined = fromStorage?.orderCollectionAmount || fromMemory?.orderCollectionAmount;
           let changeFor: number | undefined = fromStorage?.changeFor || fromMemory?.changeFor;
           let updatedAt = d.updated_at;
@@ -892,7 +894,10 @@ export const db = {
                 linkedOrderNumber = String(parsed.linkedOrderNumber || parsed.l).replace('#', '').trim();
               }
               if (parsed.pm) {
-                paymentMethod = parsed.pm;
+                const validPm: PaymentMethodType[] = ['already_paid', 'money', 'card_debit', 'card_credit', 'pix_delivery'];
+                if (validPm.includes(parsed.pm as PaymentMethodType)) {
+                  paymentMethod = parsed.pm as PaymentMethodType;
+                }
               }
               if (parsed.ca !== undefined) {
                 orderCollectionAmount = Number(parsed.ca);
