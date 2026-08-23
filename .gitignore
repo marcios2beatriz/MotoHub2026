@@ -1,1 +1,10 @@
 .dyad/
+node_modules/
+dist/
+.pnpm-store/
+.vscode/
+android/
+ios/
+*.log
+.env.local
+.env.*.local

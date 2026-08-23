@@ -1,27 +1,9 @@
 "use client";
 
 import { Capacitor } from '@capacitor/core';
-import { registerPlugin } from '@capacitor/core';
+import { Geolocation } from '@capacitor/geolocation';
 import { db } from './db';
 import { realtimeGps } from './realtimeGps';
-
-// Interface do plugin Background Geolocation nativo do Capacitor
-export interface BackgroundGeolocationPlugin {
-  addWatcher(
-    options: {
-      backgroundMessage?: string;
-      backgroundTitle?: string;
-      requestPermissions?: boolean;
-      stale?: boolean;
-      distanceFilter?: number;
-    },
-    callback: (location?: any, error?: any) => void
-  ): Promise<string>;
-  removeWatcher(options: { id: string }): Promise<void>;
-  openSettings(): Promise<void>;
-}
-
-const BackgroundGeolocation = registerPlugin<BackgroundGeolocationPlugin>('BackgroundGeolocation');
 
 export interface GpsLocation {
   lat: number;
@@ -114,8 +96,7 @@ function distanceToSegmentMeters(
 }
 
 class HighPrecisionGpsTracker {
-  private watchId: number | null = null;
-  private backgroundWatcherId: string | null = null;
+  private watchId: number | string | null = null;
   private fallbackTimer: any = null;
   private worker: Worker | null = null;
   private wakeLock: any = null;
@@ -133,10 +114,8 @@ class HighPrecisionGpsTracker {
   };
 
   constructor() {
-    if (!Capacitor.isNativePlatform()) {
-      this.initWebWorker();
-      this.setupVisibilityListeners();
-    }
+    this.initWebWorker();
+    this.setupVisibilityListeners();
   }
 
   private initWebWorker() {
@@ -190,14 +169,13 @@ class HighPrecisionGpsTracker {
   public setNavigating(navigating: boolean) {
     this.currentState.isNavigating = navigating;
     this.notify();
-    if (navigating && !Capacitor.isNativePlatform()) {
+    if (navigating) {
       this.enableAudioKeepAlive();
     }
   }
 
   private forceLocationPoll() {
-    if (Capacitor.isNativePlatform()) return;
-    if (!navigator.geolocation) return;
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
 
     navigator.geolocation.getCurrentPosition(
       (pos) => this.handleSuccess(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, pos.coords.speed, pos.coords.heading),
@@ -297,51 +275,41 @@ class HighPrecisionGpsTracker {
   }
 
   public async startTracking() {
-    // 1. SE FOR APK NATIVO ANDROID: ATIVA BACKGROUND GEOLOCATION NATIVO
+    this.enableWakeLock();
+    this.enableAudioKeepAlive();
+
     if (Capacitor.isNativePlatform()) {
       try {
-        if (this.backgroundWatcherId) {
-          await BackgroundGeolocation.removeWatcher({ id: this.backgroundWatcherId });
-          this.backgroundWatcherId = null;
+        const perm = await Geolocation.requestPermissions();
+        if (perm.location !== 'granted') {
+          this.currentState = { ...this.currentState, quality: 'denied', errorMessage: 'Permissão de localização negada no dispositivo.' };
+          this.notify();
+          return;
         }
 
-        this.backgroundWatcherId = await BackgroundGeolocation.addWatcher(
-          {
-            backgroundTitle: 'MotoHub Delivery',
-            backgroundMessage: 'Sua localização está sendo transmitida em tempo real para os estabelecimentos.',
-            requestPermissions: true,
-            stale: false,
-            distanceFilter: 2
-          },
-          (location, error) => {
-            if (error) {
-              if (error.code === 'NOT_AUTHORIZED') {
-                BackgroundGeolocation.openSettings();
-              }
-              this.handleError(error);
+        this.watchId = await Geolocation.watchPosition(
+          { enableHighAccuracy: true },
+          (pos, err) => {
+            if (err) {
+              this.handleError(err);
               return;
             }
-
-            if (location) {
+            if (pos) {
               this.handleSuccess(
-                location.latitude,
-                location.longitude,
-                location.accuracy,
-                location.speed,
-                location.bearing
+                pos.coords.latitude,
+                pos.coords.longitude,
+                pos.coords.accuracy,
+                pos.coords.speed,
+                pos.coords.heading
               );
             }
           }
         );
         return;
-      } catch (err) {
-        console.warn('Erro ao inicializar Background Geolocation nativo, fallback para web:', err);
+      } catch (e) {
+        console.warn('Fallback para Geolocation Web:', e);
       }
     }
-
-    // 2. SE FOR NAVEGADOR WEB (DESKTOP/CELULAR): ATIVA RASTREADOR WEB
-    this.enableWakeLock();
-    this.enableAudioKeepAlive();
 
     if (!navigator.geolocation) {
       this.currentState = {
@@ -372,17 +340,16 @@ class HighPrecisionGpsTracker {
   }
 
   public async stopTracking() {
-    if (Capacitor.isNativePlatform() && this.backgroundWatcherId) {
+    if (Capacitor.isNativePlatform() && typeof this.watchId === 'string') {
       try {
-        await BackgroundGeolocation.removeWatcher({ id: this.backgroundWatcherId });
+        await Geolocation.clearWatch({ id: this.watchId });
       } catch (e) {}
-      this.backgroundWatcherId = null;
-    }
-
-    if (this.watchId !== null) {
+      this.watchId = null;
+    } else if (typeof this.watchId === 'number') {
       navigator.geolocation.clearWatch(this.watchId);
       this.watchId = null;
     }
+
     if (this.fallbackTimer) {
       clearInterval(this.fallbackTimer);
       this.fallbackTimer = null;
