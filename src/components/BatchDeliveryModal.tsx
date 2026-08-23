@@ -1,7 +1,23 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Layers, Check, Sparkles, FileText, Loader2, RotateCcw, Link2 } from 'lucide-react';
+import { 
+  X, 
+  Plus, 
+  Trash2, 
+  Layers, 
+  Check, 
+  Sparkles, 
+  FileText, 
+  Loader2, 
+  RotateCcw, 
+  Link2,
+  Banknote,
+  CreditCard,
+  QrCode,
+  CheckCircle2,
+  DollarSign
+} from 'lucide-react';
 import { User, Establishment, Delivery, db } from '../utils/db';
 
 interface BatchRow {
@@ -17,6 +33,9 @@ interface BatchRow {
   additionalValue?: string;
   additionalReason?: string;
   linkedOrderNumber?: string;
+  paymentMethod?: 'already_paid' | 'money' | 'card_debit' | 'card_credit' | 'pix_delivery';
+  orderCollectionAmount?: string;
+  changeFor?: string;
 }
 
 interface BatchDeliveryModalProps {
@@ -49,6 +68,9 @@ export default function BatchDeliveryModal({
   const [globalStatus, setGlobalStatus] = useState<'active' | 'pending'>('active');
   const [isSaving, setIsSaving] = useState(false);
 
+  // Modal para configurar pagamento detalhado de uma linha específica
+  const [editingPaymentRowId, setEditingPaymentRowId] = useState<string | null>(null);
+
   // Modo de texto/colagem rápida
   const [showPasteMode, setShowPasteMode] = useState(false);
   const [pastedText, setPastedText] = useState('');
@@ -68,6 +90,7 @@ export default function BatchDeliveryModal({
     setGlobalStartTime(initialTime);
     setPastedText('');
     setShowPasteMode(false);
+    setEditingPaymentRowId(null);
 
     const [startH, startM] = initialTime.split(':').map(Number);
 
@@ -87,7 +110,126 @@ export default function BatchDeliveryModal({
         deliveryType: 'standard',
         additionalValue: '',
         additionalReason: '',
-        linkedOrderNumber: ''
+        linkedOrderNumber: '',
+        paymentMethod: 'already_paid',
+        orderCollectionAmount: '',
+        change<dyad-write path="src/components/BatchDeliveryModal.tsx" description="Adiciona suporte completo a formas de pagamento, valor a cobrar do cliente e troco no modal de lançamento em lote">
+"use client";
+
+import React, { useState, useEffect } from 'react';
+import { 
+  X, 
+  Plus, 
+  Trash2, 
+  Layers, 
+  Check, 
+  Sparkles, 
+  FileText, 
+  Loader2, 
+  RotateCcw, 
+  Link2,
+  Banknote,
+  CreditCard,
+  QrCode,
+  CheckCircle2,
+  DollarSign
+} from 'lucide-react';
+import { User, Establishment, Delivery, db } from '../utils/db';
+
+interface BatchRow {
+  id: string;
+  riderId: string;
+  establishmentId: string;
+  date: string;
+  time: string;
+  value: string;
+  orderNumber: string;
+  notes: string;
+  deliveryType?: 'standard' | 'same_address';
+  additionalValue?: string;
+  additionalReason?: string;
+  linkedOrderNumber?: string;
+  paymentMethod?: 'already_paid' | 'money' | 'card_debit' | 'card_credit' | 'pix_delivery';
+  orderCollectionAmount?: string;
+  changeFor?: string;
+}
+
+interface BatchDeliveryModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  riders: User[];
+  establishments: Establishment[];
+  defaultEstablishmentId?: string;
+  defaultRiderId?: string;
+  onSaved: () => void;
+}
+
+export default function BatchDeliveryModal({
+  isOpen,
+  onClose,
+  riders,
+  establishments,
+  defaultEstablishmentId = '',
+  defaultRiderId = '',
+  onSaved
+}: BatchDeliveryModalProps) {
+  const activeRiders = riders.filter(r => r.active);
+  const activeEsts = establishments.filter(e => e.active);
+
+  // Valores padrão globais para preenchimento rápido
+  const [globalDate, setGlobalDate] = useState<string>(db.getOperationalDateString());
+  const [globalStartTime, setGlobalStartTime] = useState<string>('18:00');
+  const [globalRiderId, setGlobalRiderId] = useState<string>(defaultRiderId || (activeRiders[0]?.id || ''));
+  const [globalEstId, setGlobalEstId] = useState<string>(defaultEstablishmentId || (activeEsts[0]?.id || ''));
+  const [globalStatus, setGlobalStatus] = useState<'active' | 'pending'>('active');
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Modal para configurar pagamento detalhado de uma linha específica
+  const [editingPaymentRowId, setEditingPaymentRowId] = useState<string | null>(null);
+
+  // Modo de texto/colagem rápida
+  const [showPasteMode, setShowPasteMode] = useState(false);
+  const [pastedText, setPastedText] = useState('');
+
+  const [rows, setRows] = useState<BatchRow[]>([]);
+
+  // Função para reiniciar o lote com os valores padrão preenchidos em todas as linhas
+  const resetToEmptyBatch = (riderId?: string, estId?: string, dateStr?: string, startTimeStr?: string) => {
+    const initialRider = riderId !== undefined ? riderId : (defaultRiderId || (activeRiders[0]?.id || ''));
+    const initialEst = estId !== undefined ? estId : (defaultEstablishmentId || (activeEsts[0]?.id || ''));
+    const initialDate = dateStr || db.getOperationalDateString();
+    const initialTime = startTimeStr || '18:00';
+
+    setGlobalRiderId(initialRider);
+    setGlobalEstId(initialEst);
+    setGlobalDate(initialDate);
+    setGlobalStartTime(initialTime);
+    setPastedText('');
+    setShowPasteMode(false);
+    setEditingPaymentRowId(null);
+
+    const [startH, startM] = initialTime.split(':').map(Number);
+
+    const initialRows: BatchRow[] = [0, 15, 30, 45, 60].map((offsetMins, idx) => {
+      const totalMins = (((startH || 18) * 60 + (startM || 0)) + offsetMins) % 1440;
+      const hStr = String(Math.floor(totalMins / 60)).padStart(2, '0');
+      const mStr = String(totalMins % 60).padStart(2, '0');
+      return {
+        id: 'row_' + Date.now() + '_' + idx + '_' + Math.random().toString(36).substring(2, 6),
+        riderId: initialRider,
+        establishmentId: initialEst,
+        date: initialDate,
+        time: `${hStr}:${mStr}`,
+        value: '8.00',
+        orderNumber: '',
+        notes: '',
+        deliveryType: 'standard',
+        additionalValue: '',
+        additionalReason: '',
+        linkedOrderNumber: '',
+        paymentMethod: 'already_paid',
+        orderCollectionAmount: '',
+        changeFor: ''
       };
     });
 
@@ -158,7 +300,10 @@ export default function BatchDeliveryModal({
       deliveryType: 'standard',
       additionalValue: '',
       additionalReason: '',
-      linkedOrderNumber: ''
+      linkedOrderNumber: '',
+      paymentMethod: 'already_paid',
+      orderCollectionAmount: '',
+      changeFor: ''
     };
 
     setRows(prev => [...prev, newRow]);
@@ -178,7 +323,10 @@ export default function BatchDeliveryModal({
         deliveryType: 'standard',
         additionalValue: '',
         additionalReason: '',
-        linkedOrderNumber: ''
+        linkedOrderNumber: '',
+        paymentMethod: 'already_paid',
+        orderCollectionAmount: '',
+        changeFor: ''
       }]);
       return;
     }
@@ -280,7 +428,10 @@ export default function BatchDeliveryModal({
         deliveryType: isSame ? 'same_address' : 'standard',
         additionalValue: '',
         additionalReason: '',
-        linkedOrderNumber: ''
+        linkedOrderNumber: '',
+        paymentMethod: 'already_paid',
+        orderCollectionAmount: '',
+        changeFor: ''
       });
     });
 
@@ -376,6 +527,9 @@ export default function BatchDeliveryModal({
           db.isSameDayString(s.date, operationalDate)
         );
 
+        const collectionAmount = r.orderCollectionAmount ? parseFloat(r.orderCollectionAmount.replace(',', '.')) : undefined;
+        const changeForValue = r.changeFor ? parseFloat(r.changeFor.replace(',', '.')) : undefined;
+
         return {
           id: 'd_' + Date.now() + '_' + idx + '_' + Math.random().toString(36).substring(2, 6),
           riderId: r.riderId,
@@ -391,6 +545,9 @@ export default function BatchDeliveryModal({
           additionalValue: addVal > 0 ? addVal : undefined,
           additionalReason: r.additionalReason?.trim() || undefined,
           linkedOrderNumber: r.deliveryType === 'same_address' ? (r.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+          paymentMethod: r.paymentMethod || 'already_paid',
+          orderCollectionAmount: (collectionAmount && collectionAmount > 0) ? collectionAmount : undefined,
+          changeFor: (changeForValue && changeForValue > 0) ? changeForValue : undefined,
           updatedAt: nowStr,
           paid: false
         };
@@ -411,9 +568,11 @@ export default function BatchDeliveryModal({
     }
   };
 
+  const selectedPaymentRow = rows.find(r => r.id === editingPaymentRowId);
+
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-2 sm:p-4 z-[99999] overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-6xl w-full p-4 sm:p-6 space-y-4 shadow-2xl max-h-[94vh] flex flex-col border border-slate-200">
+      <div className="bg-white rounded-2xl max-w-7xl w-full p-4 sm:p-6 space-y-4 shadow-2xl max-h-[94vh] flex flex-col border border-slate-200">
         
         {/* Header */}
         <div className="flex justify-between items-center border-b border-slate-100 pb-3 flex-shrink-0">
@@ -426,10 +585,10 @@ export default function BatchDeliveryModal({
                 <span>Lançamento de Corridas em Lote</span>
                 <span className="bg-purple-100 text-purple-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase flex items-center gap-1">
                   <Link2 className="h-3 w-3" />
-                  Mesmo Endereço (R$4) & Adicional com Motivo
+                  Mesmo Endereço (R$4) & Cobrança na Entrega
                 </span>
               </h3>
-              <p className="text-xs text-slate-500">Alterne entre entrega padrão (R$8) e mesmo endereço (R$4) e justifique adicionais</p>
+              <p className="text-xs text-slate-500">Configure forma de pagamento ao cliente, adicionais e vínculos entre pedidos</p>
             </div>
           </div>
           <button 
@@ -577,7 +736,7 @@ export default function BatchDeliveryModal({
             </div>
           </div>
         ) : (
-          /* Tabela de Lançamento */
+          /* Tabela de Lançamento com Pagamento */
           <div className="flex-1 overflow-y-auto border border-slate-200 rounded-xl">
             <table className="w-full text-left text-xs text-slate-700">
               <thead className="bg-slate-100 text-slate-600 font-extrabold uppercase sticky top-0 z-10 border-b border-slate-200 text-[10px]">
@@ -590,7 +749,8 @@ export default function BatchDeliveryModal({
                   <th className="p-2 w-20 text-right">Base (R$)</th>
                   <th className="p-2 w-20 text-right">+ Adicional</th>
                   <th className="p-2 w-20 text-right">Total</th>
-                  <th className="p-2 w-44">Motivo do Adicional</th>
+                  <th className="p-2 w-36">Pagamento Cliente</th>
+                  <th className="p-2 w-40">Motivo Adicional</th>
                   <th className="p-2">Vínculo / Obs</th>
                   <th className="p-2 w-10 text-center">Ações</th>
                 </tr>
@@ -602,6 +762,9 @@ export default function BatchDeliveryModal({
                   const addNum = parseFloat((row.additionalValue || '0').replace(',', '.')) || 0;
                   const rowTotal = (baseNum + addNum).toFixed(2);
                   const prevOrderNumber = index > 0 ? rows[index - 1]?.orderNumber : undefined;
+
+                  const pMethod = row.paymentMethod || 'already_paid';
+                  const isCobrar = pMethod !== 'already_paid';
 
                   return (
                     <tr key={row.id} className={`hover:bg-slate-50/70 ${isSame ? 'bg-purple-50/40' : ''}`}>
@@ -690,6 +853,28 @@ export default function BatchDeliveryModal({
                         R$ {rowTotal}
                       </td>
 
+                      {/* Coluna: Pagamento do Cliente com Botão de Configuração */}
+                      <td className="p-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setEditingPaymentRowId(row.id)}
+                          className={`w-full px-2 py-1 rounded text-[10px] font-bold border transition-all flex items-center justify-between gap-1 ${
+                            isCobrar
+                              ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-xs'
+                              : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
+                          }`}
+                        >
+                          <span className="truncate">
+                            {pMethod === 'already_paid' && 'Já Pago (Online)'}
+                            {pMethod === 'money' && `Dinheiro ${row.orderCollectionAmount ? `(R$ ${row.orderCollectionAmount})` : ''}`}
+                            {pMethod === 'card_debit' && `Débito ${row.orderCollectionAmount ? `(R$ ${row.orderCollectionAmount})` : ''}`}
+                            {pMethod === 'card_credit' && `Crédito ${row.orderCollectionAmount ? `(R$ ${row.orderCollectionAmount})` : ''}`}
+                            {pMethod === 'pix_delivery' && `PIX ${row.orderCollectionAmount ? `(R$ ${row.orderCollectionAmount})` : ''}`}
+                          </span>
+                          <DollarSign className="h-3 w-3 flex-shrink-0" />
+                        </button>
+                      </td>
+
                       {/* Motivo do Adicional */}
                       <td className="p-1.5">
                         <input
@@ -741,6 +926,148 @@ export default function BatchDeliveryModal({
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Modal Flutuante para Configurar Cobrança de uma Linha Selecionada */}
+        {selectedPaymentRow && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-[100000] animate-fadeIn">
+            <div className="bg-white rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl border border-slate-200">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                <div className="flex items-center space-x-2">
+                  <div className="p-2 bg-amber-100 text-amber-800 rounded-xl">
+                    <Banknote className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-slate-900">
+                      Pagamento do Pedido {selectedPaymentRow.orderNumber ? `#${selectedPaymentRow.orderNumber}` : ''}
+                    </h4>
+                    <p className="text-[10px] text-slate-500">Defina se o motoboy deverá cobrar o cliente na entrega</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingPaymentRowId(null)}
+                  className="p-1 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* Opções de Pagamento */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => handleUpdateRow(selectedPaymentRow.id, 'paymentMethod', 'already_paid')}
+                  className={`p-2 rounded-xl border font-bold flex flex-col items-center justify-center transition-all ${
+                    (selectedPaymentRow.paymentMethod || 'already_paid') === 'already_paid'
+                      ? 'bg-slate-800 text-white border-slate-800 shadow-xs'
+                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  <CheckCircle2 className="h-4 w-4 mb-0.5 text-emerald-400" />
+                  <span className="text-[11px]">Já Pago</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleUpdateRow(selectedPaymentRow.id, 'paymentMethod', 'money')}
+                  className={`p-2 rounded-xl border font-bold flex flex-col items-center justify-center transition-all ${
+                    selectedPaymentRow.paymentMethod === 'money'
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  <Banknote className="h-4 w-4 mb-0.5" />
+                  <span className="text-[11px]">Dinheiro</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleUpdateRow(selectedPaymentRow.id, 'paymentMethod', 'card_debit')}
+                  className={`p-2 rounded-xl border font-bold flex flex-col items-center justify-center transition-all ${
+                    selectedPaymentRow.paymentMethod === 'card_debit'
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  <CreditCard className="h-4 w-4 mb-0.5" />
+                  <span className="text-[11px]">Débito</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleUpdateRow(selectedPaymentRow.id, 'paymentMethod', 'card_credit')}
+                  className={`p-2 rounded-xl border font-bold flex flex-col items-center justify-center transition-all ${
+                    selectedPaymentRow.paymentMethod === 'card_credit'
+                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  <CreditCard className="h-4 w-4 mb-0.5" />
+                  <span className="text-[11px]">Crédito</span>
+                </button>
+              </div>
+
+              {/* Campos adicionais quando exige cobrança na entrega */}
+              {selectedPaymentRow.paymentMethod && selectedPaymentRow.paymentMethod !== 'already_paid' && (
+                <div className="space-y-3 pt-2 border-t border-slate-100 bg-amber-50/50 p-3 rounded-xl border border-amber-200">
+                  <div>
+                    <label className="block text-[10px] font-black text-amber-950 uppercase mb-1">
+                      Valor do Pedido a Cobrar do Cliente (R$)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="Ex: 45.90"
+                      value={selectedPaymentRow.orderCollectionAmount || ''}
+                      onChange={(e) => handleUpdateRow(selectedPaymentRow.id, 'orderCollectionAmount', e.target.value)}
+                      className="w-full px-3 py-2 border border-amber-300 rounded-xl text-xs font-black text-amber-950 bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    />
+                  </div>
+
+                  {selectedPaymentRow.paymentMethod === 'money' && (
+                    <div>
+                      <label className="block text-[10px] font-black text-emerald-950 uppercase mb-1">
+                        Troco para quanto? (R$)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="Ex: 50.00 ou 100.00"
+                        value={selectedPaymentRow.changeFor || ''}
+                        onChange={(e) => handleUpdateRow(selectedPaymentRow.id, 'changeFor', e.target.value)}
+                        className="w-full px-3 py-2 border border-emerald-300 rounded-xl text-xs font-black text-emerald-950 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      />
+                    </div>
+                  )}
+
+                  {selectedPaymentRow.paymentMethod === 'money' && selectedPaymentRow.changeFor && selectedPaymentRow.orderCollectionAmount && (
+                    (() => {
+                      const cFor = parseFloat(selectedPaymentRow.changeFor) || 0;
+                      const cAmt = parseFloat(selectedPaymentRow.orderCollectionAmount) || 0;
+                      const troco = cFor > cAmt ? (cFor - cAmt).toFixed(2) : '0.00';
+                      return (
+                        <div className="p-2 bg-emerald-100 text-emerald-900 text-xs font-bold rounded-lg flex justify-between">
+                          <span>Troco a devolver:</span>
+                          <span className="font-black">R$ {troco}</span>
+                        </div>
+                      );
+                    })()
+                  )}
+                </div>
+              )}
+
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => setEditingPaymentRowId(null)}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black"
+                >
+                  Concluir
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
