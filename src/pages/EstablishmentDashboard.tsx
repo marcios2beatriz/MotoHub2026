@@ -27,7 +27,10 @@ import {
   Sparkles,
   Hash,
   FileText,
-  Link2
+  Link2,
+  Banknote,
+  CreditCard,
+  QrCode
 } from 'lucide-react';
 import L from 'leaflet';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
@@ -79,7 +82,10 @@ export default function EstablishmentDashboard() {
     deliveryType: 'standard' as 'standard' | 'same_address',
     additionalValue: '',
     additionalReason: '',
-    linkedOrderNumber: ''
+    linkedOrderNumber: '',
+    paymentMethod: 'already_paid' as 'already_paid' | 'money' | 'card_debit' | 'card_credit' | 'pix_delivery',
+    orderCollectionAmount: '',
+    changeFor: ''
   });
 
   const [notesDeliveryId, setNotesDeliveryId] = useState<string | null>(null);
@@ -359,7 +365,10 @@ export default function EstablishmentDashboard() {
       deliveryType: 'standard',
       additionalValue: '',
       additionalReason: '',
-      linkedOrderNumber: ''
+      linkedOrderNumber: '',
+      paymentMethod: 'already_paid',
+      orderCollectionAmount: '',
+      changeFor: ''
     });
     setShowDeliveryModal(true);
   };
@@ -378,7 +387,10 @@ export default function EstablishmentDashboard() {
       deliveryType: del.deliveryType || 'standard',
       additionalValue: del.additionalValue ? del.additionalValue.toString() : '',
       additionalReason: del.additionalReason || '',
-      linkedOrderNumber: del.linkedOrderNumber || ''
+      linkedOrderNumber: del.linkedOrderNumber || '',
+      paymentMethod: del.paymentMethod || 'already_paid',
+      orderCollectionAmount: del.orderCollectionAmount ? del.orderCollectionAmount.toString() : '',
+      changeFor: del.changeFor ? del.changeFor.toString() : ''
     });
     setShowDeliveryModal(true);
   };
@@ -416,6 +428,9 @@ export default function EstablishmentDashboard() {
       const allDeliveries = db.getDeliveries();
       const nowStr = new Date().toISOString();
 
+      const collectionAmount = deliveryForm.orderCollectionAmount ? parseFloat(deliveryForm.orderCollectionAmount.replace(',', '.')) : undefined;
+      const changeForValue = deliveryForm.changeFor ? parseFloat(deliveryForm.changeFor.replace(',', '.')) : undefined;
+
       if (editingDelivery) {
         const updated = allDeliveries.map(d => d.id === editingDelivery.id ? {
           ...d,
@@ -429,6 +444,9 @@ export default function EstablishmentDashboard() {
           additionalValue: addVal > 0 ? addVal : undefined,
           additionalReason: deliveryForm.additionalReason?.trim() || undefined,
           linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+          paymentMethod: deliveryForm.paymentMethod,
+          orderCollectionAmount: collectionAmount,
+          changeFor: changeForValue,
           updatedAt: nowStr
         } : d);
         await db.setDeliveries(updated);
@@ -447,6 +465,9 @@ export default function EstablishmentDashboard() {
           additionalValue: addVal > 0 ? addVal : undefined,
           additionalReason: deliveryForm.additionalReason?.trim() || undefined,
           linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+          paymentMethod: deliveryForm.paymentMethod,
+          orderCollectionAmount: collectionAmount,
+          changeFor: changeForValue,
           updatedAt: nowStr,
           paid: false
         };
@@ -494,6 +515,52 @@ export default function EstablishmentDashboard() {
     const d = new Date();
     d.setDate(d.getDate() - 1);
     setSmartDate(db.getOperationalDateString(d));
+  };
+
+  const renderPaymentBadge = (delivery: Delivery) => {
+    const pm = delivery.paymentMethod || 'already_paid';
+    if (pm === 'already_paid') return null;
+
+    const amountStr = delivery.orderCollectionAmount ? `R$ ${Number(delivery.orderCollectionAmount).toFixed(2)}` : '';
+    const changeStr = delivery.changeFor ? ` (Troco p/ R$ ${Number(delivery.changeFor).toFixed(2)})` : '';
+
+    if (pm === 'money') {
+      return (
+        <div className="bg-emerald-600 text-white text-[10px] font-black px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm border border-emerald-400 mt-1">
+          <Banknote className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>COBRAR EM DINHEIRO: {amountStr}{changeStr}</span>
+        </div>
+      );
+    }
+
+    if (pm === 'card_debit') {
+      return (
+        <div className="bg-blue-600 text-white text-[10px] font-black px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm border border-blue-400 mt-1">
+          <CreditCard className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>COBRAR NO DÉBITO: {amountStr} (LEVAR MAQUININHA)</span>
+        </div>
+      );
+    }
+
+    if (pm === 'card_credit') {
+      return (
+        <div className="bg-indigo-600 text-white text-[10px] font-black px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm border border-indigo-400 mt-1">
+          <CreditCard className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>COBRAR NO CRÉDITO: {amountStr} (LEVAR MAQUININHA)</span>
+        </div>
+      );
+    }
+
+    if (pm === 'pix_delivery') {
+      return (
+        <div className="bg-teal-600 text-white text-[10px] font-black px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm border border-teal-400 mt-1">
+          <QrCode className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>COBRAR NO PIX: {amountStr}</span>
+        </div>
+      );
+    }
+
+    return null;
   };
 
   if (user && !currentEst && db.getEstablishments().length > 0) {
@@ -952,121 +1019,126 @@ export default function EstablishmentDashboard() {
                   const hasAdditional = Number(del.additionalValue || 0) > 0;
 
                   return (
-                    <div key={del.id} className={`py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${isSame ? 'bg-purple-50/30 p-2 rounded-xl border border-purple-100' : ''}`}>
-                      <div className="min-w-0 space-y-1">
-                        <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-                          {del.orderNumber && (
-                            <span className="bg-indigo-600 text-white font-black text-[10px] px-2 py-0.5 rounded-md">
-                              #{del.orderNumber}
-                            </span>
-                          )}
-                          <p className="font-extrabold text-slate-800 text-sm truncate">{rider?.name || 'Motoboy'}</p>
-
-                          {/* Badge Mesmo Endereço com Vinculação */}
-                          {isSame && (
-                            <span className="bg-purple-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
-                              <Link2 className="h-2.5 w-2.5" />
-                              <span>Mesmo Endereço {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : ''}</span>
-                            </span>
-                          )}
-
-                          {/* Badge Valor Adicional com Motivo */}
-                          {hasAdditional && (
-                            <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-black px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
-                              <Sparkles className="h-2.5 w-2.5 text-amber-600" />
-                              <span>
-                                + R$ {Number(del.additionalValue).toFixed(2)}
-                                {del.additionalReason ? ` (${del.additionalReason})` : ''}
+                    <div key={del.id} className={`py-3.5 flex flex-col space-y-1.5 text-xs ${isSame ? 'bg-purple-50/30 p-2.5 rounded-xl border border-purple-100' : ''}`}>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                            {del.orderNumber && (
+                              <span className="bg-indigo-600 text-white font-black text-[10px] px-2 py-0.5 rounded-md">
+                                #{del.orderNumber}
                               </span>
+                            )}
+                            <p className="font-extrabold text-slate-800 text-sm truncate">{rider?.name || 'Motoboy'}</p>
+
+                            {/* Badge Mesmo Endereço com Vinculação */}
+                            {isSame && (
+                              <span className="bg-purple-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                                <Link2 className="h-2.5 w-2.5" />
+                                <span>Mesmo Endereço {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : ''}</span>
+                              </span>
+                            )}
+
+                            {/* Badge Valor Adicional com Motivo */}
+                            {hasAdditional && (
+                              <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-black px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
+                                <Sparkles className="h-2.5 w-2.5 text-amber-600" />
+                                <span>
+                                  + R$ {Number(del.additionalValue).toFixed(2)}
+                                  {del.additionalReason ? ` (${del.additionalReason})` : ''}
+                                </span>
+                              </span>
+                            )}
+
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                              del.status === 'active' ? 'bg-emerald-100 text-emerald-800' :
+                              del.status === 'pending' ? 'bg-amber-100 text-amber-800 font-black animate-pulse' :
+                              'bg-red-100 text-red-800'
+                            }`}>
+                              {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : 'Rejeitada'}
                             </span>
+                          </div>
+                          <p className="text-slate-400">
+                            Data: {new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR')} às {del.time}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center space-x-2 flex-wrap flex-shrink-0">
+                          {del.status === 'pending' && (
+                            <>
+                              <button
+                                onClick={() => handleApproveDelivery(del.id)}
+                                className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 transition-colors shadow-sm"
+                                title="Aprovar Corrida"
+                              >
+                                <Check className="h-3.5 w-3.5" />
+                                <span>Aprovar</span>
+                              </button>
+                              <button
+                                onClick={() => handleRejectDelivery(del.id)}
+                                className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors"
+                                title="Recusar Corrida com Justificativa"
+                              >
+                                <Ban className="h-3.5 w-3.5" />
+                                <span>Recusar</span>
+                              </button>
+                            </>
                           )}
 
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                            del.status === 'active' ? 'bg-emerald-100 text-emerald-800' :
-                            del.status === 'pending' ? 'bg-amber-100 text-amber-800 font-black animate-pulse' :
-                            'bg-red-100 text-red-800'
-                          }`}>
-                            {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : 'Rejeitada'}
+                          <button
+                            onClick={() => setNotesDeliveryId(del.id)}
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${
+                              hasNotes 
+                                ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300' 
+                                : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                            }`}
+                            title="Observações e Instruções da Corrida"
+                          >
+                            <MessageSquare className="h-3.5 w-3.5" />
+                            <span>Obs</span>
+                            {hasNotes && (
+                              <span className="bg-amber-900 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
+                                {notesCount}
+                              </span>
+                            )}
+                          </button>
+
+                          <button
+                            onClick={() => handleShareTracking(del.id)}
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${
+                              copiedId === del.id 
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
+                                : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
+                            }`}
+                            title="Copiar Link de Rastreamento em Tempo Real para o Cliente"
+                          >
+                            <Share2 className="h-3.5 w-3.5" />
+                            <span>{copiedId === del.id ? 'Copiado!' : 'Rastreio'}</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleEditDelivery(del)}
+                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                            title="Editar Corrida"
+                          >
+                            <Edit2 className="h-4 w-4" />
+                          </button>
+
+                          <button
+                            onClick={() => handleDeleteDelivery(del.id)}
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Excluir Corrida"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+
+                          <span className={`font-black text-sm ml-1 ${del.status === 'active' ? 'text-emerald-600' : 'text-slate-400 line-through'}`}>
+                            R$ {Number(del.value).toFixed(2)}
                           </span>
                         </div>
-                        <p className="text-slate-400">
-                          Data: {new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR')} às {del.time}
-                        </p>
                       </div>
 
-                      <div className="flex items-center space-x-2 flex-wrap flex-shrink-0">
-                        {del.status === 'pending' && (
-                          <>
-                            <button
-                              onClick={() => handleApproveDelivery(del.id)}
-                              className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 transition-colors shadow-sm"
-                              title="Aprovar Corrida"
-                            >
-                              <Check className="h-3.5 w-3.5" />
-                              <span>Aprovar</span>
-                            </button>
-                            <button
-                              onClick={() => handleRejectDelivery(del.id)}
-                              className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors"
-                              title="Recusar Corrida com Justificativa"
-                            >
-                              <Ban className="h-3.5 w-3.5" />
-                              <span>Recusar</span>
-                            </button>
-                          </>
-                        )}
-
-                        <button
-                          onClick={() => setNotesDeliveryId(del.id)}
-                          className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${
-                            hasNotes 
-                              ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300' 
-                              : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                          }`}
-                          title="Observações e Instruções da Corrida"
-                        >
-                          <MessageSquare className="h-3.5 w-3.5" />
-                          <span>Obs</span>
-                          {hasNotes && (
-                            <span className="bg-amber-900 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
-                              {notesCount}
-                            </span>
-                          )}
-                        </button>
-
-                        <button
-                          onClick={() => handleShareTracking(del.id)}
-                          className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${
-                            copiedId === del.id 
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
-                              : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
-                          }`}
-                          title="Copiar Link de Rastreamento em Tempo Real para o Cliente"
-                        >
-                          <Share2 className="h-3.5 w-3.5" />
-                          <span>{copiedId === del.id ? 'Copiado!' : 'Rastreio'}</span>
-                        </button>
-
-                        <button
-                          onClick={() => handleEditDelivery(del)}
-                          className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                          title="Editar Corrida"
-                        >
-                          <Edit2 className="h-4 w-4" />
-                        </button>
-
-                        <button
-                          onClick={() => handleDeleteDelivery(del.id)}
-                          className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Excluir Corrida"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-
-                        <span className={`font-black text-sm ml-1 ${del.status === 'active' ? 'text-emerald-600' : 'text-slate-400 line-through'}`}>
-                          R$ {Number(del.value).toFixed(2)}
-                        </span>
-                      </div>
+                      {/* BADGE DE COBRANÇA NA ENTREGA */}
+                      {renderPaymentBadge(del)}
                     </div>
                   );
                 })}

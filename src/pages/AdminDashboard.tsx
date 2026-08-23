@@ -46,7 +46,10 @@ import {
   Wallet,
   Coins,
   Receipt,
-  Link2
+  Link2,
+  Banknote,
+  CreditCard,
+  QrCode
 } from 'lucide-react';
 
 import L from 'leaflet';
@@ -193,7 +196,10 @@ export default function AdminDashboard() {
     deliveryType: 'standard' as 'standard' | 'same_address',
     additionalValue: '',
     additionalReason: '',
-    linkedOrderNumber: ''
+    linkedOrderNumber: '',
+    paymentMethod: 'already_paid' as 'already_paid' | 'money' | 'card_debit' | 'card_credit' | 'pix_delivery',
+    orderCollectionAmount: '',
+    changeFor: ''
   });
 
   const [showBatchModal, setShowBatchModal] = useState(false);
@@ -787,6 +793,9 @@ export default function AdminDashboard() {
     const activeSchedule = schedules.find(s => s.riderId === deliveryForm.riderId && s.establishmentId === deliveryForm.establishmentId && s.date === deliveryForm.date);
     const nowStr = new Date().toISOString();
 
+    const collectionAmount = deliveryForm.orderCollectionAmount ? parseFloat(deliveryForm.orderCollectionAmount.replace(',', '.')) : undefined;
+    const changeForValue = deliveryForm.changeFor ? parseFloat(deliveryForm.changeFor.replace(',', '.')) : undefined;
+
     if (editingDelivery) {
       const updated = deliveries.map(d => d.id === editingDelivery.id ? {
         ...d,
@@ -802,6 +811,9 @@ export default function AdminDashboard() {
         additionalValue: addVal > 0 ? addVal : undefined,
         additionalReason: deliveryForm.additionalReason?.trim() || undefined,
         linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+        paymentMethod: deliveryForm.paymentMethod,
+        orderCollectionAmount: collectionAmount,
+        changeFor: changeForValue,
         updatedAt: nowStr
       } : d);
       await db.setDeliveries(updated);
@@ -821,6 +833,9 @@ export default function AdminDashboard() {
         additionalValue: addVal > 0 ? addVal : undefined,
         additionalReason: deliveryForm.additionalReason?.trim() || undefined,
         linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+        paymentMethod: deliveryForm.paymentMethod,
+        orderCollectionAmount: collectionAmount,
+        changeFor: changeForValue,
         updatedAt: nowStr,
         paid: false
       };
@@ -1015,22 +1030,65 @@ export default function AdminDashboard() {
 
   // Entregas filtradas para o fechamento financeiro
   const financeFilteredDeliveries = deliveries.filter(d => {
-    if (d.status !== 'active') return false; // Apenas corridas aprovadas/ativas contam no fechamento
+    if (d.status !== 'active') return false;
 
-    // Filtro de data
     if (d.date < financeBounds.start || d.date > financeBounds.end) return false;
 
-    // Filtro de status de pagamento
     if (financePaidFilter === 'unpaid' && d.paid) return false;
     if (financePaidFilter === 'paid' && !d.paid) return false;
 
-    // Filtro de adicional / vinculado
     if (financeFeatureFilter === 'with_additional' && (!d.additionalValue || Number(d.additionalValue) <= 0)) return false;
     if (financeFeatureFilter === 'linked' && (d.deliveryType !== 'same_address' && !d.linkedOrderNumber)) return false;
     if (financeFeatureFilter === 'standard' && (d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber) || (d.additionalValue && Number(d.additionalValue) > 0))) return false;
 
     return true;
   });
+
+  const renderPaymentBadge = (delivery: Delivery) => {
+    const pm = delivery.paymentMethod || 'already_paid';
+    if (pm === 'already_paid') return null;
+
+    const amountStr = delivery.orderCollectionAmount ? `R$ ${Number(delivery.orderCollectionAmount).toFixed(2)}` : '';
+    const changeStr = delivery.changeFor ? ` (Troco p/ R$ ${Number(delivery.changeFor).toFixed(2)})` : '';
+
+    if (pm === 'money') {
+      return (
+        <div className="bg-emerald-600 text-white text-[10px] font-black px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm border border-emerald-400 mt-1">
+          <Banknote className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>COBRAR EM DINHEIRO: {amountStr}{changeStr}</span>
+        </div>
+      );
+    }
+
+    if (pm === 'card_debit') {
+      return (
+        <div className="bg-blue-600 text-white text-[10px] font-black px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm border border-blue-400 mt-1">
+          <CreditCard className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>COBRAR NO DÉBITO: {amountStr} (LEVAR MAQUININHA)</span>
+        </div>
+      );
+    }
+
+    if (pm === 'card_credit') {
+      return (
+        <div className="bg-indigo-600 text-white text-[10px] font-black px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm border border-indigo-400 mt-1">
+          <CreditCard className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>COBRAR NO CRÉDITO: {amountStr} (LEVAR MAQUININHA)</span>
+        </div>
+      );
+    }
+
+    if (pm === 'pix_delivery') {
+      return (
+        <div className="bg-teal-600 text-white text-[10px] font-black px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm border border-teal-400 mt-1">
+          <QrCode className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>COBRAR NO PIX: {amountStr}</span>
+        </div>
+      );
+    }
+
+    return null;
+  };
 
   // Métricas financeiras consolidadas
   const totalFinanceGrossRevenue = financeFilteredDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
@@ -1520,6 +1578,7 @@ export default function AdminDashboard() {
                           <div>
                             <p className="text-xs font-bold text-slate-800">{rider?.name} — {est?.name}</p>
                             <p className="text-[11px] text-slate-500">{del.date} às {del.time} • R$ {del.value.toFixed(2)}</p>
+                            {renderPaymentBadge(del)}
                           </div>
                           <div className="flex items-center space-x-2">
                             <button onClick={() => handleApproveDelivery(del.id)} className="px-2.5 py-1.5 bg-emerald-600 text-white rounded text-xs font-bold hover:bg-emerald-700">Aprovar</button>
@@ -2100,7 +2159,7 @@ export default function AdminDashboard() {
                   <button
                     onClick={() => {
                       setEditingDelivery(null);
-                      setDeliveryForm({ riderId: '', establishmentId: '', date: db.getOperationalDateString(), time: new Date().toTimeString().slice(0,5), value: '', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', additionalReason: '', linkedOrderNumber: '' });
+                      setDeliveryForm({ riderId: '', establishmentId: '', date: db.getOperationalDateString(), time: new Date().toTimeString().slice(0,5), value: '', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', additionalReason: '', linkedOrderNumber: '', paymentMethod: 'already_paid', orderCollectionAmount: '', changeFor: '' });
                       setShowDeliveryModal(true);
                     }}
                     className="flex items-center justify-center space-x-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-md hover:shadow-lg"
@@ -2356,130 +2415,138 @@ export default function AdminDashboard() {
                     const hasAdditional = Number(del.additionalValue || 0) > 0;
 
                     return (
-                      <div key={del.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/60 p-2 rounded-xl transition-colors">
-                        <div className="min-w-0 space-y-1.5 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {del.orderNumber && (
-                              <span className="bg-indigo-600 text-white text-xs font-black px-2.5 py-1 rounded-lg shadow-sm flex-shrink-0 tracking-wide">
-                                #{del.orderNumber}
-                              </span>
-                            )}
-                            <p className="font-extrabold text-slate-800 text-sm">{rider?.name || 'Motoboy'}</p>
-                            <span className="text-xs text-slate-500 font-medium">• {est?.name || 'Estabelecimento'}</span>
-                            
-                            {/* Badge Mesmo Endereço com Vinculação */}
-                            {isSame && (
-                              <span className="bg-purple-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
-                                <Link2 className="h-3 w-3" />
-                                <span>Mesmo Endereço {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : ''}</span>
-                              </span>
-                            )}
-
-                            {/* Badge Valor Adicional com Motivo */}
-                            {hasAdditional && (
-                              <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
-                                <Sparkles className="h-3 w-3 text-amber-600" />
-                                <span>
-                                  + R$ {Number(del.additionalValue).toFixed(2)}
-                                  {del.additionalReason ? ` (${del.additionalReason})` : ' Extra'}
+                      <div key={del.id} className="py-3.5 flex flex-col space-y-1.5 hover:bg-slate-50/60 p-2 rounded-xl transition-colors">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="min-w-0 space-y-1.5 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {del.orderNumber && (
+                                <span className="bg-indigo-600 text-white text-xs font-black px-2.5 py-1 rounded-lg shadow-sm flex-shrink-0 tracking-wide">
+                                  #{del.orderNumber}
                                 </span>
-                              </span>
-                            )}
+                              )}
+                              <p className="font-extrabold text-slate-800 text-sm">{rider?.name || 'Motoboy'}</p>
+                              <span className="text-xs text-slate-500 font-medium">• {est?.name || 'Estabelecimento'}</span>
+                              
+                              {/* Badge Mesmo Endereço com Vinculação */}
+                              {isSame && (
+                                <span className="bg-purple-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                                  <Link2 className="h-3 w-3" />
+                                  <span>Mesmo Endereço {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : ''}</span>
+                                </span>
+                              )}
 
-                            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
-                              del.status === 'active' ? 'bg-emerald-100 text-emerald-800' :
-                              del.status === 'pending' ? 'bg-amber-100 text-amber-800 font-black animate-pulse' :
-                              'bg-red-100 text-red-800'
-                            }`}>
-                              {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : 'Rejeitada'}
-                            </span>
-                            {del.paid && (
-                              <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">
-                                Pago
+                              {/* Badge Valor Adicional com Motivo */}
+                              {hasAdditional && (
+                                <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
+                                  <Sparkles className="h-3 w-3 text-amber-600" />
+                                  <span>
+                                    + R$ {Number(del.additionalValue).toFixed(2)}
+                                    {del.additionalReason ? ` (${del.additionalReason})` : ' Extra'}
+                                  </span>
+                                </span>
+                              )}
+
+                              <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
+                                del.status === 'active' ? 'bg-emerald-100 text-emerald-800' :
+                                del.status === 'pending' ? 'bg-amber-100 text-amber-800 font-black animate-pulse' :
+                                'bg-red-100 text-red-800'
+                              }`}>
+                                {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : 'Rejeitada'}
                               </span>
-                            )}
+                              {del.paid && (
+                                <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">
+                                  Pago
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-500 flex items-center gap-2 flex-wrap">
+                              <span>{new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                              <span className="text-slate-300">•</span>
+                              <span className="font-mono">{del.time}</span>
+                              <span className="text-slate-300">•</span>
+                              <span>Valor: <strong className="text-emerald-600 font-black">R$ {del.value.toFixed(2)}</strong></span>
+                            </p>
                           </div>
-                          <p className="text-xs text-slate-500 flex items-center gap-2 flex-wrap">
-                            <span>{new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
-                            <span className="text-slate-300">•</span>
-                            <span className="font-mono">{del.time}</span>
-                            <span className="text-slate-300">•</span>
-                            <span>Valor: <strong className="text-emerald-600 font-black">R$ {del.value.toFixed(2)}</strong></span>
-                          </p>
-                        </div>
 
-                        <div className="flex items-center gap-2 justify-between sm:justify-end flex-shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100">
-                          {isPending && (
-                            <>
-                              <button
-                                onClick={() => handleApproveDelivery(del.id)}
-                                className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 transition-colors shadow-sm"
-                                title="Aprovar Corrida"
-                              >
-                                <Check className="h-3.5 w-3.5" />
-                                <span>Aprovar</span>
-                              </button>
-                              <button
-                                onClick={() => handleRejectDelivery(del.id)}
-                                className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors"
-                                title="Recusar Corrida com Justificativa"
-                              >
-                                <Ban className="h-3.5 w-3.5" />
-                                <span>Recusar</span>
-                              </button>
-                            </>
-                          )}
-
-                          <button
-                            onClick={() => setNotesDeliveryId(del.id)}
-                            className={`px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-bold ${
-                              hasNotes 
-                                ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 shadow-sm' 
-                                : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
-                            }`}
-                            title="Observações e Chat da Corrida"
-                          >
-                            <MessageSquare className="h-3.5 w-3.5" />
-                            <span>Observações</span>
-                            {hasNotes && (
-                              <span className="bg-amber-950 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
-                                {notesCount}
-                              </span>
+                          <div className="flex items-center gap-2 justify-between sm:justify-end flex-shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                            {isPending && (
+                              <>
+                                <button
+                                  onClick={() => handleApproveDelivery(del.id)}
+                                  className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 transition-colors shadow-sm"
+                                  title="Aprovar Corrida"
+                                >
+                                  <Check className="h-3.5 w-3.5" />
+                                  <span>Aprovar</span>
+                                </button>
+                                <button
+                                  onClick={() => handleRejectDelivery(del.id)}
+                                  className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors"
+                                  title="Recusar Corrida com Justificativa"
+                                >
+                                  <Ban className="h-3.5 w-3.5" />
+                                  <span>Recusar</span>
+                                </button>
+                              </>
                             )}
-                          </button>
 
-                          <button
-                            onClick={() => {
-                              setEditingDelivery(del);
-                              setDeliveryForm({
-                                riderId: del.riderId,
-                                establishmentId: del.establishmentId,
-                                date: del.date,
-                                time: del.time,
-                                value: del.value.toString(),
-                                orderNumber: del.orderNumber || '',
-                                notes: del.notes || '',
-                                deliveryType: del.deliveryType || 'standard',
-                                additionalValue: del.additionalValue ? del.additionalValue.toString() : '',
-                                additionalReason: del.additionalReason || '',
-                                linkedOrderNumber: del.linkedOrderNumber || ''
-                              });
-                              setShowDeliveryModal(true);
-                            }}
-                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg"
-                            title="Editar Corrida"
-                          >
-                            <Edit2 className="h-4 w-4" />
-                          </button>
+                            <button
+                              onClick={() => setNotesDeliveryId(del.id)}
+                              className={`px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-bold ${
+                                hasNotes 
+                                  ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 shadow-sm' 
+                                  : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
+                              }`}
+                              title="Observações e Chat da Corrida"
+                            >
+                              <MessageSquare className="h-3.5 w-3.5" />
+                              <span>Observações</span>
+                              {hasNotes && (
+                                <span className="bg-amber-950 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
+                                  {notesCount}
+                                </span>
+                              )}
+                            </button>
 
-                          <button
-                            onClick={() => handleDeleteDelivery(del.id)}
-                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"
-                            title="Excluir Corrida"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                            <button
+                              onClick={() => {
+                                setEditingDelivery(del);
+                                setDeliveryForm({
+                                  riderId: del.riderId,
+                                  establishmentId: del.establishmentId,
+                                  date: del.date,
+                                  time: del.time,
+                                  value: del.value.toString(),
+                                  orderNumber: del.orderNumber || '',
+                                  notes: del.notes || '',
+                                  deliveryType: del.deliveryType || 'standard',
+                                  additionalValue: del.additionalValue ? del.additionalValue.toString() : '',
+                                  additionalReason: del.additionalReason || '',
+                                  linkedOrderNumber: del.linkedOrderNumber || '',
+                                  paymentMethod: del.paymentMethod || 'already_paid',
+                                  orderCollectionAmount: del.orderCollectionAmount ? del.orderCollectionAmount.toString() : '',
+                                  changeFor: del.changeFor ? del.changeFor.toString() : ''
+                                });
+                                setShowDeliveryModal(true);
+                              }}
+                              className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg"
+                              title="Editar Corrida"
+                            >
+                              <Edit2 className="h-4 w-4" />
+                            </button>
+
+                            <button
+                              onClick={() => handleDeleteDelivery(del.id)}
+                              className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"
+                              title="Excluir Corrida"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
                         </div>
+
+                        {/* SINALIZAÇÃO VISUAL DE COBRANÇA NA ENTREGA */}
+                        {renderPaymentBadge(del)}
                       </div>
                     );
                   })}
@@ -2914,68 +2981,68 @@ export default function AdminDashboard() {
               )}
 
             </div>
-          )}
+          </div>
+        )}
 
-          {activeTab === 'reports' && (
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <h2 className="text-xl font-bold text-slate-800">Relatórios Gerenciais</h2>
-                <button onClick={exportToCSV} className="flex items-center space-x-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-bold">
-                  <Download className="h-4 w-4" />
-                  <span>Exportar CSV</span>
-                </button>
+        {activeTab === 'reports' && (
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <h2 className="text-xl font-bold text-slate-800">Relatórios Gerenciais</h2>
+              <button onClick={exportToCSV} className="flex items-center space-x-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-bold">
+                <Download className="h-4 w-4" />
+                <span>Exportar CSV</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo de Relatório</label>
+                <select value={reportType} onChange={(e) => setReportType(e.target.value as any)} className="w-full p-2 border border-slate-300 rounded text-xs">
+                  <option value="earnings">Faturamento por Motoboy</option>
+                  <option value="deliveries">Quantidade de Corridas por Motoboy</option>
+                  <option value="schedules">Escalas por Estabelecimento</option>
+                </select>
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo de Relatório</label>
-                  <select value={reportType} onChange={(e) => setReportType(e.target.value as any)} className="w-full p-2 border border-slate-300 rounded text-xs">
-                    <option value="earnings">Faturamento por Motoboy</option>
-                    <option value="deliveries">Quantidade de Corridas por Motoboy</option>
-                    <option value="schedules">Escalas por Estabelecimento</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Período</label>
-                  <select value={reportPeriod} onChange={(e) => setReportPeriod(e.target.value as any)} className="w-full p-2 border border-slate-300 rounded text-xs">
-                    <option value="daily">Diário (Hoje)</option>
-                    <option value="weekly">Semanal (Esta Semana)</option>
-                    <option value="monthly">Mensal (Este Mês)</option>
-                    <option value="custom">Personalizado</option>
-                  </select>
-                </div>
-              </div>
-
-              {reportPeriod === 'custom' && (
-                <div className="grid grid-cols-2 gap-2">
-                  <input type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} className="p-2 border rounded text-xs" />
-                  <input type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} className="p-2 border rounded text-xs" />
-                </div>
-              )}
-
-              <div className="overflow-x-auto border rounded-xl">
-                <table className="w-full text-left text-xs text-slate-600">
-                  <thead className="bg-slate-50 font-bold uppercase border-b">
-                    <tr>
-                      <th className="p-3">Nome</th>
-                      {reportType === 'earnings' && <th className="p-3">Total (R$)</th>}
-                      <th className="p-3">Quantidade</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {getFilteredReportData().map((row: any, idx: number) => (
-                      <tr key={idx}>
-                        <td className="p-3 font-semibold text-slate-800">{row.name}</td>
-                        {reportType === 'earnings' && <td className="p-3 font-bold text-emerald-600">R$ {row.total.toFixed(2)}</td>}
-                        <td className="p-3">{row.count}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Período</label>
+                <select value={reportPeriod} onChange={(e) => setReportPeriod(e.target.value as any)} className="w-full p-2 border border-slate-300 rounded text-xs">
+                  <option value="daily">Diário (Hoje)</option>
+                  <option value="weekly">Semanal (Esta Semana)</option>
+                  <option value="monthly">Mensal (Este Mês)</option>
+                  <option value="custom">Personalizado</option>
+                </select>
               </div>
             </div>
-          )}
-        </div>
+
+            {reportPeriod === 'custom' && (
+              <div className="grid grid-cols-2 gap-2">
+                <input type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} className="p-2 border rounded text-xs" />
+                <input type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} className="p-2 border rounded text-xs" />
+              </div>
+            )}
+
+            <div className="overflow-x-auto border rounded-xl">
+              <table className="w-full text-left text-xs text-slate-600">
+                <thead className="bg-slate-50 font-bold uppercase border-b">
+                  <tr>
+                    <th className="p-3">Nome</th>
+                    {reportType === 'earnings' && <th className="p-3">Total (R$)</th>}
+                    <th className="p-3">Quantidade</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {getFilteredReportData().map((row: any, idx: number) => (
+                    <tr key={idx}>
+                      <td className="p-3 font-semibold text-slate-800">{row.name}</td>
+                      {reportType === 'earnings' && <td className="p-3 font-bold text-emerald-600">R$ {row.total.toFixed(2)}</td>}
+                      <td className="p-3">{row.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       <UserModal
