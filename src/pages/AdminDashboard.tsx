@@ -409,7 +409,13 @@ export default function AdminDashboard() {
       return;
     }
 
-    if (confirm(`Deseja aprovar todas as ${pendingDels.length} corridas pendentes de uma só vez?`)) {
+    const cobrarCount = pendingDels.filter(d => d.paymentMethod && d.paymentMethod !== 'already_paid').length;
+    let confirmMsg = `Deseja aprovar todas as ${pendingDels.length} corridas pendentes de uma só vez?`;
+    if (cobrarCount > 0) {
+      confirmMsg += `\n\n⚠️ ATENÇÃO: ${cobrarCount} corrida(s) possuem cobrança ao cliente (dinheiro, maquininha ou PIX). Certifique-se de que os valores foram recebidos e as maquininhas devolvidas antes de continuar.`;
+    }
+
+    if (confirm(confirmMsg)) {
       const allDeliveries = db.getDeliveries();
       const pendingIds = new Set(pendingDels.map(p => p.id));
       const updated = allDeliveries.map(d => pendingIds.has(d.id) ? {
@@ -854,6 +860,54 @@ export default function AdminDashboard() {
   };
 
   const handleApproveDelivery = async (id: string) => {
+    const deliveryToApprove = deliveries.find(d => d.id === id);
+
+    if (deliveryToApprove) {
+      const pm = deliveryToApprove.paymentMethod || 'already_paid';
+      const rider = users.find(u => u.id === deliveryToApprove.riderId);
+      const est = establishments.find(e => e.id === deliveryToApprove.establishmentId);
+      const riderName = rider?.name || 'o motoboy';
+      const estName = est?.name || 'o estabelecimento';
+      const orderNum = deliveryToApprove.orderNumber ? `#${deliveryToApprove.orderNumber}` : '';
+      const amountStr = deliveryToApprove.orderCollectionAmount ? `R$ ${Number(deliveryToApprove.orderCollectionAmount).toFixed(2)}` : 'o valor do pedido';
+
+      if (pm === 'money') {
+        const changeMsg = deliveryToApprove.changeFor ? ` (troco para R$ ${Number(deliveryToApprove.changeFor).toFixed(2)})` : '';
+        const confirmed = confirm(
+          `💰 CONFERÊNCIA DE COBRANÇA EM DINHEIRO:\n\n` +
+          `Pedido: ${orderNum}\n` +
+          `Estabelecimento: ${estName}\n` +
+          `Entregador: ${riderName}\n` +
+          `Valor a receber do cliente: ${amountStr}${changeMsg}\n\n` +
+          `👉 O entregador ${riderName} já repassou este dinheiro em espécie para o caixa do estabelecimento ${estName}?\n\n` +
+          `Clique em "OK" para confirmar que o dinheiro foi entregue e aprovar a corrida.`
+        );
+        if (!confirmed) return;
+      } else if (pm === 'card_debit' || pm === 'card_credit') {
+        const tipoCartao = pm === 'card_debit' ? 'DÉBITO' : 'CRÉDITO';
+        const confirmed = confirm(
+          `💳 CONFERÊNCIA DE MAQUINETA E PAGAMENTO NO CARTÃO (${tipoCartao}):\n\n` +
+          `Pedido: ${orderNum}\n` +
+          `Estabelecimento: ${estName}\n` +
+          `Entregador: ${riderName}\n` +
+          `Valor cobrado na máquina: ${amountStr}\n\n` +
+          `👉 O entregador ${riderName} já devolveu a maquineta de cartão e o comprovante para ${estName}?\n\n` +
+          `Clique em "OK" para confirmar a devolução da maquineta e aprovar a corrida.`
+        );
+        if (!confirmed) return;
+      } else if (pm === 'pix_delivery') {
+        const confirmed = confirm(
+          `📱 CONFERÊNCIA DE PAGAMENTO VIA PIX NA ENTREGA:\n\n` +
+          `Pedido: ${orderNum}\n` +
+          `Estabelecimento: ${estName}\n` +
+          `Valor do PIX: ${amountStr}\n\n` +
+          `👉 O comprovante de PIX do cliente já foi conferido e recebido na conta do estabelecimento ${estName}?\n\n` +
+          `Clique em "OK" para confirmar o recebimento e aprovar a corrida.`
+        );
+        if (!confirmed) return;
+      }
+    }
+
     const updated = deliveries.map(d => d.id === id ? { ...d, status: 'active' as const, updatedAt: new Date().toISOString() } : d);
     await db.setDeliveries(updated);
     loadData();

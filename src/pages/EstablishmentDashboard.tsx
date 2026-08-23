@@ -324,6 +324,49 @@ export default function EstablishmentDashboard() {
 
   const handleApproveDelivery = async (id: string) => {
     const allDeliveries = db.getDeliveries();
+    const deliveryToApprove = allDeliveries.find(d => d.id === id);
+
+    if (deliveryToApprove) {
+      const pm = deliveryToApprove.paymentMethod || 'already_paid';
+      const rider = db.resolveUser(deliveryToApprove.riderId);
+      const riderName = rider?.name || 'o motoboy';
+      const orderNum = deliveryToApprove.orderNumber ? `#${deliveryToApprove.orderNumber}` : '';
+      const amountStr = deliveryToApprove.orderCollectionAmount ? `R$ ${Number(deliveryToApprove.orderCollectionAmount).toFixed(2)}` : 'o valor do pedido';
+
+      if (pm === 'money') {
+        const changeMsg = deliveryToApprove.changeFor ? ` (levou troco para R$ ${Number(deliveryToApprove.changeFor).toFixed(2)})` : '';
+        const confirmed = confirm(
+          `💰 CONFERÊNCIA DE COBRANÇA EM DINHEIRO:\n\n` +
+          `Pedido: ${orderNum}\n` +
+          `Entregador: ${riderName}\n` +
+          `Valor a receber do cliente: ${amountStr}${changeMsg}\n\n` +
+          `👉 O entregador ${riderName} já repassou este dinheiro para o caixa do estabelecimento?\n\n` +
+          `Clique em "OK" apenas se já recebeu o dinheiro para aprovar a corrida.`
+        );
+        if (!confirmed) return;
+      } else if (pm === 'card_debit' || pm === 'card_credit') {
+        const tipoCartao = pm === 'card_debit' ? 'DÉBITO' : 'CRÉDITO';
+        const confirmed = confirm(
+          `💳 CONFERÊNCIA DE MAQUINETA E PAGAMENTO NO CARTÃO (${tipoCartao}):\n\n` +
+          `Pedido: ${orderNum}\n` +
+          `Entregador: ${riderName}\n` +
+          `Valor cobrado: ${amountStr}\n\n` +
+          `👉 O entregador ${riderName} já devolveu a maquineta de cartão e comprovante do pedido para o estabelecimento?\n\n` +
+          `Clique em "OK" para confirmar a devolução da maquineta e aprovar a corrida.`
+        );
+        if (!confirmed) return;
+      } else if (pm === 'pix_delivery') {
+        const confirmed = confirm(
+          `📱 CONFERÊNCIA DE PAGAMENTO VIA PIX NA ENTREGA:\n\n` +
+          `Pedido: ${orderNum}\n` +
+          `Valor do PIX: ${amountStr}\n\n` +
+          `👉 O comprovante de PIX do cliente já foi conferido na conta do estabelecimento?\n\n` +
+          `Clique em "OK" para confirmar o recebimento e aprovar a corrida.`
+        );
+        if (!confirmed) return;
+      }
+    }
+
     const updated = allDeliveries.map(d => d.id === id ? { ...d, status: 'active' as const, updatedAt: new Date().toISOString() } : d);
     await db.setDeliveries(updated);
     loadData();
