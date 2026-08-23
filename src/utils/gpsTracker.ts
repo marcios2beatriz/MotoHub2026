@@ -1,7 +1,27 @@
 "use client";
 
+import { Capacitor } from '@capacitor/core';
+import { registerPlugin } from '@capacitor/core';
 import { db } from './db';
 import { realtimeGps } from './realtimeGps';
+
+// Interface do plugin Background Geolocation nativo do Capacitor
+export interface BackgroundGeolocationPlugin {
+  addWatcher(
+    options: {
+      backgroundMessage?: string;
+      backgroundTitle?: string;
+      requestPermissions?: boolean;
+      stale?: boolean;
+      distanceFilter?: number;
+    },
+    callback: (location?: any, error?: any) => void
+  ): Promise<string>;
+  removeWatcher(options: { id: string }): Promise<void>;
+  openSettings(): Promise<void>;
+}
+
+const BackgroundGeolocation = registerPlugin<BackgroundGeolocationPlugin>('BackgroundGeolocation');
 
 export interface GpsLocation {
   lat: number;
@@ -41,7 +61,7 @@ export function calculateBearingDegrees(lat1: number, lon1: number, lat2: number
   const Δλ = (lon2 - lon1) * (Math.PI / 180);
 
   const y = Math.sin(Δλ) * Math.cos(φ2);
-  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.cos(φ1) * Math.cos(Δλ);
   const θ = Math.atan2(y, x);
   return (θ * (180 / Math.PI) + 360) % 360;
 }
@@ -95,6 +115,7 @@ function distanceToSegmentMeters(
 
 class HighPrecisionGpsTracker {
   private watchId: number | null = null;
+  private backgroundWatcherId: string | null = null;
   private fallbackTimer: any = null;
   private worker: Worker | null = null;
   private wakeLock: any = null;
@@ -112,13 +133,15 @@ class HighPrecisionGpsTracker {
   };
 
   constructor() {
-    this.initWebWorker();
-    this.setupVisibilityListeners();
+    if (!Capacitor.isNativePlatform()) {
+      this.initWebWorker();
+      this.setupVisibilityListeners();
+    }
   }
 
   private initWebWorker() {
     try {
-      if (window.Worker) {
+      if (typeof window !== 'undefined' && window.Worker) {
         this.worker = new Worker('/gps-worker.js');
         this.worker.onmessage = (e) => {
           if (e.data === 'tick') {
@@ -136,6 +159,8 @@ class HighPrecisionGpsTracker {
   }
 
   private setupVisibilityListeners() {
+    if (typeof window === 'undefined') return;
+
     const handleReactivate = () => {
       this.enableWakeLock();
       this.enableAudioKeepAlive();
@@ -165,30 +190,31 @@ class HighPrecisionGpsTracker {
   public setNavigating(navigating: boolean) {
     this.currentState.isNavigating = navigating;
     this.notify();
-    if (navigating) {
+    if (navigating && !Capacitor.isNativePlatform()) {
       this.enableAudioKeepAlive();
     }
   }
 
   private forceLocationPoll() {
+    if (Capacitor.isNativePlatform()) return;
     if (!navigator.geolocation) return;
 
     navigator.geolocation.getCurrentPosition(
-      (pos) => this.handleSuccess(pos),
+      (pos) => this.handleSuccess(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, pos.coords.speed, pos.coords.heading),
       (err) => this.handleError(err),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   }
 
-  private handleSuccess(pos: GeolocationPosition) {
-    let lat = pos.coords.latitude;
-    let lng = pos.coords.longitude;
-    const accuracy = pos.coords.accuracy || 10;
+  private handleSuccess(rawLat: number, rawLng: number, rawAccuracy: number = 10, rawSpeed: number | null = null, rawHeadingVal: number | null = null) {
+    let lat = rawLat;
+    let lng = rawLng;
+    const accuracy = rawAccuracy || 10;
     const now = Date.now();
 
     if (accuracy > 150 && this.lastLocation) return;
 
-    const speedKmh = pos.coords.speed !== null && pos.coords.speed >= 0 ? Math.round(pos.coords.speed * 3.6) : 0;
+    const speedKmh = rawSpeed !== null && rawSpeed >= 0 ? Math.round(rawSpeed * 3.6) : 0;
     let rawHeading = this.lastStableHeading;
     let distanceMoved = 0;
 
@@ -206,8 +232,8 @@ class HighPrecisionGpsTracker {
     }
 
     if (speedKmh >= 4 && distanceMoved > 2) {
-      if (pos.coords.heading !== null && !isNaN(pos.coords.heading) && pos.coords.heading >= 0) {
-        rawHeading = Math.round(pos.coords.heading);
+      if (rawHeadingVal !== null && !isNaN(rawHeadingVal) && rawHeadingVal >= 0) {
+        rawHeading = Math.round(rawHeadingVal);
       } else if (this.lastLocation && distanceMoved > 1) {
         rawHeading = Math.round(calculateBearingDegrees(this.lastLocation.lat, this.lastLocation.lng, lat, lng));
       }
@@ -259,10 +285,10 @@ class HighPrecisionGpsTracker {
     this.notify();
   }
 
-  private handleError(err: GeolocationPositionError) {
+  private handleError(err: any) {
     let quality: GpsSignalQuality = 'off';
     let msg = 'Obtendo sinal GPS...';
-    if (err.code === GeolocationPositionError.PERMISSION_DENIED) {
+    if (err && err.code === 1) {
       quality = 'denied';
       msg = 'Permissão de localização negada.';
     }
@@ -271,6 +297,49 @@ class HighPrecisionGpsTracker {
   }
 
   public async startTracking() {
+    // 1. SE FOR APK NATIVO ANDROID: ATIVA BACKGROUND GEOLOCATION NATIVO
+    if (Capacitor.isNativePlatform()) {
+      try {
+        if (this.backgroundWatcherId) {
+          await BackgroundGeolocation.removeWatcher({ id: this.backgroundWatcherId });
+          this.backgroundWatcherId = null;
+        }
+
+        this.backgroundWatcherId = await BackgroundGeolocation.addWatcher(
+          {
+            backgroundTitle: 'MotoHub Delivery',
+            backgroundMessage: 'Sua localização está sendo transmitida em tempo real para os estabelecimentos.',
+            requestPermissions: true,
+            stale: false,
+            distanceFilter: 2
+          },
+          (location, error) => {
+            if (error) {
+              if (error.code === 'NOT_AUTHORIZED') {
+                BackgroundGeolocation.openSettings();
+              }
+              this.handleError(error);
+              return;
+            }
+
+            if (location) {
+              this.handleSuccess(
+                location.latitude,
+                location.longitude,
+                location.accuracy,
+                location.speed,
+                location.bearing
+              );
+            }
+          }
+        );
+        return;
+      } catch (err) {
+        console.warn('Erro ao inicializar Background Geolocation nativo, fallback para web:', err);
+      }
+    }
+
+    // 2. SE FOR NAVEGADOR WEB (DESKTOP/CELULAR): ATIVA RASTREADOR WEB
     this.enableWakeLock();
     this.enableAudioKeepAlive();
 
@@ -289,7 +358,7 @@ class HighPrecisionGpsTracker {
 
     if (this.watchId === null) {
       this.watchId = navigator.geolocation.watchPosition(
-        (pos) => this.handleSuccess(pos),
+        (pos) => this.handleSuccess(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, pos.coords.speed, pos.coords.heading),
         (err) => this.handleError(err),
         options
       );
@@ -302,7 +371,14 @@ class HighPrecisionGpsTracker {
     }
   }
 
-  public stopTracking() {
+  public async stopTracking() {
+    if (Capacitor.isNativePlatform() && this.backgroundWatcherId) {
+      try {
+        await BackgroundGeolocation.removeWatcher({ id: this.backgroundWatcherId });
+      } catch (e) {}
+      this.backgroundWatcherId = null;
+    }
+
     if (this.watchId !== null) {
       navigator.geolocation.clearWatch(this.watchId);
       this.watchId = null;
@@ -338,7 +414,7 @@ class HighPrecisionGpsTracker {
 
   private async enableWakeLock() {
     try {
-      if ('wakeLock' in navigator) {
+      if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
         this.wakeLock = await (navigator as any).wakeLock.request('screen');
       }
     } catch (e) {}
@@ -346,7 +422,7 @@ class HighPrecisionGpsTracker {
 
   private enableAudioKeepAlive() {
     try {
-      if (!this.audioKeepAlive) {
+      if (!this.audioKeepAlive && typeof document !== 'undefined') {
         const audio = document.createElement('audio');
         audio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
         audio.loop = true;
@@ -366,7 +442,7 @@ class HighPrecisionGpsTracker {
         }
       }
       
-      this.audioKeepAlive.play().catch(() => {});
+      this.audioKeepAlive?.play().catch(() => {});
     } catch (e) {}
   }
 }
