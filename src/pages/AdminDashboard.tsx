@@ -138,7 +138,7 @@ export default function AdminDashboard() {
   const [delNotesFilter, setDelNotesFilter] = useState<'all' | 'with_notes' | 'without_notes'>('all');
   const [delSortOrder, setDelSortOrder] = useState<'date_desc' | 'date_asc' | 'value_desc' | 'value_asc' | 'rider_name' | 'est_name'>('date_desc');
 
-  // --- FILTROS DA ABA FECHAMENTO FINANCEIRO ---
+  // Filtros de Fechamento Financeiro
   const [financePeriodMode, setFinancePeriodMode] = useState<'this_week' | 'last_week' | 'today' | 'this_month' | 'custom'>('this_week');
   const [financeCustomFrom, setFinanceCustomFrom] = useState<string>('');
   const [financeCustomTo, setFinanceCustomTo] = useState<string>('');
@@ -265,7 +265,6 @@ export default function AdminDashboard() {
     };
   }, [adminUser, navigate, activeTab]);
 
-  // Filtrar apenas motoboys com sinal ONLINE (atualizado nos últimos 3 minutos)
   const onlineRiderLocations = riderLocations.filter(loc => {
     if (!loc.lat || !loc.lng || isNaN(loc.lat) || isNaN(loc.lng)) return false;
     const timeDiff = loc.updatedAt ? Date.now() - new Date(loc.updatedAt).getTime() : Infinity;
@@ -984,7 +983,6 @@ export default function AdminDashboard() {
     setDelSmartDate(db.getOperationalDateString(d));
   };
 
-  // Helper para obter limites de data no filtro de fechamento
   const getFinanceDateBounds = (): { start: string; end: string; label: string } => {
     const now = new Date();
     if (financePeriodMode === 'today') {
@@ -1028,7 +1026,6 @@ export default function AdminDashboard() {
 
   const financeBounds = getFinanceDateBounds();
 
-  // Entregas filtradas para o fechamento financeiro
   const financeFilteredDeliveries = deliveries.filter(d => {
     if (d.status !== 'active') return false;
 
@@ -1090,7 +1087,6 @@ export default function AdminDashboard() {
     return null;
   };
 
-  // Métricas financeiras consolidadas
   const totalFinanceGrossRevenue = financeFilteredDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
   const totalFinanceDeliveriesCount = financeFilteredDeliveries.length;
   const totalFinanceAdminCommission = totalFinanceDeliveriesCount * ADMIN_FEE_PER_DELIVERY;
@@ -1232,7 +1228,6 @@ export default function AdminDashboard() {
       if (delNotesFilter === 'with_notes' && !hasNotes) return false;
       if (delNotesFilter === 'without_notes' && hasNotes) return false;
 
-      // Filtro de com adicional / vinculado / padrão
       if (delFeatureFilter === 'with_additional') {
         const hasAdd = Number(d.additionalValue || 0) > 0;
         if (!hasAdd) return false;
@@ -1632,7 +1627,7 @@ export default function AdminDashboard() {
                         <MapIcon className="h-5 w-5" />
                       </div>
                       <div>
-                        <h3 className="font-extrabold text-sm sm:base">Monitoramento GPS - Tela Cheia</h3>
+                        <h3 className="font-extrabold text-sm sm:text-base">Monitoramento GPS - Tela Cheia</h3>
                         <p className="text-xs text-slate-400">{onlineRiderLocations.length} motoboy(s) online com sinal GPS ativo</p>
                       </div>
                     </div>
@@ -2981,68 +2976,68 @@ export default function AdminDashboard() {
               )}
 
             </div>
-          </div>
-        )}
+          )}
 
-        {activeTab === 'reports' && (
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <h2 className="text-xl font-bold text-slate-800">Relatórios Gerenciais</h2>
-              <button onClick={exportToCSV} className="flex items-center space-x-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-bold">
-                <Download className="h-4 w-4" />
-                <span>Exportar CSV</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo de Relatório</label>
-                <select value={reportType} onChange={(e) => setReportType(e.target.value as any)} className="w-full p-2 border border-slate-300 rounded text-xs">
-                  <option value="earnings">Faturamento por Motoboy</option>
-                  <option value="deliveries">Quantidade de Corridas por Motoboy</option>
-                  <option value="schedules">Escalas por Estabelecimento</option>
-                </select>
+          {activeTab === 'reports' && (
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <h2 className="text-xl font-bold text-slate-800">Relatórios Gerenciais</h2>
+                <button onClick={exportToCSV} className="flex items-center space-x-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-bold">
+                  <Download className="h-4 w-4" />
+                  <span>Exportar CSV</span>
+                </button>
               </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Período</label>
-                <select value={reportPeriod} onChange={(e) => setReportPeriod(e.target.value as any)} className="w-full p-2 border border-slate-300 rounded text-xs">
-                  <option value="daily">Diário (Hoje)</option>
-                  <option value="weekly">Semanal (Esta Semana)</option>
-                  <option value="monthly">Mensal (Este Mês)</option>
-                  <option value="custom">Personalizado</option>
-                </select>
-              </div>
-            </div>
 
-            {reportPeriod === 'custom' && (
-              <div className="grid grid-cols-2 gap-2">
-                <input type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} className="p-2 border rounded text-xs" />
-                <input type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} className="p-2 border rounded text-xs" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo de Relatório</label>
+                  <select value={reportType} onChange={(e) => setReportType(e.target.value as any)} className="w-full p-2 border border-slate-300 rounded text-xs">
+                    <option value="earnings">Faturamento por Motoboy</option>
+                    <option value="deliveries">Quantidade de Corridas por Motoboy</option>
+                    <option value="schedules">Escalas por Estabelecimento</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Período</label>
+                  <select value={reportPeriod} onChange={(e) => setReportPeriod(e.target.value as any)} className="w-full p-2 border border-slate-300 rounded text-xs">
+                    <option value="daily">Diário (Hoje)</option>
+                    <option value="weekly">Semanal (Esta Semana)</option>
+                    <option value="monthly">Mensal (Este Mês)</option>
+                    <option value="custom">Personalizado</option>
+                  </select>
+                </div>
               </div>
-            )}
 
-            <div className="overflow-x-auto border rounded-xl">
-              <table className="w-full text-left text-xs text-slate-600">
-                <thead className="bg-slate-50 font-bold uppercase border-b">
-                  <tr>
-                    <th className="p-3">Nome</th>
-                    {reportType === 'earnings' && <th className="p-3">Total (R$)</th>}
-                    <th className="p-3">Quantidade</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {getFilteredReportData().map((row: any, idx: number) => (
-                    <tr key={idx}>
-                      <td className="p-3 font-semibold text-slate-800">{row.name}</td>
-                      {reportType === 'earnings' && <td className="p-3 font-bold text-emerald-600">R$ {row.total.toFixed(2)}</td>}
-                      <td className="p-3">{row.count}</td>
+              {reportPeriod === 'custom' && (
+                <div className="grid grid-cols-2 gap-2">
+                  <input type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} className="p-2 border rounded text-xs" />
+                  <input type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} className="p-2 border rounded text-xs" />
+                </div>
+              )}
+
+              <div className="overflow-x-auto border rounded-xl">
+                <table className="w-full text-left text-xs text-slate-600">
+                  <thead className="bg-slate-50 font-bold uppercase border-b">
+                    <tr>
+                      <th className="p-3">Nome</th>
+                      {reportType === 'earnings' && <th className="p-3">Total (R$)</th>}
+                      <th className="p-3">Quantidade</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y">
+                    {getFilteredReportData().map((row: any, idx: number) => (
+                      <tr key={idx}>
+                        <td className="p-3 font-semibold text-slate-800">{row.name}</td>
+                        {reportType === 'earnings' && <td className="p-3 font-bold text-emerald-600">R$ {row.total.toFixed(2)}</td>}
+                        <td className="p-3">{row.count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <UserModal
