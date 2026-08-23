@@ -34,7 +34,10 @@ import {
   Coins,
   Receipt,
   Search,
-  Tag
+  Tag,
+  CreditCard,
+  Banknote,
+  CheckCircle2
 } from 'lucide-react';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
 import CustomerChatModal from '../components/CustomerChatModal';
@@ -109,7 +112,10 @@ export default function RiderDashboard() {
     deliveryType: 'standard' as 'standard' | 'same_address',
     additionalValue: '',
     additionalReason: '',
-    linkedOrderNumber: ''
+    linkedOrderNumber: '',
+    paymentMethod: 'already_paid' as 'already_paid' | 'money' | 'card_debit' | 'card_credit' | 'pix_delivery',
+    orderCollectionAmount: '',
+    changeFor: ''
   });
 
   const [notesDeliveryId, setNotesDeliveryId] = useState<string | null>(null);
@@ -268,104 +274,6 @@ export default function RiderDashboard() {
     };
   }, [user, navigate, activeTab]);
 
-  useEffect(() => {
-    deliveries.forEach(d => {
-      const prevNotes = prevNotesRef.current[d.id];
-      if (prevNotes !== undefined && d.notes && d.notes !== prevNotes) {
-        const prevLines = prevNotes ? prevNotes.split('\n') : [];
-        const currentLines = d.notes.split('\n');
-
-        if (currentLines.length > prevLines.length) {
-          const newLines = currentLines.slice(prevLines.length);
-          newLines.forEach(line => {
-            const isMe = line.includes('- Motoboy') || line.includes(`(${user?.name})`);
-            if (!isMe) {
-              const sender = line.includes('- Estabelecimento') ? 'Estabelecimento' : 'Admin';
-              const messageText = line.substring(line.indexOf(']: ') + 3);
-              const title = `Mensagem de ${sender} (Pedido #${d.orderNumber || d.id.slice(-4)})`;
-              
-              sendDeviceNotification(title, `"${messageText}"`);
-              playNotificationSound();
-              setActiveToast({
-                id: 'notes_' + Date.now(),
-                title,
-                message: messageText,
-                sender,
-                onClick: () => setNotesDeliveryId(d.id)
-              });
-            }
-          });
-        }
-      }
-      prevNotesRef.current[d.id] = d.notes || '';
-    });
-  }, [deliveries, user]);
-
-  useEffect(() => {
-    deliveries.forEach(d => {
-      const prevChat = prevChatRef.current[d.id];
-      if (prevChat !== undefined && d.customerChat && d.customerChat !== prevChat) {
-        const prevLines = prevChat ? prevChat.split('\n') : [];
-        const currentLines = d.customerChat.split('\n');
-
-        if (currentLines.length > prevLines.length) {
-          const newLines = currentLines.slice(prevLines.length);
-          newLines.forEach(line => {
-            const isMe = line.includes('- Motoboy') || line.includes(`(${user?.name})`);
-            if (!isMe) {
-              const messageText = line.substring(line.indexOf(']: ') + 3);
-              const title = `Mensagem do Cliente (Pedido #${d.orderNumber || d.id.slice(-4)})`;
-              
-              sendDeviceNotification(title, `"${messageText}"`);
-              playNotificationSound();
-              setActiveToast({
-                id: 'customer_' + Date.now(),
-                title,
-                message: messageText,
-                sender: 'Cliente',
-                onClick: () => setCustomerChatDeliveryId(d.id)
-              });
-            }
-          });
-        }
-      }
-      prevChatRef.current[d.id] = d.customerChat || '';
-    });
-  }, [deliveries, user]);
-
-  useEffect(() => {
-    schedules.forEach(s => {
-      const prevChat = prevScheduleChatRef.current[s.id];
-      if (prevChat !== undefined && s.chat && s.chat !== prevChat) {
-        const prevLines = prevChat ? prevChat.split('\n') : [];
-        const currentLines = s.chat.split('\n');
-
-        if (currentLines.length > prevLines.length) {
-          const newLines = currentLines.slice(prevLines.length);
-          newLines.forEach(line => {
-            const isMe = line.includes('- Motoboy') || line.includes(`(${user?.name})`);
-            if (!isMe) {
-              const est = resolveEst(s.establishmentId);
-              const messageText = line.substring(line.indexOf(']: ') + 3);
-              const title = `Aviso no Turno (${est?.name || 'Estabelecimento'})`;
-              
-              sendDeviceNotification(title, `"${messageText}"`);
-              playNotificationSound();
-              setActiveToast({
-                id: 'sch_' + Date.now(),
-                title,
-                message: messageText,
-                sender: est?.name || 'Estabelecimento',
-                onClick: () => setActiveScheduleChatId(s.id)
-              });
-            }
-          });
-        }
-      }
-      prevScheduleChatRef.current[s.id] = s.chat || '';
-    });
-  }, [schedules, user]);
-
   const handleLogout = async () => {
     if (user) {
       gpsTracker.stopTracking();
@@ -442,7 +350,6 @@ export default function RiderDashboard() {
     db.setNotifications(updatedAll);
   };
 
-  // RETORNA ESTRITAMENTE APENAS OS ESTABELECIMENTOS ONDE O MOTOBOY ESTÁ ESCALADO HOJE
   const getScheduledEstablishmentsToday = (): Establishment[] => {
     const todaySchedules = schedules.filter(s => isSameDayString(s.date, operationalTodayStr));
     const resolvedEsts = todaySchedules
@@ -509,6 +416,9 @@ export default function RiderDashboard() {
       return;
     }
 
+    const collectionAmount = launchForm.orderCollectionAmount ? parseFloat(launchForm.orderCollectionAmount.replace(',', '.')) : undefined;
+    const changeForValue = launchForm.changeFor ? parseFloat(launchForm.changeFor.replace(',', '.')) : undefined;
+
     if (!db.lockOrder(cleanOrderNumber, operationalTodayStr, new Date().toTimeString().slice(0, 5))) {
       alert('Aviso: Este pedido já está sendo gravado no momento.');
       return;
@@ -544,6 +454,9 @@ export default function RiderDashboard() {
           additionalValue: addVal > 0 ? addVal : undefined,
           additionalReason: launchForm.additionalReason?.trim() || undefined,
           linkedOrderNumber: launchForm.deliveryType === 'same_address' ? (launchForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+          paymentMethod: launchForm.paymentMethod,
+          orderCollectionAmount: collectionAmount,
+          changeFor: changeForValue,
           scheduleId: activeSchedule?.id || d.scheduleId,
           updatedAt: nowStr
         } : d);
@@ -566,6 +479,9 @@ export default function RiderDashboard() {
           additionalValue: addVal > 0 ? addVal : undefined,
           additionalReason: launchForm.additionalReason?.trim() || undefined,
           linkedOrderNumber: launchForm.deliveryType === 'same_address' ? (launchForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+          paymentMethod: launchForm.paymentMethod,
+          orderCollectionAmount: collectionAmount,
+          changeFor: changeForValue,
           updatedAt: nowStr
         };
 
@@ -575,7 +491,7 @@ export default function RiderDashboard() {
 
       setShowLaunchModal(false);
       setEditingDelivery(null);
-      setLaunchForm({ establishmentId: '', value: '8.00', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', additionalReason: '', linkedOrderNumber: '' });
+      setLaunchForm({ establishmentId: '', value: '8.00', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', additionalReason: '', linkedOrderNumber: '', paymentMethod: 'already_paid', orderCollectionAmount: '', changeFor: '' });
       loadData();
     } catch (err) {
       console.error('Erro ao salvar corrida:', err);
@@ -809,6 +725,54 @@ export default function RiderDashboard() {
   };
 
   const isSameAddress = launchForm.deliveryType === 'same_address';
+  const isPaymentOnDelivery = launchForm.paymentMethod !== 'already_paid';
+
+  // Helper para renderizar badge de pagamento
+  const renderPaymentBadge = (delivery: Delivery) => {
+    const pm = delivery.paymentMethod || 'already_paid';
+    if (pm === 'already_paid') return null;
+
+    const amountStr = delivery.orderCollectionAmount ? `R$ ${Number(delivery.orderCollectionAmount).toFixed(2)}` : '';
+    const changeStr = delivery.changeFor ? ` (Troco p/ R$ ${Number(delivery.changeFor).toFixed(2)})` : '';
+
+    if (pm === 'money') {
+      return (
+        <div className="bg-emerald-600 text-white text-[10px] font-black px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm border border-emerald-400">
+          <Banknote className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>COBRAR EM DINHEIRO: {amountStr}{changeStr}</span>
+        </div>
+      );
+    }
+
+    if (pm === 'card_debit') {
+      return (
+        <div className="bg-blue-600 text-white text-[10px] font-black px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm border border-blue-400">
+          <CreditCard className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>COBRAR NO DÉBITO: {amountStr} (LEVAR MAQUININHA)</span>
+        </div>
+      );
+    }
+
+    if (pm === 'card_credit') {
+      return (
+        <div className="bg-indigo-600 text-white text-[10px] font-black px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm border border-indigo-400">
+          <CreditCard className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>COBRAR NO CRÉDITO: {amountStr} (LEVAR MAQUININHA)</span>
+        </div>
+      );
+    }
+
+    if (pm === 'pix_delivery') {
+      return (
+        <div className="bg-teal-600 text-white text-[10px] font-black px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm border border-teal-400">
+          <QrCode className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>COBRAR NO PIX: {amountStr}</span>
+        </div>
+      );
+    }
+
+    return null;
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 pb-16 relative">
@@ -837,7 +801,7 @@ export default function RiderDashboard() {
                   return;
                 }
                 setEditingDelivery(null);
-                setLaunchForm({ establishmentId: scheduled[0].id, value: '8.00', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', additionalReason: '', linkedOrderNumber: '' });
+                setLaunchForm({ establishmentId: scheduled[0].id, value: '8.00', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', additionalReason: '', linkedOrderNumber: '', paymentMethod: 'already_paid', orderCollectionAmount: '', changeFor: '' });
                 setShowLaunchModal(true);
               }}
               className="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 transition-colors shadow-sm"
@@ -1077,103 +1041,108 @@ export default function RiderDashboard() {
                     const hasAdditional = Number(delivery.additionalValue || 0) > 0;
 
                     return (
-                      <div key={delivery.id} className={`py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${isSame ? 'bg-purple-50/40 p-2 rounded-xl border border-purple-100' : ''}`}>
-                        <div className="min-w-0 space-y-1.5 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {delivery.orderNumber && (
-                              <span className="bg-indigo-600 text-white text-xs font-black px-2.5 py-1 rounded-lg shadow-sm flex-shrink-0 tracking-wide">
-                                #{delivery.orderNumber}
-                              </span>
-                            )}
-                            <p className="font-bold text-slate-800 text-sm">{est?.name || 'Estabelecimento'}</p>
-
-                            {/* Badge Mesmo Endereço com Vinculação */}
-                            {isSame && (
-                              <span className="bg-purple-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
-                                <Link2 className="h-3 w-3" />
-                                <span>Mesmo Endereço {delivery.linkedOrderNumber ? `(Pedido #${delivery.linkedOrderNumber})` : ''}</span>
-                              </span>
-                            )}
-
-                            {/* Badge Valor Adicional com Motivo */}
-                            {hasAdditional && (
-                              <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
-                                <Sparkles className="h-3 w-3 text-amber-600" />
-                                <span>
-                                  + R$ {Number(delivery.additionalValue).toFixed(2)}
-                                  {delivery.additionalReason ? ` (${delivery.additionalReason})` : ' Extra'}
+                      <div key={delivery.id} className={`py-3.5 space-y-2 ${isSame ? 'bg-purple-50/40 p-3 rounded-xl border border-purple-100' : ''}`}>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="min-w-0 space-y-1.5 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {delivery.orderNumber && (
+                                <span className="bg-indigo-600 text-white text-xs font-black px-2.5 py-1 rounded-lg shadow-sm flex-shrink-0 tracking-wide">
+                                  #{delivery.orderNumber}
                                 </span>
-                              </span>
-                            )}
+                              )}
+                              <p className="font-bold text-slate-800 text-sm">{est?.name || 'Estabelecimento'}</p>
 
-                            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
-                              delivery.status === 'active' 
-                                ? 'bg-emerald-100 text-emerald-800' 
-                                : delivery.status === 'pending'
-                                ? 'bg-amber-100 text-amber-800'
-                                : delivery.status === 'rejected'
-                                ? 'bg-red-100 text-red-800'
-                                : 'bg-slate-100 text-slate-800'
-                            }`}>
-                              {delivery.status === 'active' && 'Aprovada'}
-                              {delivery.status === 'pending' && 'Pendente'}
-                              {delivery.status === 'rejected' && 'Rejeitada'}
-                              {delivery.status === 'cancelled' && 'Cancelada'}
-                            </span>
+                              {/* Badge Mesmo Endereço com Vinculação */}
+                              {isSame && (
+                                <span className="bg-purple-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                                  <Link2 className="h-3 w-3" />
+                                  <span>Mesmo Endereço {delivery.linkedOrderNumber ? `(Pedido #${delivery.linkedOrderNumber})` : ''}</span>
+                                </span>
+                              )}
+
+                              {/* Badge Valor Adicional com Motivo */}
+                              {hasAdditional && (
+                                <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
+                                  <Sparkles className="h-3 w-3 text-amber-600" />
+                                  <span>
+                                    + R$ {Number(delivery.additionalValue).toFixed(2)}
+                                    {delivery.additionalReason ? ` (${delivery.additionalReason})` : ' Extra'}
+                                  </span>
+                                </span>
+                              )}
+
+                              <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
+                                delivery.status === 'active' 
+                                  ? 'bg-emerald-100 text-emerald-800' 
+                                  : delivery.status === 'pending'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : delivery.status === 'rejected'
+                                  ? 'bg-red-100 text-red-800'
+                                  : 'bg-slate-100 text-slate-800'
+                              }`}>
+                                {delivery.status === 'active' && 'Aprovada'}
+                                {delivery.status === 'pending' && 'Pendente'}
+                                {delivery.status === 'rejected' && 'Rejeitada'}
+                                {delivery.status === 'cancelled' && 'Cancelada'}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-400 flex items-center space-x-1">
+                              <Clock className="h-3.5 w-3.5 text-slate-400" />
+                              <span>Horário: {delivery.time}</span>
+                            </p>
                           </div>
-                          <p className="text-xs text-slate-400 flex items-center space-x-1">
-                            <Clock className="h-3.5 w-3.5 text-slate-400" />
-                            <span>Horário: {delivery.time}</span>
-                          </p>
-                        </div>
 
-                        <div className="flex items-center gap-2 flex-wrap justify-between sm:justify-end flex-shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100">
-                          <button
-                            onClick={() => setNotesDeliveryId(delivery.id)}
-                            className={`px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-extrabold ${
-                              hasNotes 
-                                ? 'bg-amber-400 hover:bg-amber-500 text-amber-950 border border-amber-500 shadow-md ring-2 ring-amber-300' 
-                                : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
-                            }`}
-                            title="Observações da Corrida"
-                          >
-                            <MessageSquare className="h-3.5 w-3.5" />
-                            <span>Observações</span>
-                            {hasNotes && (
-                              <span className="bg-amber-950 text-amber-300 text-[10px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
-                                {notesCount}
-                              </span>
-                            )}
-                          </button>
-
-                          {(delivery.status === 'active' || delivery.status === 'pending') && (
+                          <div className="flex items-center gap-2 flex-wrap justify-between sm:justify-end flex-shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100">
                             <button
-                              onClick={() => setCustomerChatDeliveryId(delivery.id)}
-                              className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg transition-colors flex items-center gap-1 text-xs font-bold"
-                              title="Chat com Cliente"
+                              onClick={() => setNotesDeliveryId(delivery.id)}
+                              className={`px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-extrabold ${
+                                hasNotes 
+                                  ? 'bg-amber-400 hover:bg-amber-500 text-amber-950 border border-amber-500 shadow-md ring-2 ring-amber-300' 
+                                  : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
+                              }`}
+                              title="Observações da Corrida"
                             >
                               <MessageSquare className="h-3.5 w-3.5" />
-                              <span>Chat Cliente</span>
+                              <span>Observações</span>
+                              {hasNotes && (
+                                <span className="bg-amber-950 text-amber-300 text-[10px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
+                                  {notesCount}
+                                </span>
+                              )}
                             </button>
-                          )}
 
-                          <button
-                            onClick={() => handleShareTracking(delivery.id)}
-                            className={`px-2 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${
-                              copiedId === delivery.id 
-                                ? 'bg-emerald-100 text-emerald-800' 
-                                : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
-                            }`}
-                            title="Compartilhar Link de Rastreamento"
-                          >
-                            <Share2 className="h-3.5 w-3.5" />
-                            <span>{copiedId === delivery.id ? 'Copiado!' : 'Rastreio'}</span>
-                          </button>
+                            {(delivery.status === 'active' || delivery.status === 'pending') && (
+                              <button
+                                onClick={() => setCustomerChatDeliveryId(delivery.id)}
+                                className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg transition-colors flex items-center gap-1 text-xs font-bold"
+                                title="Chat com Cliente"
+                              >
+                                <MessageSquare className="h-3.5 w-3.5" />
+                                <span>Chat Cliente</span>
+                              </button>
+                            )}
 
-                          <span className={`font-black text-sm ml-auto sm:ml-0 ${delivery.status === 'active' ? 'text-emerald-600' : 'text-slate-400'}`}>
-                            R$ {Number(delivery.value || 0).toFixed(2)}
-                          </span>
+                            <button
+                              onClick={() => handleShareTracking(delivery.id)}
+                              className={`px-2 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${
+                                copiedId === delivery.id 
+                                  ? 'bg-emerald-100 text-emerald-800' 
+                                  : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
+                              }`}
+                              title="Compartilhar Link de Rastreamento"
+                            >
+                              <Share2 className="h-3.5 w-3.5" />
+                              <span>{copiedId === delivery.id ? 'Copiado!' : 'Rastreio'}</span>
+                            </button>
+
+                            <span className={`font-black text-sm ml-auto sm:ml-0 ${delivery.status === 'active' ? 'text-emerald-600' : 'text-slate-400'}`}>
+                              R$ {Number(delivery.value || 0).toFixed(2)}
+                            </span>
+                          </div>
                         </div>
+
+                        {/* SINALIZAÇÃO VISUAL DE COBRANÇA NA ENTREGA */}
+                        {renderPaymentBadge(delivery)}
                       </div>
                     );
                   })}
@@ -1511,78 +1480,83 @@ export default function RiderDashboard() {
                         const hasAdditional = Number(del.additionalValue || 0) > 0;
 
                         return (
-                          <div key={del.id} className={`py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/50 px-2 rounded-lg ${isSame ? 'bg-purple-50/30' : ''}`}>
-                            <div className="space-y-1.5 flex-1">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                {del.orderNumber && (
-                                  <span className="bg-indigo-600 text-white text-xs font-black px-2.5 py-1 rounded-lg shadow-sm flex-shrink-0 tracking-wide">
-                                    #{del.orderNumber}
-                                  </span>
-                                )}
-                                <p className="font-bold text-slate-800 text-sm">{est?.name || 'Estabelecimento'}</p>
-
-                                {isSame && (
-                                  <span className="bg-purple-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
-                                    <Link2 className="h-3 w-3" />
-                                    <span>Mesmo Endereço {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : ''}</span>
-                                  </span>
-                                )}
-
-                                {hasAdditional && (
-                                  <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
-                                    <Sparkles className="h-3 w-3 text-amber-600" />
-                                    <span>
-                                      + R$ {Number(del.additionalValue).toFixed(2)}
-                                      {del.additionalReason ? ` (${del.additionalReason})` : ' Extra'}
+                          <div key={del.id} className={`py-3.5 space-y-2 ${isSame ? 'bg-purple-50/30 p-3 rounded-xl' : ''}`}>
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/50 px-2 rounded-lg">
+                              <div className="space-y-1.5 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {del.orderNumber && (
+                                    <span className="bg-indigo-600 text-white text-xs font-black px-2.5 py-1 rounded-lg shadow-sm flex-shrink-0 tracking-wide">
+                                      #{del.orderNumber}
                                     </span>
-                                  </span>
-                                )}
+                                  )}
+                                  <p className="font-bold text-slate-800 text-sm">{est?.name || 'Estabelecimento'}</p>
 
-                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                                  del.status === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
-                                }`}>
-                                  {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : 'Cancelada'}
+                                  {isSame && (
+                                    <span className="bg-purple-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                                      <Link2 className="h-3 w-3" />
+                                      <span>Mesmo Endereço {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : ''}</span>
+                                    </span>
+                                  )}
+
+                                  {hasAdditional && (
+                                    <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
+                                      <Sparkles className="h-3 w-3 text-amber-600" />
+                                      <span>
+                                        + R$ {Number(del.additionalValue).toFixed(2)}
+                                        {del.additionalReason ? ` (${del.additionalReason})` : ' Extra'}
+                                      </span>
+                                    </span>
+                                  )}
+
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                    del.status === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                                  }`}>
+                                    {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : 'Cancelada'}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-slate-400">
+                                  Data: <strong className="text-slate-600">{new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR')}</strong> às {del.time}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2 justify-between sm:justify-end flex-shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                                <button
+                                  onClick={() => setNotesDeliveryId(del.id)}
+                                  className={`px-2.5 py-1.5 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 ${
+                                    hasNotes 
+                                      ? 'bg-amber-400 hover:bg-amber-500 text-amber-950 border border-amber-500 shadow-md ring-2 ring-amber-300' 
+                                      : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
+                                  }`}
+                                >
+                                  <MessageSquare className="h-3.5 w-3.5" />
+                                  <span>Observações</span>
+                                  {hasNotes && (
+                                    <span className="bg-amber-950 text-amber-300 text-[10px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
+                                      {notesCount}
+                                    </span>
+                                  )}
+                                </button>
+                                
+                                <button
+                                  onClick={() => handleShareTracking(del.id)}
+                                  className={`px-2 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${
+                                    copiedId === del.id 
+                                      ? 'bg-emerald-100 text-emerald-800' 
+                                      : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
+                                  }`}
+                                  title="Copiar Link de Rastreamento"
+                                >
+                                  <Share2 className="h-3.5 w-3.5" />
+                                  <span>{copiedId === del.id ? 'Copiado!' : 'Rastreio'}</span>
+                                </button>
+
+                                <span className={`font-black text-sm ${del.status === 'active' ? 'text-emerald-600' : 'text-slate-400 line-through'}`}>
+                                  R$ {Number(del.value || 0).toFixed(2)}
                                 </span>
                               </div>
-                              <p className="text-xs text-slate-400">
-                                Data: <strong className="text-slate-600">{new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR')}</strong> às {del.time}
-                              </p>
                             </div>
-                            <div className="flex items-center gap-2 justify-between sm:justify-end flex-shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100">
-                              <button
-                                onClick={() => setNotesDeliveryId(del.id)}
-                                className={`px-2.5 py-1.5 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 ${
-                                  hasNotes 
-                                    ? 'bg-amber-400 hover:bg-amber-500 text-amber-950 border border-amber-500 shadow-md ring-2 ring-amber-300' 
-                                    : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
-                                }`}
-                              >
-                                <MessageSquare className="h-3.5 w-3.5" />
-                                <span>Observações</span>
-                                {hasNotes && (
-                                  <span className="bg-amber-950 text-amber-300 text-[10px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
-                                    {notesCount}
-                                  </span>
-                                )}
-                              </button>
-                              
-                              <button
-                                onClick={() => handleShareTracking(del.id)}
-                                className={`px-2 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${
-                                  copiedId === del.id 
-                                    ? 'bg-emerald-100 text-emerald-800' 
-                                    : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
-                                }`}
-                                title="Copiar Link de Rastreamento"
-                              >
-                                <Share2 className="h-3.5 w-3.5" />
-                                <span>{copiedId === del.id ? 'Copiado!' : 'Rastreio'}</span>
-                              </button>
 
-                              <span className={`font-black text-sm ${del.status === 'active' ? 'text-emerald-600' : 'text-slate-400 line-through'}`}>
-                                R$ {Number(del.value || 0).toFixed(2)}
-                              </span>
-                            </div>
+                            {/* SINALIZAÇÃO VISUAL DE COBRANÇA NO HISTÓRICO */}
+                            {renderPaymentBadge(del)}
                           </div>
                         );
                       })}
@@ -2227,6 +2201,115 @@ export default function RiderDashboard() {
                 </div>
               )}
 
+              {/* BLOCO DE PAGAMENTO NA ENTREGA NO MODAL DO MOTOBOY */}
+              <div className="bg-amber-50/60 border border-amber-300/80 p-3 rounded-2xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-black text-amber-900 uppercase flex items-center gap-1.5">
+                    <Banknote className="h-4 w-4 text-amber-600" />
+                    <span>Pagamento do Pedido pelo Cliente</span>
+                  </label>
+                  {isPaymentOnDelivery && (
+                    <span className="text-[9px] font-black uppercase px-2 py-0.5 bg-amber-500 text-slate-950 rounded-full animate-pulse">
+                      Cobrar Cliente
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setLaunchForm({ ...launchForm, paymentMethod: 'already_paid', orderCollectionAmount: '', changeFor: '' })}
+                    className={`p-2 rounded-xl border font-bold flex flex-col items-center justify-center transition-all ${
+                      launchForm.paymentMethod === 'already_paid'
+                        ? 'bg-slate-800 text-white border-slate-800 shadow-xs'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <CheckCircle2 className="h-4 w-4 mb-0.5 text-emerald-400" />
+                    <span className="text-[10px]">Já Pago</span>
+                    <span className="text-[8px] opacity-70">(Online)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setLaunchForm({ ...launchForm, paymentMethod: 'money' })}
+                    className={`p-2 rounded-xl border font-bold flex flex-col items-center justify-center transition-all ${
+                      launchForm.paymentMethod === 'money'
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Banknote className="h-4 w-4 mb-0.5" />
+                    <span className="text-[10px]">Dinheiro</span>
+                    <span className="text-[8px] opacity-80">(Troco)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setLaunchForm({ ...launchForm, paymentMethod: 'card_debit', changeFor: '' })}
+                    className={`p-2 rounded-xl border font-bold flex flex-col items-center justify-center transition-all ${
+                      launchForm.paymentMethod === 'card_debit'
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <CreditCard className="h-4 w-4 mb-0.5" />
+                    <span className="text-[10px]">Débito</span>
+                    <span className="text-[8px] opacity-80">(Máquina)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setLaunchForm({ ...launchForm, paymentMethod: 'card_credit', changeFor: '' })}
+                    className={`p-2 rounded-xl border font-bold flex flex-col items-center justify-center transition-all ${
+                      launchForm.paymentMethod === 'card_credit'
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <CreditCard className="h-4 w-4 mb-0.5" />
+                    <span className="text-[10px]">Crédito</span>
+                    <span className="text-[8px] opacity-80">(Máquina)</span>
+                  </button>
+                </div>
+
+                {isPaymentOnDelivery && (
+                  <div className="space-y-2 pt-2 border-t border-amber-200/60 animate-fadeIn">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] font-black text-amber-950 uppercase mb-1">
+                          Valor a Cobrar do Cliente (R$)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          placeholder="Ex: 45.90"
+                          value={launchForm.orderCollectionAmount || ''}
+                          onChange={(e) => setLaunchForm({ ...launchForm, orderCollectionAmount: e.target.value })}
+                          className="w-full px-3 py-1.5 border border-amber-300 rounded-xl text-xs font-black text-amber-950 bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                      </div>
+
+                      {launchForm.paymentMethod === 'money' && (
+                        <div>
+                          <label className="block text-[10px] font-black text-emerald-950 uppercase mb-1">
+                            Troco para quanto? (R$)
+                          </label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="Ex: 50.00"
+                            value={launchForm.changeFor || ''}
+                            onChange={(e) => setLaunchForm({ ...launchForm, changeFor: e.target.value })}
+                            className="w-full px-3 py-1.5 border border-emerald-300 rounded-xl text-xs font-black text-emerald-950 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
                   Estabelecimento Escalado
@@ -2277,7 +2360,7 @@ export default function RiderDashboard() {
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-[10px] font-black text-slate-700 uppercase mb-1">
-                      Valor Base (R$)
+                      Taxa do Motoboy (R$)
                     </label>
                     <input
                       type="number"

@@ -62,7 +62,7 @@ export interface Delivery {
   establishmentId: string;
   date: string; // YYYY-MM-DD
   time: string; // HH:MM
-  value: number;
+  value: number; // Taxa de entrega do motoboy
   status: 'pending' | 'active' | 'rejected' | 'cancelled' | 'lost';
   scheduleId?: string;
   orderNumber?: string;
@@ -78,6 +78,10 @@ export interface Delivery {
   additionalReason?: string;
   linkedOrderNumber?: string;
   linkedDeliveryId?: string;
+  // Pagamento na Entrega
+  paymentMethod?: 'already_paid' | 'money' | 'card_debit' | 'card_credit' | 'pix_delivery';
+  orderCollectionAmount?: number; // Valor total do pedido a cobrar do cliente
+  changeFor?: number; // Troco para R$ X (se pagamento em dinheiro)
 }
 
 export interface Notification {
@@ -200,7 +204,7 @@ function extractOrderNumberDeep(raw?: string): string | undefined {
 }
 
 // ── VARREDURA COMPLETA DE TODAS AS CHAVES DO LOCALSTORAGE PARA RESGATAR PEDIDOS ──
-function scanAllLocalStorageDeliveries(): Map<string, { orderNumber?: string; notes?: string; customerChat?: string; additionalValue?: number; additionalReason?: string; linkedOrderNumber?: string; deliveryType?: 'standard' | 'same_address'; paid?: boolean }> {
+function scanAllLocalStorageDeliveries(): Map<string, { orderNumber?: string; notes?: string; customerChat?: string; additionalValue?: number; additionalReason?: string; linkedOrderNumber?: string; deliveryType?: 'standard' | 'same_address'; paid?: boolean; paymentMethod?: string; orderCollectionAmount?: number; changeFor?: number }> {
   const recoveredMap = new Map<string, any>();
 
   try {
@@ -219,7 +223,7 @@ function scanAllLocalStorageDeliveries(): Map<string, { orderNumber?: string; no
           for (const item of candidateArray) {
             if (item && item.id) {
               const num = item.orderNumber || item.order_number || extractOrderNumberDeep(item.order_number);
-              if (num || item.notes || item.paid !== undefined) {
+              if (num || item.notes || item.paid !== undefined || item.paymentMethod) {
                 const existing = recoveredMap.get(item.id) || {};
                 recoveredMap.set(item.id, {
                   ...existing,
@@ -230,7 +234,10 @@ function scanAllLocalStorageDeliveries(): Map<string, { orderNumber?: string; no
                   additionalReason: item.additionalReason || existing.additionalReason,
                   linkedOrderNumber: item.linkedOrderNumber ? String(item.linkedOrderNumber).replace('#', '').trim() : existing.linkedOrderNumber,
                   deliveryType: item.deliveryType || existing.deliveryType,
-                  paid: item.paid !== undefined ? Boolean(item.paid) : existing.paid
+                  paid: item.paid !== undefined ? Boolean(item.paid) : existing.paid,
+                  paymentMethod: item.paymentMethod || existing.paymentMethod,
+                  orderCollectionAmount: item.orderCollectionAmount !== undefined ? Number(item.orderCollectionAmount) : existing.orderCollectionAmount,
+                  changeFor: item.changeFor !== undefined ? Number(item.changeFor) : existing.changeFor
                 });
               }
             }
@@ -546,6 +553,9 @@ export const db = {
       if (d.linkedOrderNumber) compactMeta.l = String(d.linkedOrderNumber).replace('#', '').slice(0, 10);
       if (d.paid) compactMeta.p = 1;
       if (d.notes) compactMeta.n = d.notes.slice(0, 60);
+      if (d.paymentMethod && d.paymentMethod !== 'already_paid') compactMeta.pm = d.paymentMethod;
+      if (d.orderCollectionAmount && Number(d.orderCollectionAmount) > 0) compactMeta.ca = Number(d.orderCollectionAmount);
+      if (d.changeFor && Number(d.changeFor) > 0) compactMeta.cf = Number(d.changeFor);
 
       const serializedOrderNumber = JSON.stringify(compactMeta);
 
@@ -851,6 +861,9 @@ export const db = {
           let additionalReason: string | undefined = fromStorage?.additionalReason || fromMemory?.additionalReason;
           let linkedOrderNumber: string | undefined = fromStorage?.linkedOrderNumber || fromMemory?.linkedOrderNumber;
           let linkedDeliveryId: string | undefined = undefined;
+          let paymentMethod: 'already_paid' | 'money' | 'card_debit' | 'card_credit' | 'pix_delivery' = fromStorage?.paymentMethod || fromMemory?.paymentMethod || 'already_paid';
+          let orderCollectionAmount: number | undefined = fromStorage?.orderCollectionAmount || fromMemory?.orderCollectionAmount;
+          let changeFor: number | undefined = fromStorage?.changeFor || fromMemory?.changeFor;
           let updatedAt = d.updated_at;
           let paid = Boolean(d.paid || fromStorage?.paid || fromMemory?.paid);
 
@@ -877,6 +890,15 @@ export const db = {
               }
               if (parsed.linkedOrderNumber || parsed.l) {
                 linkedOrderNumber = String(parsed.linkedOrderNumber || parsed.l).replace('#', '').trim();
+              }
+              if (parsed.pm) {
+                paymentMethod = parsed.pm;
+              }
+              if (parsed.ca !== undefined) {
+                orderCollectionAmount = Number(parsed.ca);
+              }
+              if (parsed.cf !== undefined) {
+                changeFor = Number(parsed.cf);
               }
               if (parsed.p === 1 || parsed.p === true || parsed.paid === true) {
                 paid = true;
@@ -909,6 +931,9 @@ export const db = {
             additionalReason,
             linkedOrderNumber,
             linkedDeliveryId,
+            paymentMethod,
+            orderCollectionAmount,
+            changeFor,
             updatedAt,
             paid
           };

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
-import { X, Link2, Plus, DollarSign, Sparkles, AlertCircle, HelpCircle, Loader2 } from 'lucide-react';
+import { X, Link2, Plus, DollarSign, Sparkles, AlertCircle, HelpCircle, Loader2, CreditCard, Banknote, QrCode, CheckCircle2 } from 'lucide-react';
 import { User, Establishment, Delivery, db } from '../utils/db';
 
 interface DeliveryModalProps {
@@ -22,6 +22,9 @@ interface DeliveryModalProps {
     additionalValue?: string;
     additionalReason?: string;
     linkedOrderNumber?: string;
+    paymentMethod?: 'already_paid' | 'money' | 'card_debit' | 'card_credit' | 'pix_delivery';
+    orderCollectionAmount?: string;
+    changeFor?: string;
   };
   setDeliveryForm: React.Dispatch<React.SetStateAction<any>>;
   onSave: (e: React.FormEvent) => void;
@@ -52,6 +55,8 @@ export default function DeliveryModal({
   ).filter(d => (!editingDelivery || d.id !== editingDelivery.id) && d.orderNumber);
 
   const isSameAddress = deliveryForm.deliveryType === 'same_address';
+  const paymentMethod = deliveryForm.paymentMethod || 'already_paid';
+  const isPaymentOnDelivery = paymentMethod !== 'already_paid';
 
   const handleSelectDeliveryType = (type: 'standard' | 'same_address') => {
     const baseVal = type === 'same_address' ? '4.00' : '8.00';
@@ -66,9 +71,13 @@ export default function DeliveryModal({
   const calculatedAdd = parseFloat(deliveryForm.additionalValue || '0') || 0;
   const totalDisplay = (calculatedBase + calculatedAdd).toFixed(2);
 
+  const collectionAmountNum = parseFloat(deliveryForm.orderCollectionAmount || '0') || 0;
+  const changeForNum = parseFloat(deliveryForm.changeFor || '0') || 0;
+  const changeToReturn = changeForNum > collectionAmountNum ? (changeForNum - collectionAmountNum).toFixed(2) : '0.00';
+
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 overflow-y-auto animate-fadeIn">
-      <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto border border-slate-200">
+      <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl max-h-[92vh] overflow-y-auto border border-slate-200">
         
         {/* Header */}
         <div className="flex justify-between items-center border-b border-slate-100 pb-3">
@@ -80,7 +89,7 @@ export default function DeliveryModal({
               <h3 className="text-base font-extrabold text-slate-800">
                 {editingDelivery ? 'Editar Corrida' : 'Lançar Nova Corrida'}
               </h3>
-              <p className="text-xs text-slate-500">Defina valor base, adicionais com motivo e vinculação</p>
+              <p className="text-xs text-slate-500">Defina valor base, tipo de entrega e cobrança ao cliente</p>
             </div>
           </div>
           <button 
@@ -93,7 +102,7 @@ export default function DeliveryModal({
           </button>
         </div>
 
-        <form onSubmit={onSave} className="space-y-3.5">
+        <form onSubmit={onSave} className="space-y-4">
           
           {/* TIPO DE CORRIDA: PADRÃO VS MESMO ENDEREÇO */}
           <div className="space-y-1.5">
@@ -175,11 +184,133 @@ export default function DeliveryModal({
                   />
                 </div>
               )}
-              <p className="text-[10px] text-purple-700 font-medium">
-                Esta entrega é compartilhada no mesmo prédio/rua de outro pedido já despachado.
-              </p>
             </div>
           )}
+
+          {/* NOVO BLOCO: PAGAMENTO DO PEDIDO NO ATO DA ENTREGA */}
+          <div className="bg-amber-50/50 border border-amber-300/80 p-3.5 rounded-2xl space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-black text-amber-900 uppercase flex items-center gap-1.5">
+                <Banknote className="h-4 w-4 text-amber-600" />
+                <span>Forma de Pagamento do Pedido</span>
+              </label>
+              {isPaymentOnDelivery && (
+                <span className="text-[9px] font-black uppercase px-2 py-0.5 bg-amber-500 text-slate-950 rounded-full animate-pulse">
+                  Cobrar na Entrega
+                </span>
+              )}
+            </div>
+
+            {/* Grid de Seleção da Forma de Pagamento */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setDeliveryForm({ ...deliveryForm, paymentMethod: 'already_paid', orderCollectionAmount: '', changeFor: '' })}
+                className={`p-2 rounded-xl border font-bold flex flex-col items-center justify-center transition-all ${
+                  paymentMethod === 'already_paid'
+                    ? 'bg-slate-800 text-white border-slate-800 shadow-xs'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                <CheckCircle2 className="h-4 w-4 mb-0.5 text-emerald-400" />
+                <span className="text-[11px]">Já Pago</span>
+                <span className="text-[9px] opacity-70">(Online)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setDeliveryForm({ ...deliveryForm, paymentMethod: 'money' })}
+                className={`p-2 rounded-xl border font-bold flex flex-col items-center justify-center transition-all ${
+                  paymentMethod === 'money'
+                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                <Banknote className="h-4 w-4 mb-0.5" />
+                <span className="text-[11px]">Dinheiro</span>
+                <span className="text-[9px] opacity-80">(Com Troco)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setDeliveryForm({ ...deliveryForm, paymentMethod: 'card_debit', changeFor: '' })}
+                className={`p-2 rounded-xl border font-bold flex flex-col items-center justify-center transition-all ${
+                  paymentMethod === 'card_debit'
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                <CreditCard className="h-4 w-4 mb-0.5" />
+                <span className="text-[11px]">Débito</span>
+                <span className="text-[9px] opacity-80">(Maquininha)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setDeliveryForm({ ...deliveryForm, paymentMethod: 'card_credit', changeFor: '' })}
+                className={`p-2 rounded-xl border font-bold flex flex-col items-center justify-center transition-all ${
+                  paymentMethod === 'card_credit'
+                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                <CreditCard className="h-4 w-4 mb-0.5" />
+                <span className="text-[11px]">Crédito</span>
+                <span className="text-[9px] opacity-80">(Maquininha)</span>
+              </button>
+            </div>
+
+            {/* Campos quando for pagamento na entrega */}
+            {isPaymentOnDelivery && (
+              <div className="space-y-2 pt-2 border-t border-amber-200/60 animate-fadeIn">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-black text-amber-950 uppercase mb-1">
+                      Valor do Pedido a Cobrar do Cliente (R$) *
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      required={isPaymentOnDelivery}
+                      placeholder="Ex: 45.90"
+                      value={deliveryForm.orderCollectionAmount || ''}
+                      onChange={(e) => setDeliveryForm({ ...deliveryForm, orderCollectionAmount: e.target.value })}
+                      className="w-full px-3 py-2 border border-amber-300 rounded-xl text-xs font-black text-amber-950 bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    />
+                  </div>
+
+                  {paymentMethod === 'money' ? (
+                    <div>
+                      <label className="block text-[10px] font-black text-emerald-950 uppercase mb-1">
+                        Troco para quanto? (R$)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="Ex: 50.00 ou 100.00"
+                        value={deliveryForm.changeFor || ''}
+                        onChange={(e) => setDeliveryForm({ ...deliveryForm, changeFor: e.target.value })}
+                        className="w-full px-3 py-2 border border-emerald-300 rounded-xl text-xs font-black text-emerald-950 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      />
+                    </div>
+                  ) : (
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-2.5 flex items-center gap-2 text-xs text-blue-900 font-bold">
+                      <CreditCard className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                      <span>Motoboy deve levar a maquininha de cartão</span>
+                    </div>
+                  )}
+                </div>
+
+                {paymentMethod === 'money' && changeForNum > 0 && (
+                  <div className="bg-emerald-100/80 border border-emerald-300 rounded-xl p-2.5 flex items-center justify-between text-xs text-emerald-900 font-bold">
+                    <span>Troco a devolver ao cliente:</span>
+                    <span className="text-sm font-black text-emerald-800">R$ {changeToReturn}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* MOTOBOY E ESTABELECIMENTO */}
           <div className="grid grid-cols-2 gap-2">
@@ -260,7 +391,7 @@ export default function DeliveryModal({
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-[10px] font-black text-slate-600 uppercase mb-1">
-                  Valor Base (R$) *
+                  Taxa do Motoboy Base (R$) *
                 </label>
                 <input
                   type="number"
@@ -297,7 +428,7 @@ export default function DeliveryModal({
             <div>
               <label className="block text-[10px] font-black text-amber-800 uppercase mb-1 flex items-center gap-1">
                 <HelpCircle className="h-3 w-3 text-amber-600" />
-                <span>Justificativa do Adicional (Por que está cobrando extra?)</span>
+                <span>Justificativa do Adicional</span>
               </label>
               <input
                 type="text"
@@ -310,7 +441,7 @@ export default function DeliveryModal({
             </div>
 
             <div className="pt-2 border-t border-slate-200 flex justify-between items-center text-xs">
-              <span className="text-slate-500 font-bold">Total Final da Corrida:</span>
+              <span className="text-slate-500 font-bold">Total Final da Corrida do Motoboy:</span>
               <span className="text-base font-black text-emerald-600">R$ {totalDisplay}</span>
             </div>
           </div>
