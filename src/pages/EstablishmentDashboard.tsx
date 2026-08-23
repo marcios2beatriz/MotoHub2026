@@ -61,6 +61,7 @@ export default function EstablishmentDashboard() {
   const [riderFilter, setRiderFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [featureFilter, setFeatureFilter] = useState<'all' | 'with_additional' | 'linked' | 'standard'>('all');
+  const [paymentFilter, setPaymentFilter] = useState<'all' | 'to_collect' | 'money' | 'card' | 'pix' | 'already_paid'>('all');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [orderNumberFilter, setOrderNumberFilter] = useState<string>('');
@@ -642,6 +643,20 @@ export default function EstablishmentDashboard() {
         if (!isStandard) return false;
       }
 
+      // Filtro de Cobrança ao Cliente / Forma de Pagamento
+      if (paymentFilter === 'to_collect') {
+        const isCollect = d.paymentMethod && d.paymentMethod !== 'already_paid';
+        if (!isCollect) return false;
+      } else if (paymentFilter === 'money') {
+        if (d.paymentMethod !== 'money') return false;
+      } else if (paymentFilter === 'card') {
+        if (d.paymentMethod !== 'card_debit' && d.paymentMethod !== 'card_credit') return false;
+      } else if (paymentFilter === 'pix') {
+        if (d.paymentMethod !== 'pix_delivery') return false;
+      } else if (paymentFilter === 'already_paid') {
+        if (d.paymentMethod && d.paymentMethod !== 'already_paid') return false;
+      }
+
       if (orderNumberFilter.trim()) {
         const cleanTarget = orderNumberFilter.trim().toLowerCase().replace('#', '');
         const orderNum = (d.orderNumber || '').toLowerCase().replace('#', '');
@@ -966,11 +981,11 @@ export default function EstablishmentDashboard() {
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 pt-1 border-t border-slate-200">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-1 border-t border-slate-200">
                 <div>
                   <label className="block text-[10px] font-bold text-indigo-700 uppercase mb-1 flex items-center gap-1">
                     <Hash className="h-3 w-3" />
-                    <span>Nº da Corrida / Pedido</span>
+                    <span>Nº da Corrida</span>
                   </label>
                   <div className="relative">
                     <input
@@ -982,6 +997,26 @@ export default function EstablishmentDashboard() {
                     />
                     <Hash className="h-3.5 w-3.5 text-indigo-400 absolute left-2.5 top-2.5" />
                   </div>
+                </div>
+
+                {/* NOVO FILTRO: COBRANÇA AO CLIENTE / PAGAMENTO */}
+                <div>
+                  <label className="block text-[10px] font-black text-amber-800 uppercase mb-1 flex items-center gap-1">
+                    <Banknote className="h-3 w-3 text-amber-600" />
+                    <span>Cobrar do Cliente</span>
+                  </label>
+                  <select
+                    value={paymentFilter}
+                    onChange={(e) => setPaymentFilter(e.target.value as any)}
+                    className="w-full px-2.5 py-1.5 border border-amber-300 bg-amber-50/80 rounded-lg text-xs font-extrabold text-amber-950 focus:outline-none focus:ring-1 focus:ring-amber-500 shadow-xs"
+                  >
+                    <option value="all">Todos os Pagamentos</option>
+                    <option value="to_collect">💰 Cobrar na Entrega (Todos)</option>
+                    <option value="money">💵 Dinheiro (com Troco)</option>
+                    <option value="card">💳 Cartão (Débito/Crédito)</option>
+                    <option value="pix">📱 PIX na Entrega</option>
+                    <option value="already_paid">🟢 Já Pago (Online)</option>
+                  </select>
                 </div>
 
                 <div>
@@ -1092,7 +1127,7 @@ export default function EstablishmentDashboard() {
                               </span>
                             )}
 
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
                               del.status === 'active' ? 'bg-emerald-100 text-emerald-800' :
                               del.status === 'pending' ? 'bg-amber-100 text-amber-800 font-black animate-pulse' :
                               'bg-red-100 text-red-800'

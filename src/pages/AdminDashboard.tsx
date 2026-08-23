@@ -131,6 +131,7 @@ export default function AdminDashboard() {
   const [delEstFilter, setDelEstFilter] = useState<string>('all');
   const [delStatusFilter, setDelStatusFilter] = useState<string>('all');
   const [delFeatureFilter, setDelFeatureFilter] = useState<'all' | 'with_additional' | 'linked' | 'standard'>('all');
+  const [delPaymentFilter, setDelPaymentFilter] = useState<'all' | 'to_collect' | 'money' | 'card' | 'pix' | 'already_paid'>('all');
   const [delDateFrom, setDelDateFrom] = useState<string>('');
   const [delDateTo, setDelDateTo] = useState<string>('');
   const [delSearchQuery, setDelSearchQuery] = useState<string>('');
@@ -144,6 +145,7 @@ export default function AdminDashboard() {
   const [financeCustomTo, setFinanceCustomTo] = useState<string>('');
   const [financePaidFilter, setFinancePaidFilter] = useState<'unpaid' | 'paid' | 'all'>('unpaid');
   const [financeFeatureFilter, setFinanceFeatureFilter] = useState<'all' | 'with_additional' | 'linked' | 'standard'>('all');
+  const [financePaymentFilter, setFinancePaymentFilter] = useState<'all' | 'to_collect' | 'money' | 'card' | 'pix' | 'already_paid'>('all');
   const [financeRiderSearch, setFinanceRiderSearch] = useState<string>('');
   const [financeEstSearch, setFinanceEstSearch] = useState<string>('');
   const [financeActiveSection, setFinanceActiveSection] = useState<'riders' | 'establishments'>('riders');
@@ -1092,6 +1094,13 @@ export default function AdminDashboard() {
     if (financeFeatureFilter === 'linked' && (d.deliveryType !== 'same_address' && !d.linkedOrderNumber)) return false;
     if (financeFeatureFilter === 'standard' && (d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber) || (d.additionalValue && Number(d.additionalValue) > 0))) return false;
 
+    // Filtro de cobrança no fechamento
+    if (financePaymentFilter === 'to_collect' && (!d.paymentMethod || d.paymentMethod === 'already_paid')) return false;
+    if (financePaymentFilter === 'money' && d.paymentMethod !== 'money') return false;
+    if (financePaymentFilter === 'card' && d.paymentMethod !== 'card_debit' && d.paymentMethod !== 'card_credit') return false;
+    if (financePaymentFilter === 'pix' && d.paymentMethod !== 'pix_delivery') return false;
+    if (financePaymentFilter === 'already_paid' && d.paymentMethod && d.paymentMethod !== 'already_paid') return false;
+
     return true;
   });
 
@@ -1291,6 +1300,20 @@ export default function AdminDashboard() {
       } else if (delFeatureFilter === 'standard') {
         const isStandard = d.deliveryType !== 'same_address' && !d.linkedOrderNumber && (!d.additionalValue || Number(d.additionalValue) <= 0);
         if (!isStandard) return false;
+      }
+
+      // Filtro de Cobrança ao Cliente / Forma de Pagamento
+      if (delPaymentFilter === 'to_collect') {
+        const isCollect = d.paymentMethod && d.paymentMethod !== 'already_paid';
+        if (!isCollect) return false;
+      } else if (delPaymentFilter === 'money') {
+        if (d.paymentMethod !== 'money') return false;
+      } else if (delPaymentFilter === 'card') {
+        if (d.paymentMethod !== 'card_debit' && d.paymentMethod !== 'card_credit') return false;
+      } else if (delPaymentFilter === 'pix') {
+        if (d.paymentMethod !== 'pix_delivery') return false;
+      } else if (delPaymentFilter === 'already_paid') {
+        if (d.paymentMethod && d.paymentMethod !== 'already_paid') return false;
       }
 
       if (delOrderNumberFilter.trim()) {
@@ -2315,11 +2338,11 @@ export default function AdminDashboard() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 pt-1 border-t border-slate-200">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-1 border-t border-slate-200">
                   <div>
                     <label className="block text-[10px] font-bold text-indigo-700 uppercase mb-1 flex items-center gap-1">
                       <Hash className="h-3 w-3" />
-                      <span>Nº da Corrida / Pedido</span>
+                      <span>Nº da Corrida</span>
                     </label>
                     <div className="relative">
                       <input
@@ -2331,6 +2354,26 @@ export default function AdminDashboard() {
                       />
                       <Hash className="h-3.5 w-3.5 text-indigo-400 absolute left-2.5 top-2.5" />
                     </div>
+                  </div>
+
+                  {/* NOVO FILTRO: COBRANÇA AO CLIENTE / FORMA DE PAGAMENTO */}
+                  <div>
+                    <label className="block text-[10px] font-black text-amber-800 uppercase mb-1 flex items-center gap-1">
+                      <Banknote className="h-3 w-3 text-amber-600" />
+                      <span>Cobrar do Cliente</span>
+                    </label>
+                    <select
+                      value={delPaymentFilter}
+                      onChange={(e) => setDelPaymentFilter(e.target.value as any)}
+                      className="w-full px-2.5 py-1.5 border border-amber-300 bg-amber-50/80 rounded-lg text-xs font-extrabold text-amber-950 focus:outline-none focus:ring-1 focus:ring-amber-500 shadow-xs"
+                    >
+                      <option value="all">Todos os Pagamentos</option>
+                      <option value="to_collect">💰 Cobrar na Entrega (Todos)</option>
+                      <option value="money">💵 Dinheiro (com Troco)</option>
+                      <option value="card">💳 Cartão (Débito/Crédito)</option>
+                      <option value="pix">📱 PIX na Entrega</option>
+                      <option value="already_paid">🟢 Já Pago (Online)</option>
+                    </select>
                   </div>
 
                   <div>
@@ -2541,7 +2584,7 @@ export default function AdminDashboard() {
 
                             <button
                               onClick={() => setNotesDeliveryId(del.id)}
-                              className={`px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-bold ${
+                              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${
                                 hasNotes 
                                   ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 shadow-sm' 
                                   : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
@@ -2650,7 +2693,7 @@ export default function AdminDashboard() {
                     <span>Filtros do Fechamento: {financeBounds.label}</span>
                   </span>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[11px] text-slate-500 font-bold">Status:</span>
                     <select
                       value={financePaidFilter}
@@ -2660,6 +2703,19 @@ export default function AdminDashboard() {
                       <option value="unpaid">⏳ A Pagar / Pendentes de Baixa</option>
                       <option value="paid">✅ Já Pagas / Baixadas</option>
                       <option value="all">🌐 Todas as Corridas</option>
+                    </select>
+
+                    <select
+                      value={financePaymentFilter}
+                      onChange={(e) => setFinancePaymentFilter(e.target.value as any)}
+                      className="px-2.5 py-1 bg-white border border-amber-300 rounded-lg text-xs font-bold text-amber-950 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    >
+                      <option value="all">Todos Pagamentos</option>
+                      <option value="to_collect">💰 Cobrar na Entrega</option>
+                      <option value="money">💵 Dinheiro</option>
+                      <option value="card">💳 Cartão</option>
+                      <option value="pix">📱 PIX</option>
+                      <option value="already_paid">🟢 Já Pago</option>
                     </select>
 
                     <select
