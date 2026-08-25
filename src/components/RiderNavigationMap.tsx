@@ -9,7 +9,7 @@ import {
   RotateCcw, 
   Clock, 
   X, 
-  Search,
+  Search, 
   Volume2, 
   VolumeX,
   Play,
@@ -35,7 +35,8 @@ import {
   Expand,
   RotateCw,
   Info,
-  Navigation2
+  Navigation2,
+  ExternalLink
 } from 'lucide-react';
 import L from 'leaflet';
 import { gpsTracker, GpsState, isPointOffRoute, calculateDistanceMeters, getShortestAngleDiff } from '../utils/gpsTracker';
@@ -319,6 +320,16 @@ export default function RiderNavigationMap({
 
   const lastSpokenInstructionRef = useRef<string>('');
   const NAV_ZOOM_LEVEL = 18;
+
+  const openInExternalMaps = (addressText: string) => {
+    const query = encodeURIComponent(addressText);
+    window.open(`https://www.google.com/maps/search/?api=1&query=${query}`, '_system');
+  };
+
+  const openInWaze = (addressText: string) => {
+    const query = encodeURIComponent(addressText);
+    window.open(`https://waze.com/ul?q=${query}&navigate=yes`, '_system');
+  };
 
   const loadRouteHistory = () => {
     setRouteHistoryList(db.getRouteHistory());
@@ -906,7 +917,6 @@ export default function RiderNavigationMap({
     });
   }, [waypoints]);
 
-  // ETAPA 1 e Prefetch: Cálculo e exibição da rota PERNA-A-PERNA com pré-fetch da próxima perna
   useEffect(() => {
     const map = mapRef.current;
 
@@ -935,7 +945,6 @@ export default function RiderNavigationMap({
 
     const routeKey = `${activePos.lat.toFixed(4)},${activePos.lng.toFixed(4)}->${currentTarget.lat.toFixed(4)},${currentTarget.lng.toFixed(4)}`;
 
-    // PRÉ-FETCH: Se houver mais de uma parada na fila e estiver a <= 500m da atual, pré-calcula no cache
     const distToCurrent = Math.round(calculateDistanceMeters(activePos.lat, activePos.lng, currentTarget.lat, currentTarget.lng));
     if (distToCurrent <= 500 && waypoints.length > 0) {
       const nextNextTarget = waypoints.length > 1
@@ -1372,17 +1381,13 @@ export default function RiderNavigationMap({
     setIsPinAdjustmentMode(false);
   };
 
-  // Preenche o campo com o nome da rua + espaço e foca para digitar o número — igual ao Google Maps
   const handleAddNumber = (res: AutocompleteSuggestion) => {
-    // Monta o prefixo: nome da rua sem número (ex: "Rua Vereador Alberto Agra, ")
     const streetBase = res.title.replace(/,?\s*\d+\s*$/, '').trim();
     const newQuery = streetBase + ', ';
     setSearchQuery(newQuery);
     setSearchResults([]);
     setIsSearchFocused(true);
-    // Dispara nova busca com o texto atual para manter contexto
     handleSearchInput(newQuery);
-    // Foca o input e posiciona cursor no final
     setTimeout(() => {
       if (searchInputRef.current) {
         searchInputRef.current.focus();
@@ -1784,7 +1789,6 @@ export default function RiderNavigationMap({
         {/* ── Barra de busca estilo Google Maps ── */}
         <div className="bg-white border-b border-gray-200 px-3 py-2 z-[100] relative flex-shrink-0">
           <div className="flex items-center gap-2">
-            {/* Botão voltar */}
             <button
               type="button"
               onClick={() => { setIsSearchFocused(false); setSearchQuery(''); setSearchResults([]); }}
@@ -1793,7 +1797,6 @@ export default function RiderNavigationMap({
               <ArrowUp className="h-5 w-5 rotate-[-90deg]" />
             </button>
 
-            {/* Campo de texto */}
             <form onSubmit={(e) => handleExecuteDirectSearch(e, false)} className="relative flex-1">
               <input
                 type="text"
@@ -1812,7 +1815,6 @@ export default function RiderNavigationMap({
               />
             </form>
 
-            {/* Limpar / Voz */}
             {searchQuery ? (
               <button
                 type="button"
@@ -1835,7 +1837,6 @@ export default function RiderNavigationMap({
             )}
           </div>
 
-          {/* Loading */}
           {isSearching && (
             <div className="absolute left-0 right-0 bottom-0 h-0.5 bg-blue-100 overflow-hidden">
               <div className="h-full w-1/3 bg-blue-500 animate-[slide_1s_linear_infinite]" 
@@ -1843,10 +1844,8 @@ export default function RiderNavigationMap({
             </div>
           )}
 
-          {/* ── Dropdown: sem query (recentes + histórico) ── */}
           {isSearchFocused && searchResults.length === 0 && !isSearching && (
             <div className="absolute left-0 right-0 top-full bg-white shadow-xl z-[120] overflow-hidden max-h-[75vh] overflow-y-auto border-t border-gray-100">
-              {/* Acesso rápido */}
               <div className="px-4 py-2 border-b border-gray-100">
                 <button
                   type="button"
@@ -1860,7 +1859,6 @@ export default function RiderNavigationMap({
                 </button>
               </div>
 
-              {/* Recentes */}
               {recentSearches.length > 0 && (
                 <div>
                   <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider px-4 pt-3 pb-1">Recentes</p>
@@ -1888,11 +1886,9 @@ export default function RiderNavigationMap({
             </div>
           )}
 
-          {/* ── Dropdown: resultados de autocomplete estilo Google Maps ── */}
           {searchResults.length > 0 && (
             <div className="absolute left-0 right-0 top-full bg-white shadow-xl z-[130] overflow-hidden max-h-[75vh] overflow-y-auto border-t border-gray-100">
               {searchResults.map((res, idx) => {
-                // Highlight da parte digitada no título
                 const query = searchQuery.trim();
                 const titleLower = res.title.toLowerCase();
                 const queryLower = query.toLowerCase();
@@ -1911,7 +1907,6 @@ export default function RiderNavigationMap({
                   titleNode = res.title;
                 }
 
-                // Distância estimada (se disponível nas coords)
                 const distLabel: string | null = (() => {
                   if (res.lat != null && res.lng != null && activePos) {
                     const d = calculateDistanceMeters(activePos.lat, activePos.lng, res.lat, res.lng);
@@ -1927,7 +1922,6 @@ export default function RiderNavigationMap({
                     className={`flex items-start gap-3 px-4 py-3 hover:bg-gray-50 active:bg-gray-100 cursor-pointer ${idx > 0 ? 'border-t border-gray-100' : ''}`}
                     onClick={() => handleSelectSearchResult(res, false)}
                   >
-                    {/* Ícone + distância (estilo exato Google Maps) */}
                     <div className="flex flex-col items-center gap-0.5 flex-shrink-0 w-10 pt-0.5">
                       <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center">
                         <MapPin className="h-5 w-5 text-gray-500" />
@@ -1937,13 +1931,11 @@ export default function RiderNavigationMap({
                       )}
                     </div>
 
-                    {/* Textos */}
                     <div className="min-w-0 flex-1 py-0.5">
                       <p className="text-[14px] text-gray-700 leading-snug">{titleNode}</p>
                       <p className="text-[12px] text-gray-500 truncate mt-0.5">{res.subtitle || res.fullAddress}</p>
 
                       <div className="mt-2 flex items-center gap-2 flex-wrap">
-                        {/* Botão "+ Adicionar número" — preenche o campo para digitar o número */}
                         <button
                           type="button"
                           onClick={(e) => {
@@ -1956,7 +1948,6 @@ export default function RiderNavigationMap({
                           Adicionar número
                         </button>
 
-                        {/* Botão "Adicionar como parada" — adiciona à lista de paradas da rota */}
                         <button
                           type="button"
                           onClick={(e) => {
@@ -2132,8 +2123,9 @@ export default function RiderNavigationMap({
         </div>
       </div>
 
+      {/* Barra Inferior com Informações de Trajeto e Acesso ao Waze / Maps */}
       <div className="bg-slate-900 border-t border-slate-800 px-3 py-2 z-30 flex-shrink-0 shadow-2xl pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap">
           <div className="flex items-center space-x-2 min-w-0 flex-1">
             <div className="p-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg flex-shrink-0">
               <Clock className="h-4 w-4" />
@@ -2152,6 +2144,30 @@ export default function RiderNavigationMap({
               </p>
             </div>
           </div>
+
+          {/* Atalhos Rápidos para Abrir no Google Maps ou Waze Externos */}
+          {activeDestination?.addressText && (
+            <div className="flex items-center space-x-1.5 flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => openInExternalMaps(activeDestination.addressText)}
+                className="bg-white hover:bg-slate-100 text-slate-950 px-2.5 py-2 rounded-xl text-[11px] font-black flex items-center gap-1 shadow-sm transition-all"
+                title="Abrir Destino no Google Maps do Celular"
+              >
+                <Navigation className="h-3 w-3 text-blue-600" />
+                <span>Maps</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => openInWaze(activeDestination.addressText)}
+                className="bg-sky-400 hover:bg-sky-500 text-slate-950 px-2.5 py-2 rounded-xl text-[11px] font-black flex items-center gap-1 shadow-sm transition-all"
+                title="Abrir Destino no Waze do Celular"
+              >
+                <Navigation className="h-3 w-3" />
+                <span>Waze</span>
+              </button>
+            </div>
+          )}
 
           <button
             onClick={() => {
