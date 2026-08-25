@@ -6,6 +6,7 @@ import { db, Delivery, User, Schedule, RiderLocation, Establishment, getDelivery
 import { 
   LogOut, 
   Check, 
+  CheckCheck,
   Plus, 
   Bike, 
   Users,
@@ -373,6 +374,34 @@ export default function EstablishmentDashboard() {
     loadData();
   };
 
+  const handleApproveAllPendingDeliveries = async () => {
+    const pendingDels = deliveries.filter(d => d.status === 'pending');
+    if (pendingDels.length === 0) {
+      alert('Não há corridas pendentes para aprovar no momento.');
+      return;
+    }
+
+    const cobrarCount = pendingDels.filter(d => d.paymentMethod && d.paymentMethod !== 'already_paid').length;
+    let confirmMsg = `Deseja aprovar todas as ${pendingDels.length} corridas pendentes deste estabelecimento de uma vez?`;
+    if (cobrarCount > 0) {
+      confirmMsg += `\n\n💰 ATENÇÃO: ${cobrarCount} corrida(s) possuem cobrança ao cliente (dinheiro, maquininha ou PIX).\n\nAo clicar em "OK", todas as corridas serão aprovadas normalmente. Certifique-se de que os valores e maquinetas foram devidamente conferidos.`;
+    }
+
+    if (confirm(confirmMsg)) {
+      const allDeliveries = db.getDeliveries();
+      const pendingIds = new Set(pendingDels.map(p => p.id));
+      const updated = allDeliveries.map(d => pendingIds.has(d.id) ? {
+        ...d,
+        status: 'active' as const,
+        updatedAt: new Date().toISOString()
+      } : d);
+
+      await db.setDeliveries(updated);
+      loadData();
+      alert(`${pendingDels.length} corrida(s) aprovada(s) com sucesso!`);
+    }
+  };
+
   const handleRejectDelivery = async (id: string) => {
     const reason = prompt('Digite o motivo da rejeição:');
     if (reason !== null) {
@@ -624,6 +653,7 @@ export default function EstablishmentDashboard() {
   const todayApprovedDeliveries = todayDeliveries.filter(d => d.status === 'active');
   const todayRevenue = todayApprovedDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
   const onlineRidersCount = onlineScheduledRiderLocations.length;
+  const pendingDeliveries = deliveries.filter(d => d.status === 'pending');
 
   const filteredDeliveries = deliveries
     .filter(d => {
@@ -714,6 +744,16 @@ export default function EstablishmentDashboard() {
           </div>
 
           <div className="flex items-center space-x-2">
+            {pendingDeliveries.length > 0 && (
+              <button
+                onClick={handleApproveAllPendingDeliveries}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 shadow-md animate-pulse"
+                title="Aprovar todas as corridas pendentes deste estabelecimento"
+              >
+                <CheckCheck className="h-4 w-4" />
+                <span className="hidden xs:inline">Aprovar em Massa</span> ({pendingDeliveries.length})
+              </button>
+            )}
             <button
               onClick={() => setShowBatchModal(true)}
               className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 shadow-sm"
@@ -767,6 +807,33 @@ export default function EstablishmentDashboard() {
             </div>
           </div>
 
+          {/* ALERTA DE CORRIDAS PENDENTES COM BOTÃO DE APROVAÇÃO EM MASSA */}
+          {pendingDeliveries.length > 0 && (
+            <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fadeIn">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 bg-amber-500 text-slate-950 rounded-xl font-black flex-shrink-0 animate-pulse">
+                  <AlertTriangle className="h-5 w-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-black text-amber-950">
+                    Você tem {pendingDeliveries.length} corrida(s) aguardando aprovação
+                  </h4>
+                  <p className="text-xs text-amber-800 mt-0.5">
+                    Aprove individualmente ou utilize a aprovação em massa com um único clique.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={handleApproveAllPendingDeliveries}
+                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all flex-shrink-0 active:scale-95"
+              >
+                <CheckCheck className="h-4 w-4" />
+                <span>Aprovar em Massa ({pendingDeliveries.length})</span>
+              </button>
+            </div>
+          )}
+
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-2">
@@ -776,7 +843,17 @@ export default function EstablishmentDashboard() {
                 </h3>
               </div>
 
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+                {pendingDeliveries.length > 0 && (
+                  <button
+                    onClick={handleApproveAllPendingDeliveries}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-black transition-all shadow-sm flex items-center space-x-1"
+                  >
+                    <CheckCheck className="h-3.5 w-3.5" />
+                    <span>Aprovar em Massa ({pendingDeliveries.length})</span>
+                  </button>
+                )}
+
                 <button
                   onClick={() => setShowBatchModal(true)}
                   className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1"
@@ -876,13 +953,26 @@ export default function EstablishmentDashboard() {
                 </div>
               </div>
 
-              <button
-                onClick={() => setShowBatchModal(true)}
-                className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 self-start sm:self-center"
-              >
-                <Layers className="h-3.5 w-3.5" />
-                <span>Lançar em Lote</span>
-              </button>
+              <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+                {pendingDeliveries.length > 0 && (
+                  <button
+                    onClick={handleApproveAllPendingDeliveries}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl text-xs font-black transition-all shadow-md flex items-center gap-1.5"
+                    title="Aprovar todas as corridas pendentes"
+                  >
+                    <CheckCheck className="h-3.5 w-3.5" />
+                    <span>Aprovar em Massa ({pendingDeliveries.length})</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={() => setShowBatchModal(true)}
+                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 self-start sm:self-center"
+                >
+                  <Layers className="h-3.5 w-3.5" />
+                  <span>Lançar em Lote</span>
+                </button>
+              </div>
             </div>
 
             {/* PAINEL DE FILTRO */}
@@ -999,7 +1089,7 @@ export default function EstablishmentDashboard() {
                   </div>
                 </div>
 
-                {/* NOVO FILTRO: COBRANÇA AO CLIENTE / PAGAMENTO */}
+                {/* FILTRO: COBRANÇA AO CLIENTE / PAGAMENTO */}
                 <div>
                   <label className="block text-[10px] font-black text-amber-800 uppercase mb-1 flex items-center gap-1">
                     <Banknote className="h-3 w-3 text-amber-600" />
