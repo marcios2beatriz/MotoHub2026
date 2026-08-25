@@ -1,9 +1,27 @@
 "use client";
 
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { Geolocation } from '@capacitor/geolocation';
 import { db } from './db';
 import { realtimeGps } from './realtimeGps';
+
+// Interface do plugin Background Geolocation do Capacitor
+interface BackgroundGeolocationPlugin {
+  addWatcher(
+    options: {
+      backgroundMessage?: string;
+      backgroundTitle?: string;
+      requestPermissions?: boolean;
+      stale?: boolean;
+      distanceFilter?: number;
+    },
+    callback: (location: any, error?: any) => void
+  ): Promise<string>;
+  removeWatcher(options: { id: string }): Promise<void>;
+  openSettings(): Promise<void>;
+}
+
+const BackgroundGeolocation = registerPlugin<BackgroundGeolocationPlugin>('BackgroundGeolocation');
 
 export interface GpsLocation {
   lat: number;
@@ -97,6 +115,7 @@ function distanceToSegmentMeters(
 
 class HighPrecisionGpsTracker {
   private watchId: number | string | null = null;
+  private bgWatcherId: string | null = null;
   private fallbackTimer: any = null;
   private worker: Worker | null = null;
   private wakeLock: any = null;
@@ -278,6 +297,7 @@ class HighPrecisionGpsTracker {
     this.enableWakeLock();
     this.enableAudioKeepAlive();
 
+    // 1. MODO NATIVO ANDROID / CAPACITOR (Foreground Service com Notificação)
     if (Capacitor.isNativePlatform()) {
       try {
         const perm = await Geolocation.requestPermissions();
@@ -287,6 +307,38 @@ class HighPrecisionGpsTracker {
           return;
         }
 
+        // Tenta iniciar o plugin nativo de Background Geolocation com notificação fixa no Android
+        try {
+          this.bgWatcherId = await BackgroundGeolocation.addWatcher(
+            {
+              backgroundTitle: 'MotoHub Delivery',
+              backgroundMessage: 'Rastreamento GPS ativo em segundo plano.',
+              requestPermissions: true,
+              stale: false,
+              distanceFilter: 2
+            },
+            (location, error) => {
+              if (error) {
+                this.handleError(error);
+                return;
+              }
+              if (location) {
+                this.handleSuccess(
+                  location.latitude,
+                  location.longitude,
+                  location.accuracy,
+                  location.speed,
+                  location.bearing
+                );
+              }
+            }
+          );
+          return;
+        } catch (bgErr) {
+          console.warn('BackgroundGeolocation plugin fallback:', bgErr);
+        }
+
+        // Fallback nativo Geolocation.watchPosition
         this.watchId = await Geolocation.watchPosition(
           { enableHighAccuracy: true },
           (pos, err) => {
@@ -311,6 +363,7 @@ class HighPrecisionGpsTracker {
       }
     }
 
+    // 2. MODO WEB / NAVEGADOR
     if (!navigator.geolocation) {
       this.currentState = {
         ...this.currentState,
@@ -340,6 +393,13 @@ class HighPrecisionGpsTracker {
   }
 
   public async stopTracking() {
+    if (this.bgWatcherId) {
+      try {
+        await BackgroundGeolocation.removeWatcher({ id: this.bgWatcherId });
+      } catch (e) {}
+      this.bgWatcherId = null;
+    }
+
     if (Capacitor.isNativePlatform() && typeof this.watchId === 'string') {
       try {
         await Geolocation.clearWatch({ id: this.watchId });
