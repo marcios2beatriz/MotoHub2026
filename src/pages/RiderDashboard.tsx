@@ -50,6 +50,21 @@ import { gpsTracker, GpsState } from '../utils/gpsTracker';
 
 const ADMIN_FEE_PER_DELIVERY = 1.00;
 
+// Corridas de mesmo endereço (R$ 4,00) são 100% isentas da taxa administrativa
+export const getAdminFeeForDelivery = (d: Delivery): number => {
+  const val = Number(d.value || 0);
+  if (d.deliveryType === 'same_address' || val <= 4.00) {
+    return 0;
+  }
+  return ADMIN_FEE_PER_DELIVERY;
+};
+
+export const getRiderNetForDelivery = (d: Delivery): number => {
+  const val = Number(d.value || 0);
+  const fee = getAdminFeeForDelivery(d);
+  return Math.max(0, val - fee);
+};
+
 const getThisMonday = (): string => {
   const now = new Date();
   const day = now.getDay();
@@ -694,7 +709,9 @@ export default function RiderDashboard() {
 
   const earningsDeliveriesCount = filteredEarningsDeliveries.length;
   const earningsGrossTotal = filteredEarningsDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
-  const earningsAdminCut = earningsDeliveriesCount * ADMIN_FEE_PER_DELIVERY;
+  
+  // Cálculo com isenção de R$ 1,00 para corridas de Mesmo Endereço (R$ 4,00)
+  const earningsAdminCut = filteredEarningsDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
   const earningsRiderNet = Math.max(0, earningsGrossTotal - earningsAdminCut);
   const isAllEarningsPaid = earningsDeliveriesCount > 0 && filteredEarningsDeliveries.every(d => d.paid);
 
@@ -959,7 +976,7 @@ export default function RiderDashboard() {
                     </div>
 
                     {est?.address && (
-                      <div className="bg-white/10 p-3.5 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="bg-white/10 p-3.5 rounded-xl flex flex-col sm:flex-row sm:flex-wrap sm:items-center justify-between gap-3">
                         <div className="flex items-start gap-2">
                           <MapPin className="h-5 w-5 text-indigo-200 flex-shrink-0 mt-0.5" />
                           <div className="text-xs text-indigo-50">
@@ -1614,7 +1631,7 @@ export default function RiderDashboard() {
                     <span>Histórico de Ganhos & Repasses</span>
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Acompanhe seu faturamento líquido com desconto de R$ 1,00/corrida da taxa administrativa
+                    Acompanhe seu faturamento líquido (corridas de mesmo endereço R$ 4,00 são 100% isentas da taxa adm)
                   </p>
                 </div>
 
@@ -1851,7 +1868,7 @@ export default function RiderDashboard() {
                       const est = resolveEst(del.establishmentId);
                       const isSame = del.deliveryType === 'same_address';
                       const hasAdd = Number(del.additionalValue || 0) > 0;
-                      const riderNetVal = Math.max(0, Number(del.value) - ADMIN_FEE_PER_DELIVERY);
+                      const riderNetVal = getRiderNetForDelivery(del);
 
                       return (
                         <div key={del.id} className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-slate-50 transition-colors">
