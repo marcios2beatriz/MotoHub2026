@@ -72,6 +72,21 @@ const DAY_LABELS = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-fei
 // Taxa padrão do administrador por corrida
 const ADMIN_FEE_PER_DELIVERY = 1.00;
 
+// Corridas de mesmo endereço (R$ 4,00) são 100% isentas da taxa administrativa
+export const getAdminFeeForDelivery = (d: Delivery): number => {
+  const val = Number(d.value || 0);
+  if (d.deliveryType === 'same_address' || val <= 4.00) {
+    return 0;
+  }
+  return ADMIN_FEE_PER_DELIVERY;
+};
+
+export const getRiderNetForDelivery = (d: Delivery): number => {
+  const val = Number(d.value || 0);
+  const fee = getAdminFeeForDelivery(d);
+  return Math.max(0, val - fee);
+};
+
 // Tempo limite para considerar o motoboy online no Admin (3 minutos)
 const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
 
@@ -1152,7 +1167,8 @@ export default function AdminDashboard() {
 
   const totalFinanceGrossRevenue = financeFilteredDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
   const totalFinanceDeliveriesCount = financeFilteredDeliveries.length;
-  const totalFinanceAdminCommission = totalFinanceDeliveriesCount * ADMIN_FEE_PER_DELIVERY;
+  // Corridas de mesmo endereço (R$ 4,00) são 100% isentas da taxa administrativa
+  const totalFinanceAdminCommission = financeFilteredDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
   const totalFinanceRidersNet = Math.max(0, totalFinanceGrossRevenue - totalFinanceAdminCommission);
 
   const getFilteredReportData = () => {
@@ -2659,7 +2675,7 @@ export default function AdminDashboard() {
                     <span>Fechamento Financeiro & Repasse</span>
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Discriminação detalhada: Ganho do Motoboy (R$ 7,00/corrida) vs Taxa do Administrador (R$ 1,00/corrida)
+                    Discriminação detalhada: Ganho do Motoboy vs Taxa do Administrador (R$ 1,00/corrida padrão | R$ 0,00 para mesmo endereço a R$ 4,00)
                   </p>
                 </div>
 
@@ -2844,7 +2860,7 @@ export default function AdminDashboard() {
                     R$ {totalFinanceRidersNet.toFixed(2)}
                   </p>
                   <p className="text-[11px] text-emerald-800 font-bold">
-                    R$ 7,00 por corrida entregue
+                    R$ 7,00 por corrida padrão | R$ 4,00 integral
                   </p>
                 </div>
 
@@ -2858,7 +2874,7 @@ export default function AdminDashboard() {
                     R$ {totalFinanceAdminCommission.toFixed(2)}
                   </p>
                   <p className="text-[11px] text-amber-800 font-bold">
-                    R$ 1,00 por corrida realizada
+                    R$ 1,00 por corrida padrão (R$ 4 isento)
                   </p>
                 </div>
 
@@ -2906,7 +2922,7 @@ export default function AdminDashboard() {
                         const riderDeliveries = financeFilteredDeliveries.filter(d => d.riderId === rider.id);
                         const count = riderDeliveries.length;
                         const grossVal = riderDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
-                        const adminCut = count * ADMIN_FEE_PER_DELIVERY;
+                        const adminCut = riderDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
                         const riderNet = Math.max(0, grossVal - adminCut);
                         const allPaid = count > 0 && riderDeliveries.every(d => d.paid);
 
@@ -3017,7 +3033,7 @@ export default function AdminDashboard() {
                         const estDeliveries = financeFilteredDeliveries.filter(d => d.establishmentId === est.id);
                         const count = estDeliveries.length;
                         const totalCharged = estDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
-                        const adminCut = count * ADMIN_FEE_PER_DELIVERY;
+                        const adminCut = estDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
                         const ridersCut = Math.max(0, totalCharged - adminCut);
                         const allSettled = count > 0 && estDeliveries.every(d => d.paid);
 
@@ -3056,7 +3072,7 @@ export default function AdminDashboard() {
                                 <p className="text-[9px] font-extrabold text-emerald-800 uppercase">Repasse Motoboys</p>
                                 <p className="text-sm font-black text-emerald-700 mt-0.5">R$ {ridersCut.toFixed(2)}</p>
                               </div>
-                              <div className="bg-amber-50 rounded-xl p-2 border border-amber-200">
+                              <div className="bg-amber-50/60 rounded-xl p-2 border border-amber-200">
                                 <p className="text-[9px] font-extrabold text-amber-800 uppercase">Sua Taxa (R$1)</p>
                                 <p className="text-sm font-black text-amber-700 mt-0.5">R$ {adminCut.toFixed(2)}</p>
                               </div>
