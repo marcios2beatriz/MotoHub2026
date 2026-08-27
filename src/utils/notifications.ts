@@ -1,9 +1,8 @@
 "use client";
 
-// Request permission for native system notifications (Desktop + Android/Mobile)
+// Solicita permissão para notificações nativas no Desktop e Android
 export const requestNotificationPermission = async () => {
-  if (!("Notification" in window)) {
-    console.warn("Este navegador não suporta notificações de sistema.");
+  if (typeof window === "undefined" || !("Notification" in window)) {
     return false;
   }
 
@@ -23,16 +22,16 @@ export const requestNotificationPermission = async () => {
   return false;
 };
 
-// Sends native notification to device status bar / desktop banner
+// Dispara vibração e notificação na barra de status do celular / desktop
 export const sendDeviceNotification = (title: string, body: string) => {
-  // Vibration pattern on supported devices (Android phones, etc.)
-  if (navigator.vibrate) {
+  // Vibração no celular
+  if (typeof navigator !== "undefined" && navigator.vibrate) {
     try {
       navigator.vibrate([200, 100, 200, 100, 200]);
     } catch (e) {}
   }
 
-  if (!("Notification" in window)) return;
+  if (typeof window === "undefined" || !("Notification" in window)) return;
 
   if (Notification.permission === "granted") {
     try {
@@ -40,9 +39,9 @@ export const sendDeviceNotification = (title: string, body: string) => {
         body,
         icon: "/logo.png",
         badge: "/logo.png",
-        tag: 'chat-msg-' + Date.now(),
+        tag: 'motohub-msg-' + Date.now(),
         renotify: true,
-        vibrate: [200, 100, 200],
+        requireInteraction: false
       } as any);
 
       notification.onclick = () => {
@@ -55,7 +54,7 @@ export const sendDeviceNotification = (title: string, body: string) => {
   }
 };
 
-// Plays sound alert for incoming chat messages
+// Reproduz som de alerta de nova mensagem
 export const playNotificationSound = () => {
   try {
     const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
@@ -66,30 +65,32 @@ export const playNotificationSound = () => {
       ctx.resume();
     }
     
-    // First high tone
+    // Primeiro tom
     const osc1 = ctx.createOscillator();
     const gain1 = ctx.createGain();
     osc1.type = 'sine';
     osc1.frequency.setValueAtTime(659.25, ctx.currentTime); // E5
-    gain1.gain.setValueAtTime(0.2, ctx.currentTime);
+    gain1.gain.setValueAtTime(0.3, ctx.currentTime);
     gain1.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.18);
     osc1.connect(gain1);
     gain1.connect(ctx.destination);
     osc1.start();
     osc1.stop(ctx.currentTime + 0.18);
 
-    // Second higher tone shortly after
+    // Segundo tom mais agudo
     setTimeout(() => {
-      const osc2 = ctx.createOscillator();
-      const gain2 = ctx.createGain();
-      osc2.type = 'sine';
-      osc2.frequency.setValueAtTime(880, ctx.currentTime); // A5
-      gain2.gain.setValueAtTime(0.2, ctx.currentTime);
-      gain2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-      osc2.connect(gain2);
-      gain2.connect(ctx.destination);
-      osc2.start();
-      osc2.stop(ctx.currentTime + 0.3);
+      try {
+        const osc2 = ctx.createOscillator();
+        const gain2 = ctx.createGain();
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(880, ctx.currentTime); // A5
+        gain2.gain.setValueAtTime(0.3, ctx.currentTime);
+        gain2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+        osc2.connect(gain2);
+        gain2.connect(ctx.destination);
+        osc2.start();
+        osc2.stop(ctx.currentTime + 0.3);
+      } catch (e) {}
     }, 120);
   } catch (e) {
     console.warn('Erro ao reproduzir som de notificação:', e);
