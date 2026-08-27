@@ -38,6 +38,8 @@ import DeliveryNotesModal from '../components/DeliveryNotesModal';
 import ScheduleChatModal from '../components/ScheduleChatModal';
 import DeliveryModal from '../components/DeliveryModal';
 import BatchDeliveryModal from '../components/BatchDeliveryModal';
+import ChatToastBanner, { ChatToast } from '../components/ChatToastBanner';
+import { sendDeviceNotification, playNotificationSound, requestNotificationPermission } from '../utils/notifications';
 import { realtimeGps } from '../utils/realtimeGps';
 
 const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
@@ -53,6 +55,11 @@ export default function EstablishmentDashboard() {
   const [currentEst, setCurrentEst] = useState<Establishment | null>(null);
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [activeToast, setActiveToast] = useState<ChatToast | null>(null);
+
+  // Monitoramento de novas mensagens
+  const prevNotesRef = useRef<{ [deliveryId: string]: string }>({});
+  const prevScheduleChatsRef = useRef<{ [scheduleId: string]: string }>({});
 
   // Filtros de corridas
   const [filterMode, setFilterMode] = useState<'smart_shift' | 'date_range' | 'all'>('smart_shift');
@@ -131,6 +138,59 @@ export default function EstablishmentDashboard() {
     );
     const locations = db.getRiderLocations();
 
+    // ── NOTIFICAÇÃO DE NOVAS MENSAGENS PARA O ESTABELECIMENTO ──
+    estDeliveries.forEach(del => {
+      const prevNote = prevNotesRef.current[del.id];
+      if (prevNote !== undefined && del.notes && del.notes !== prevNote) {
+        const prevLines = prevNote.split('\n');
+        const currentLines = del.notes.split('\n');
+        if (currentLines.length > prevLines.length) {
+          const lastMsg = currentLines[currentLines.length - 1];
+          if (!lastMsg.includes('- Estabelecimento')) {
+            const sender = lastMsg.includes('- Motoboy') ? 'Motoboy' : 'Admin';
+            const msgContent = lastMsg.includes(']: ') ? lastMsg.substring(lastMsg.indexOf(']: ') + 3) : lastMsg;
+            
+            playNotificationSound();
+            sendDeviceNotification(`Nova observação de ${sender}`, `Pedido #${del.orderNumber || del.id.slice(-4)}: "${msgContent}"`);
+            setActiveToast({
+              id: 'toast-est-' + Date.now(),
+              title: `Mensagem de ${sender} - Pedido #${del.orderNumber || del.id.slice(-4)}`,
+              message: msgContent,
+              sender,
+              onClick: () => setNotesDeliveryId(del.id)
+            });
+          }
+        }
+      }
+      prevNotesRef.current[del.id] = del.notes || '';
+    });
+
+    schedules.forEach(sch => {
+      const prevSchChat = prevScheduleChatsRef.current[sch.id];
+      if (prevSchChat !== undefined && sch.chat && sch.chat !== prevSchChat) {
+        const prevLines = prevSchChat.split('\n');
+        const currentLines = sch.chat.split('\n');
+        if (currentLines.length > prevLines.length) {
+          const lastMsg = currentLines[currentLines.length - 1];
+          if (!lastMsg.includes('- Estabelecimento')) {
+            const sender = lastMsg.includes('- Motoboy') ? 'Motoboy' : 'Admin';
+            const msgContent = lastMsg.includes(']: ') ? lastMsg.substring(lastMsg.indexOf(']: ') + 3) : lastMsg;
+            
+            playNotificationSound();
+            sendDeviceNotification(`Aviso no Chat de Turno (${sender})`, msgContent);
+            setActiveToast({
+              id: 'toast-est-sch-' + Date.now(),
+              title: `Aviso do Turno - ${sender}`,
+              message: msgContent,
+              sender,
+              onClick: () => setActiveScheduleChatId(sch.id)
+            });
+          }
+        }
+      }
+      prevScheduleChatsRef.current[sch.id] = sch.chat || '';
+    });
+
     setDeliveries([...estDeliveries].sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time)));
     setAllRiders(riders);
     setEstablishmentSchedules([...schedules].sort((a, b) => b.date.localeCompare(a.date)));
@@ -143,10 +203,11 @@ export default function EstablishmentDashboard() {
       return;
     }
 
+    requestNotificationPermission();
     loadData();
     const interval = setInterval(() => {
       db.pullFromSupabase().then(() => loadData());
-    }, 2000);
+    }, 2500);
 
     const handleDataUpdate = () => loadData();
     window.addEventListener('db-sync-complete', handleDataUpdate);
@@ -731,6 +792,8 @@ export default function EstablishmentDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans pb-12">
+      <ChatToastBanner toast={activeToast} onClose={() => setActiveToast(null)} />
+
       <header className="bg-slate-900 text-white shadow-md sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
           <div className="flex items-center space-x-3">
