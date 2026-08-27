@@ -69,13 +69,16 @@ import { realtimeGps } from '../utils/realtimeGps';
 const DAY_KEYS = ['seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom'] as const;
 const DAY_LABELS = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'];
 
-// Taxa padrão do administrador por corrida
+// Taxa padrão do administrador por corrida padrão (base 8 reais)
 const ADMIN_FEE_PER_DELIVERY = 1.00;
 
-// Corridas de mesmo endereço (R$ 4,00) são 100% isentas da taxa administrativa
+// Corridas de mesmo endereço (mesmo local) são 100% isentas da taxa administrativa
 export const getAdminFeeForDelivery = (d: Delivery): number => {
-  const val = Number(d.value || 0);
-  if (d.deliveryType === 'same_address' || val <= 4.00) {
+  if (d.deliveryType === 'same_address') {
+    return 0;
+  }
+  const baseVal = (Number(d.value || 0) - Number(d.additionalValue || 0));
+  if (baseVal <= 4.00) {
     return 0;
   }
   return ADMIN_FEE_PER_DELIVERY;
@@ -164,6 +167,7 @@ export default function AdminDashboard() {
   const [financeRiderSearch, setFinanceRiderSearch] = useState<string>('');
   const [financeEstSearch, setFinanceEstSearch] = useState<string>('');
   const [financeActiveSection, setFinanceActiveSection] = useState<'riders' | 'establishments'>('riders');
+  const [financeOnlyWithReceivables, setFinanceOnlyWithReceivables] = useState<boolean>(true);
 
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
 
@@ -1170,6 +1174,7 @@ export default function AdminDashboard() {
   // Corridas de mesmo endereço (R$ 4,00) são 100% isentas da taxa administrativa
   const totalFinanceAdminCommission = financeFilteredDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
   const totalFinanceRidersNet = Math.max(0, totalFinanceGrossRevenue - totalFinanceAdminCommission);
+  const totalFinanceAdditionals = financeFilteredDeliveries.reduce((sum, d) => sum + Number(d.additionalValue || 0), 0);
 
   const getFilteredReportData = () => {
     let start = new Date();
@@ -2675,7 +2680,7 @@ export default function AdminDashboard() {
                     <span>Fechamento Financeiro & Repasse</span>
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Discriminação detalhada: Ganho do Motoboy vs Taxa do Administrador (R$ 1,00/corrida padrão | R$ 0,00 para mesmo endereço a R$ 4,00)
+                    Discriminação detalhada: Ganho do Motoboy vs Taxa do Administrador (R$ 1,00/corrida padrão | R$ 0,00 para mesmo endereço)
                   </p>
                 </div>
 
@@ -2710,7 +2715,16 @@ export default function AdminDashboard() {
                   </span>
 
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[11px] text-slate-500 font-bold">Status:</span>
+                    <label className="flex items-center gap-1.5 text-xs font-black text-amber-900 bg-amber-100/80 px-2.5 py-1 rounded-lg cursor-pointer border border-amber-300 shadow-xs">
+                      <input
+                        type="checkbox"
+                        checked={financeOnlyWithReceivables}
+                        onChange={(e) => setFinanceOnlyWithReceivables(e.target.checked)}
+                        className="rounded text-amber-600 focus:ring-amber-500 h-3.5 w-3.5"
+                      />
+                      <span>Apenas com valores a repassar</span>
+                    </label>
+
                     <select
                       value={financePaidFilter}
                       onChange={(e) => setFinancePaidFilter(e.target.value as any)}
@@ -2874,7 +2888,7 @@ export default function AdminDashboard() {
                     R$ {totalFinanceAdminCommission.toFixed(2)}
                   </p>
                   <p className="text-[11px] text-amber-800 font-bold">
-                    R$ 1,00 por corrida padrão (R$ 4 isento)
+                    R$ 1,00 por corrida padrão (mesmo local isento)
                   </p>
                 </div>
 
@@ -2918,63 +2932,80 @@ export default function AdminDashboard() {
                     {users
                       .filter(u => u.role === 'rider')
                       .filter(r => r.name.toLowerCase().includes(financeRiderSearch.toLowerCase()) || r.phone.includes(financeRiderSearch))
+                      .filter(rider => {
+                        if (!financeOnlyWithReceivables) return true;
+                        const riderDeliveries = financeFilteredDeliveries.filter(d => d.riderId === rider.id);
+                        const hasUnpaid = riderDeliveries.some(d => !d.paid);
+                        return riderDeliveries.length > 0 && hasUnpaid;
+                      })
                       .map(rider => {
                         const riderDeliveries = financeFilteredDeliveries.filter(d => d.riderId === rider.id);
                         const count = riderDeliveries.length;
                         const grossVal = riderDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
                         const adminCut = riderDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
                         const riderNet = Math.max(0, grossVal - adminCut);
+                        const addsTotal = riderDeliveries.reduce((sum, d) => sum + Number(d.additionalValue || 0), 0);
+                        const sameAddressCount = riderDeliveries.filter(d => d.deliveryType === 'same_address').length;
                         const allPaid = count > 0 && riderDeliveries.every(d => d.paid);
 
                         return (
                           <div 
                             key={rider.id} 
-                            className={`p-5 rounded-2xl border transition-all ${
+                            className={`p-5 rounded-3xl border-2 transition-all ${
                               count > 0 
                                 ? allPaid 
                                   ? 'bg-slate-50 border-slate-200' 
-                                  : 'bg-white border-indigo-200 shadow-sm hover:border-indigo-400' 
+                                  : 'bg-white border-emerald-300 shadow-md hover:border-emerald-500' 
                                 : 'bg-slate-50/50 border-slate-200 opacity-60'
                             }`}
                           >
                             <div className="flex justify-between items-start">
-                              <div className="flex items-center space-x-3 min-w-0">
-                                <div className="w-10 h-10 rounded-full bg-indigo-600 text-white font-black text-sm flex items-center justify-center flex-shrink-0">
+                              <div className="flex items-center space-x-3.5 min-w-0">
+                                <div className="w-12 h-12 rounded-full bg-indigo-600 text-white font-black text-lg flex items-center justify-center flex-shrink-0 shadow-md">
                                   {rider.name.charAt(0).toUpperCase()}
                                 </div>
                                 <div className="min-w-0">
                                   <h4 className="font-extrabold text-slate-900 text-base truncate">{rider.name}</h4>
-                                  <p className="text-xs text-slate-500 font-mono">{rider.phone || 'Sem telefone'}</p>
+                                  <p className="text-xs text-slate-500 font-mono mt-0.5">{rider.phone || 'Sem telefone'}</p>
                                 </div>
                               </div>
 
-                              <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase ${
+                              <span className={`text-[11px] font-black px-3.5 py-1 rounded-full uppercase tracking-wider ${
                                 count === 0 ? 'bg-slate-100 text-slate-500' :
-                                allPaid ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'
+                                allPaid ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900 border border-amber-300'
                               }`}>
-                                {count === 0 ? 'Sem Corridas' : allPaid ? 'Pago' : 'A Repassar'}
+                                {count === 0 ? 'SEM CORRIDAS' : allPaid ? 'PAGO' : 'A REPASSAR'}
                               </span>
                             </div>
 
-                            {/* Detalhamento dos Valores */}
-                            <div className="grid grid-cols-3 gap-2 pt-3.5 pb-2 text-center border-t border-slate-100 mt-3">
-                              <div className="bg-slate-50 rounded-xl p-2 border border-slate-100">
-                                <p className="text-[9px] font-extrabold text-slate-400 uppercase">Corridas</p>
-                                <p className="text-sm font-black text-slate-800 mt-0.5">{count}</p>
+                            {/* Detalhamento dos 4 Blocos em Formato Moderno */}
+                            <div className="grid grid-cols-4 gap-2 pt-3.5 pb-2 text-center border-t border-slate-100 mt-3">
+                              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-2.5 flex flex-col justify-center">
+                                <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider">CORRIDAS</p>
+                                <p className="text-xl font-black text-slate-900 mt-0.5">{count}</p>
+                                {sameAddressCount > 0 && (
+                                  <span className="text-[8px] font-bold text-purple-700 mt-0.5">
+                                    {sameAddressCount} mesmo local
+                                  </span>
+                                )}
                               </div>
-                              <div className="bg-amber-50/60 rounded-xl p-2 border border-amber-200">
-                                <p className="text-[9px] font-extrabold text-amber-800 uppercase">Taxa Adm (R$1)</p>
-                                <p className="text-sm font-black text-amber-700 mt-0.5">R$ {adminCut.toFixed(2)}</p>
+                              <div className="bg-purple-50/70 border border-purple-200 rounded-2xl p-2.5 flex flex-col justify-center">
+                                <p className="text-[9px] font-black text-purple-800 uppercase tracking-wider">+ ADICIONAIS</p>
+                                <p className="text-base font-black text-purple-700 mt-0.5">R$ {addsTotal.toFixed(2)}</p>
                               </div>
-                              <div className="bg-emerald-50 rounded-xl p-2 border border-emerald-200">
-                                <p className="text-[9px] font-extrabold text-emerald-800 uppercase">Líquido Motoboy</p>
-                                <p className="text-sm font-black text-emerald-700 mt-0.5">R$ {riderNet.toFixed(2)}</p>
+                              <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-2.5 flex flex-col justify-center">
+                                <p className="text-[9px] font-black text-amber-800 uppercase tracking-wider">TAXA ADM (R$1)</p>
+                                <p className="text-base font-black text-amber-700 mt-0.5">R$ {adminCut.toFixed(2)}</p>
+                              </div>
+                              <div className="bg-emerald-50 border-2 border-emerald-300 rounded-2xl p-2.5 flex flex-col justify-center">
+                                <p className="text-[9px] font-black text-emerald-800 uppercase tracking-wider">LÍQUIDO MOTOBOY</p>
+                                <p className="text-base font-black text-emerald-700 mt-0.5">R$ {riderNet.toFixed(2)}</p>
                               </div>
                             </div>
 
-                            <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-100">
-                              <span className="text-slate-500 font-medium">
-                                Bruto Total: <strong className="text-slate-700">R$ {grossVal.toFixed(2)}</strong>
+                            <div className="flex items-center justify-between text-xs pt-3 border-t border-slate-100">
+                              <span className="text-slate-600 font-bold">
+                                Bruto Total: <strong className="text-slate-900 font-black text-sm">R$ {grossVal.toFixed(2)}</strong>
                               </span>
 
                               {count > 0 && (
@@ -2982,17 +3013,17 @@ export default function AdminDashboard() {
                                   {allPaid ? (
                                     <button
                                       onClick={() => handleUnsettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
-                                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-bold transition-colors"
+                                      className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors"
                                       title="Desmarcar como pago"
                                     >
-                                      Reverter
+                                      Reverter Baixa
                                     </button>
                                   ) : (
                                     <button
                                       onClick={() => handleSettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
-                                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-black transition-all shadow-sm flex items-center gap-1"
+                                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black transition-all shadow-md flex items-center gap-1.5 active:scale-95"
                                     >
-                                      <Check className="h-3.5 w-3.5" />
+                                      <Check className="h-4 w-4" />
                                       <span>Dar Baixa (Pagar)</span>
                                     </button>
                                   )}
@@ -3029,6 +3060,12 @@ export default function AdminDashboard() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {establishments
                       .filter(e => e.name.toLowerCase().includes(financeEstSearch.toLowerCase()) || e.phone.includes(financeEstSearch))
+                      .filter(est => {
+                        if (!financeOnlyWithReceivables) return true;
+                        const estDeliveries = financeFilteredDeliveries.filter(d => d.establishmentId === est.id);
+                        const hasUnpaid = estDeliveries.some(d => !d.paid);
+                        return estDeliveries.length > 0 && hasUnpaid;
+                      })
                       .map(est => {
                         const estDeliveries = financeFilteredDeliveries.filter(d => d.establishmentId === est.id);
                         const count = estDeliveries.length;
@@ -3040,11 +3077,11 @@ export default function AdminDashboard() {
                         return (
                           <div 
                             key={est.id} 
-                            className={`p-5 rounded-2xl border transition-all ${
+                            className={`p-5 rounded-3xl border-2 transition-all ${
                               count > 0 
                                 ? allSettled 
                                   ? 'bg-slate-50 border-slate-200' 
-                                  : 'bg-white border-indigo-200 shadow-sm hover:border-indigo-400' 
+                                  : 'bg-white border-indigo-300 shadow-md hover:border-indigo-500' 
                                 : 'bg-slate-50/50 border-slate-200 opacity-60'
                             }`}
                           >
@@ -3054,31 +3091,31 @@ export default function AdminDashboard() {
                                 <p className="text-xs text-slate-500 truncate">{est.address?.street}, {est.address?.number} - {est.address?.neighborhood}</p>
                               </div>
 
-                              <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase ${
+                              <span className={`text-[11px] font-black px-3.5 py-1 rounded-full uppercase tracking-wider ${
                                 count === 0 ? 'bg-slate-100 text-slate-500' :
-                                allSettled ? 'bg-blue-100 text-blue-800' : 'bg-indigo-100 text-indigo-800'
+                                allSettled ? 'bg-blue-100 text-blue-800' : 'bg-indigo-100 text-indigo-900 border border-indigo-200'
                               }`}>
-                                {count === 0 ? 'Sem Corridas' : allSettled ? 'Recebido' : 'A Receber'}
+                                {count === 0 ? 'SEM CORRIDAS' : allSettled ? 'RECEBIDO' : 'A RECEBER'}
                               </span>
                             </div>
 
                             {/* Detalhamento dos Valores */}
                             <div className="grid grid-cols-3 gap-2 pt-3.5 pb-2 text-center border-t border-slate-100 mt-3">
-                              <div className="bg-slate-50 rounded-xl p-2 border border-slate-100">
-                                <p className="text-[9px] font-extrabold text-slate-400 uppercase">Corridas</p>
-                                <p className="text-sm font-black text-slate-800 mt-0.5">{count}</p>
+                              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-2.5">
+                                <p className="text-[9px] font-black text-slate-400 uppercase">CORRIDAS</p>
+                                <p className="text-base font-black text-slate-800 mt-0.5">{count}</p>
                               </div>
-                              <div className="bg-emerald-50/60 rounded-xl p-2 border border-emerald-200">
-                                <p className="text-[9px] font-extrabold text-emerald-800 uppercase">Repasse Motoboys</p>
-                                <p className="text-sm font-black text-emerald-700 mt-0.5">R$ {ridersCut.toFixed(2)}</p>
+                              <div className="bg-emerald-50/60 border border-emerald-200 rounded-2xl p-2.5">
+                                <p className="text-[9px] font-black text-emerald-800 uppercase">REPASSE MOTOBOYS</p>
+                                <p className="text-base font-black text-emerald-700 mt-0.5">R$ {ridersCut.toFixed(2)}</p>
                               </div>
-                              <div className="bg-amber-50/60 rounded-xl p-2 border border-amber-200">
-                                <p className="text-[9px] font-extrabold text-amber-800 uppercase">Sua Taxa (R$1)</p>
-                                <p className="text-sm font-black text-amber-700 mt-0.5">R$ {adminCut.toFixed(2)}</p>
+                              <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-2.5">
+                                <p className="text-[9px] font-black text-amber-800 uppercase">SUA TAXA (R$1)</p>
+                                <p className="text-base font-black text-amber-700 mt-0.5">R$ {adminCut.toFixed(2)}</p>
                               </div>
                             </div>
 
-                            <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-100">
+                            <div className="flex items-center justify-between text-xs pt-3 border-t border-slate-100">
                               <div>
                                 <span className="text-slate-400 font-medium">Total a Cobrar: </span>
                                 <strong className="text-indigo-900 font-black text-sm">R$ {totalCharged.toFixed(2)}</strong>
@@ -3087,9 +3124,9 @@ export default function AdminDashboard() {
                               {count > 0 && !allSettled && (
                                 <button
                                   onClick={() => handleSettleEstDeliveries(est.id, estDeliveries.map(d => d.id))}
-                                  className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-black transition-all shadow-sm flex items-center gap-1"
+                                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black transition-all shadow-md flex items-center gap-1.5 active:scale-95"
                                 >
-                                  <Check className="h-3.5 w-3.5" />
+                                  <Check className="h-4 w-4" />
                                   <span>Dar Baixa (Receber)</span>
                                 </button>
                               )}
