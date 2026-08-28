@@ -145,12 +145,14 @@ export function getDeliveryOperationalDate(dateStr: string, timeStr: string = '1
 
   if (!isNaN(h) && h < 3) {
     const [y, m, d] = cleanDate.split('-').map(Number);
-    const dateObj = new Date(y, m - 1, d);
-    dateObj.setDate(dateObj.getDate() - 1);
-    const prevY = dateObj.getFullYear();
-    const prevM = String(dateObj.getMonth() + 1).padStart(2, '0');
-    const prevD = String(dateObj.getDate()).padStart(2, '0');
-    return `${prevY}-${prevM}-${prevD}`;
+    if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+      const dateObj = new Date(y, m - 1, d);
+      dateObj.setDate(dateObj.getDate() - 1);
+      const prevY = dateObj.getFullYear();
+      const prevM = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const prevD = String(dateObj.getDate()).padStart(2, '0');
+      return `${prevY}-${prevM}-${prevD}`;
+    }
   }
 
   return cleanDate;
@@ -158,12 +160,12 @@ export function getDeliveryOperationalDate(dateStr: string, timeStr: string = '1
 
 // Chaves para persistência local
 const SESSION_USER_KEY = 'motohub_session_user';
-const DELIVERIES_STORAGE_BACKUP_KEY = 'motohub_deliveries_master_recovery_v3';
+const DELIVERIES_STORAGE_BACKUP_KEY = 'motohub_deliveries_master_recovery_v4';
 
 // ── EXTRAÇÃO INTELIGENTE E RESILIENTE DE NÚMERO DO PEDIDO ──
 function extractOrderNumberDeep(raw?: string): string | undefined {
   if (!raw) return undefined;
-  const trimmed = raw.trim();
+  const trimmed = String(raw).trim();
   if (!trimmed) return undefined;
 
   // 1. Tenta extração via JSON
@@ -205,53 +207,6 @@ function extractOrderNumberDeep(raw?: string): string | undefined {
   return undefined;
 }
 
-// ── VARREDURA COMPLETA DE TODAS AS CHAVES DO LOCALSTORAGE PARA RESGATAR PEDIDOS ──
-function scanAllLocalStorageDeliveries(): Map<string, { orderNumber?: string; notes?: string; customerChat?: string; additionalValue?: number; additionalReason?: string; linkedOrderNumber?: string; deliveryType?: 'standard' | 'same_address'; paid?: boolean; paymentMethod?: PaymentMethodType; orderCollectionAmount?: number; changeFor?: number }> {
-  const recoveredMap = new Map<string, any>();
-
-  try {
-    const allKeys = Object.keys(localStorage);
-    for (const key of allKeys) {
-      if (key.includes('deliv') || key.includes('motohub') || key.includes('nav') || key.includes('backup') || key.includes('route')) {
-        try {
-          const val = localStorage.getItem(key);
-          if (!val) continue;
-          const parsed = JSON.parse(val);
-
-          const candidateArray: any[] = Array.isArray(parsed) 
-            ? parsed 
-            : (parsed.deliveries && Array.isArray(parsed.deliveries) ? parsed.deliveries : (parsed.id ? [parsed] : []));
-
-          for (const item of candidateArray) {
-            if (item && item.id) {
-              const num = item.orderNumber || item.order_number || extractOrderNumberDeep(item.order_number);
-              if (num || item.notes || item.paid !== undefined || item.paymentMethod) {
-                const existing = recoveredMap.get(item.id) || {};
-                recoveredMap.set(item.id, {
-                  ...existing,
-                  orderNumber: num ? String(num).replace('#', '').trim() : existing.orderNumber,
-                  notes: item.notes || existing.notes,
-                  customerChat: item.customerChat || existing.customerChat,
-                  additionalValue: item.additionalValue !== undefined ? Number(item.additionalValue) : existing.additionalValue,
-                  additionalReason: item.additionalReason || existing.additionalReason,
-                  linkedOrderNumber: item.linkedOrderNumber ? String(item.linkedOrderNumber).replace('#', '').trim() : existing.linkedOrderNumber,
-                  deliveryType: item.deliveryType || existing.deliveryType,
-                  paid: item.paid !== undefined ? Boolean(item.paid) : existing.paid,
-                  paymentMethod: (item.paymentMethod as PaymentMethodType) || existing.paymentMethod,
-                  orderCollectionAmount: item.orderCollectionAmount !== undefined ? Number(item.orderCollectionAmount) : existing.orderCollectionAmount,
-                  changeFor: item.changeFor !== undefined ? Number(item.changeFor) : existing.changeFor
-                });
-              }
-            }
-          }
-        } catch {}
-      }
-    }
-  } catch {}
-
-  return recoveredMap;
-}
-
 function saveMasterDeliveriesBackup(dels: Delivery[]) {
   try {
     localStorage.setItem(DELIVERIES_STORAGE_BACKUP_KEY, JSON.stringify(dels));
@@ -261,10 +216,12 @@ function saveMasterDeliveriesBackup(dels: Delivery[]) {
 function loadMasterDeliveriesBackup(): Delivery[] {
   try {
     const data = localStorage.getItem(DELIVERIES_STORAGE_BACKUP_KEY);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
-  }
+    if (data) {
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  return [];
 }
 
 // Cache em memória
@@ -316,13 +273,13 @@ export const db = {
 
     const duplicate = memoryDeliveries.find(d => {
       if (excludeDeliveryId && d.id === excludeDeliveryId) return false;
-      if (d.status === 'cancelled') return false;
+      if (d.status === 'cancelled' || d.status === 'rejected') return false;
 
       const dNumber = (d.orderNumber || '').trim().replace('#', '');
       if (!dNumber || dNumber !== cleanNumber) return false;
 
       const dOpDate = getDeliveryOperationalDate(d.date, d.time);
-      return isSameDayString(dOpDate, targetOpDate);
+      return isSameDayString(dOpDate, targetOpDate) || isSameDayString(d.date, date);
     });
 
     if (duplicate) {
@@ -343,9 +300,9 @@ export const db = {
     const targetOpDate = getDeliveryOperationalDate(date, time);
     return memoryDeliveries.filter(d => {
       if (d.status === 'cancelled' || d.status === 'rejected') return false;
-      if (riderId && d.riderId !== riderId) return false;
+      if (riderId && !this.isSameUser(d.riderId, riderId)) return false;
       const dOpDate = getDeliveryOperationalDate(d.date, d.time);
-      return isSameDayString(dOpDate, targetOpDate);
+      return isSameDayString(dOpDate, targetOpDate) || isSameDayString(d.date, date);
     });
   },
 
@@ -386,7 +343,11 @@ export const db = {
     }));
 
     if (payload.length > 0) {
-      await supabase.from('users').upsert(payload, { onConflict: 'id' });
+      try {
+        await supabase.from('users').upsert(payload, { onConflict: 'id' });
+      } catch (e) {
+        console.warn('Erro ao salvar usuários no Supabase:', e);
+      }
     }
     await this.pullFromSupabase();
   },
@@ -394,37 +355,39 @@ export const db = {
   async fetchUserByEmail(email: string): Promise<User | null> {
     const cleanEmail = email.trim().toLowerCase();
     
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .ilike('email', cleanEmail)
-      .maybeSingle();
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .ilike('email', cleanEmail)
+        .maybeSingle();
 
-    if (!error && data) {
-      const user: User = {
-        id: data.id,
-        name: data.name,
-        email: data.email,
-        role: data.role,
-        active: data.active ?? true,
-        phone: data.phone || '',
-        cpf: data.cpf || '',
-        passwordHash: data.password_hash || '',
-        mustResetPassword: data.must_reset_password || false,
-        establishmentId: data.establishment_id || undefined,
-        createdAt: data.created_at,
-        updatedAt: data.updated_at
-      };
+      if (!error && data) {
+        const user: User = {
+          id: data.id,
+          name: data.name,
+          email: data.email,
+          role: data.role,
+          active: data.active ?? true,
+          phone: data.phone || '',
+          cpf: data.cpf || '',
+          passwordHash: data.password_hash || '',
+          mustResetPassword: data.must_reset_password || false,
+          establishmentId: data.establishment_id || undefined,
+          createdAt: data.created_at,
+          updatedAt: data.updated_at
+        };
 
-      const existingIdx = memoryUsers.findIndex(u => u.id === user.id);
-      if (existingIdx >= 0) {
-        memoryUsers[existingIdx] = user;
-      } else {
-        memoryUsers.push(user);
+        const existingIdx = memoryUsers.findIndex(u => u.id === user.id);
+        if (existingIdx >= 0) {
+          memoryUsers[existingIdx] = user;
+        } else {
+          memoryUsers.push(user);
+        }
+
+        return user;
       }
-
-      return user;
-    }
+    } catch (e) {}
 
     if (cleanEmail === 'admin@delivery.com') {
       const adminDefault: User = {
@@ -438,16 +401,18 @@ export const db = {
         passwordHash: 'D24180417c*'
       };
 
-      await supabase.from('users').upsert({
-        id: adminDefault.id,
-        name: adminDefault.name,
-        email: adminDefault.email,
-        role: adminDefault.role,
-        active: adminDefault.active,
-        phone: adminDefault.phone,
-        cpf: adminDefault.cpf,
-        password_hash: adminDefault.passwordHash
-      }, { onConflict: 'id' });
+      try {
+        await supabase.from('users').upsert({
+          id: adminDefault.id,
+          name: adminDefault.name,
+          email: adminDefault.email,
+          role: adminDefault.role,
+          active: adminDefault.active,
+          phone: adminDefault.phone,
+          cpf: adminDefault.cpf,
+          password_hash: adminDefault.passwordHash
+        }, { onConflict: 'id' });
+      } catch (e) {}
 
       return adminDefault;
     }
@@ -457,7 +422,9 @@ export const db = {
 
   async deleteUser(id: string) {
     memoryUsers = memoryUsers.filter(u => u.id !== id);
-    await supabase.from('users').delete().eq('id', id);
+    try {
+      await supabase.from('users').delete().eq('id', id);
+    } catch (e) {}
     await this.pullFromSupabase();
   },
 
@@ -483,14 +450,20 @@ export const db = {
     }));
 
     if (payload.length > 0) {
-      await supabase.from('establishments').upsert(payload, { onConflict: 'id' });
+      try {
+        await supabase.from('establishments').upsert(payload, { onConflict: 'id' });
+      } catch (e) {
+        console.warn('Erro ao salvar estabelecimentos:', e);
+      }
     }
     await this.pullFromSupabase();
   },
 
   async deleteEstablishment(id: string) {
     memoryEstablishments = memoryEstablishments.filter(e => e.id !== id);
-    await supabase.from('establishments').delete().eq('id', id);
+    try {
+      await supabase.from('establishments').delete().eq('id', id);
+    } catch (e) {}
     await this.pullFromSupabase();
   },
 
@@ -521,40 +494,47 @@ export const db = {
     });
 
     if (payload.length > 0) {
-      await supabase.from('schedules').upsert(payload, { onConflict: 'id' });
+      try {
+        await supabase.from('schedules').upsert(payload, { onConflict: 'id' });
+      } catch (e) {
+        console.warn('Erro ao salvar escalas no Supabase:', e);
+      }
     }
     await this.pullFromSupabase();
   },
 
   async deleteSchedule(id: string) {
     memorySchedules = memorySchedules.filter(s => s.id !== id);
-    await supabase.from('schedules').delete().eq('id', id);
+    try {
+      await supabase.from('schedules').delete().eq('id', id);
+    } catch (e) {}
     await this.pullFromSupabase();
   },
 
-  // ── GERENCIAMENTO E SERIALIZAÇÃO DE CORRIDAS ──
+  // ── GERENCIAMENTO E PERSISTÊNCIA TOTAL DE CORRIDAS ──
   getDeliveries(): Delivery[] {
     return memoryDeliveries;
   },
 
   async setDeliveries(deliveries: Delivery[]) {
+    // 1. Atualiza memória e backup local imediatamente para não perder dados
     memoryDeliveries = deliveries;
     saveMasterDeliveriesBackup(deliveries);
 
+    // 2. Monta payload para o Supabase com compactação segura
     const payload = deliveries.map(d => {
       const cleanOrderNum = d.orderNumber ? String(d.orderNumber).replace('#', '').trim() : '';
 
-      // Monta objeto compacto garantindo o campo "o" (orderNumber) sempre presente
       const compactMeta: any = {
         o: cleanOrderNum
       };
 
       if (d.deliveryType && d.deliveryType !== 'standard') compactMeta.t = 'm';
       if (d.additionalValue && Number(d.additionalValue) > 0) compactMeta.a = Number(d.additionalValue);
-      if (d.additionalReason) compactMeta.r = d.additionalReason.slice(0, 30);
+      if (d.additionalReason) compactMeta.r = d.additionalReason.slice(0, 40);
       if (d.linkedOrderNumber) compactMeta.l = String(d.linkedOrderNumber).replace('#', '').slice(0, 10);
       if (d.paid) compactMeta.p = 1;
-      if (d.notes) compactMeta.n = d.notes.slice(0, 60);
+      if (d.notes) compactMeta.n = d.notes.slice(0, 80);
       if (d.paymentMethod && d.paymentMethod !== 'already_paid') compactMeta.pm = d.paymentMethod;
       if (d.orderCollectionAmount && Number(d.orderCollectionAmount) > 0) compactMeta.ca = Number(d.orderCollectionAmount);
       if (d.changeFor && Number(d.changeFor) > 0) compactMeta.cf = Number(d.changeFor);
@@ -575,22 +555,40 @@ export const db = {
     });
 
     if (payload.length > 0) {
-      await supabase.from('deliveries').upsert(payload, { onConflict: 'id' });
+      try {
+        const { error: upsertError } = await supabase.from('deliveries').upsert(payload, { onConflict: 'id' });
+        if (upsertError) {
+          console.warn('Falha no upsert completo de entregas, tentando envio simplificado:', upsertError);
+          // Fallback seguro caso haja limite de tamanho na coluna order_number do postgres
+          const fallbackPayload = payload.map(p => ({
+            ...p,
+            order_number: JSON.stringify({ o: extractOrderNumberDeep(p.order_number) || '' })
+          }));
+          await supabase.from('deliveries').upsert(fallbackPayload, { onConflict: 'id' });
+        }
+      } catch (err) {
+        console.warn('Erro de rede ao salvar entregas no Supabase:', err);
+      }
     }
+
     await this.pullFromSupabase();
   },
 
   async deleteDelivery(id: string) {
     memoryDeliveries = memoryDeliveries.filter(d => d.id !== id);
     saveMasterDeliveriesBackup(memoryDeliveries);
-    await supabase.from('deliveries').delete().eq('id', id);
+    try {
+      await supabase.from('deliveries').delete().eq('id', id);
+    } catch (e) {}
     await this.pullFromSupabase();
   },
 
   async clearAllDeliveries() {
     memoryDeliveries = [];
     saveMasterDeliveriesBackup([]);
-    await supabase.from('deliveries').delete().neq('id', '');
+    try {
+      await supabase.from('deliveries').delete().neq('id', '');
+    } catch (e) {}
     await this.pullFromSupabase();
   },
 
@@ -610,7 +608,9 @@ export const db = {
     }));
 
     if (payload.length > 0) {
-      await supabase.from('notifications').upsert(payload, { onConflict: 'id' });
+      try {
+        await supabase.from('notifications').upsert(payload, { onConflict: 'id' });
+      } catch (e) {}
     }
     await this.pullFromSupabase();
   },
@@ -632,14 +632,18 @@ export const db = {
     }));
 
     if (payload.length > 0) {
-      await supabase.from('partner_requests').upsert(payload, { onConflict: 'id' });
+      try {
+        await supabase.from('partner_requests').upsert(payload, { onConflict: 'id' });
+      } catch (e) {}
     }
     await this.pullFromSupabase();
   },
 
   async deletePartnerRequest(id: string) {
     memoryRequests = memoryRequests.filter(r => r.id !== id);
-    await supabase.from('partner_requests').delete().eq('id', id);
+    try {
+      await supabase.from('partner_requests').delete().eq('id', id);
+    } catch (e) {}
     await this.pullFromSupabase();
   },
 
@@ -682,9 +686,7 @@ export const db = {
         lng: lng,
         updated_at: updatedAt
       }, { onConflict: 'rider_id' });
-    } catch (e) {
-      console.warn('Erro ao atualizar rider_locations:', e);
-    }
+    } catch (e) {}
   },
 
   async clearRiderLocation(riderId: string) {
@@ -715,7 +717,7 @@ export const db = {
     const found = memoryUsers.find(u => u.id === id);
     if (found) return found;
 
-    const cleanId = id.toLowerCase().trim();
+    const cleanId = String(id).toLowerCase().trim();
     return memoryUsers.find(u => 
       (u.email && u.email.toLowerCase().trim() === cleanId) ||
       (u.name && (
@@ -731,36 +733,51 @@ export const db = {
     const found = memoryEstablishments.find(e => e.id === id);
     if (found) return found;
 
-    const cleanId = id.toLowerCase().trim();
+    const cleanId = String(id).toLowerCase().trim();
     return memoryEstablishments.find(e => 
-      e.name && (
+      (e.id && e.id.toLowerCase().trim() === cleanId) ||
+      (e.name && (
         e.name.toLowerCase().trim() === cleanId ||
         e.name.toLowerCase().trim().includes(cleanId) ||
         cleanId.includes(e.name.toLowerCase().trim())
-      )
+      ))
     );
   },
 
   isSameEstablishment(id1?: string, id2?: string): boolean {
     if (!id1 || !id2) return false;
     if (id1 === id2) return true;
+    const clean1 = String(id1).toLowerCase().trim();
+    const clean2 = String(id2).toLowerCase().trim();
+    if (clean1 === clean2) return true;
+
     const e1 = this.resolveEstablishment(id1);
     const e2 = this.resolveEstablishment(id2);
     if (e1 && e2) return e1.id === e2.id;
-    return id1.toLowerCase().trim() === id2.toLowerCase().trim();
+    if (e1 && e1.id.toLowerCase() === clean2) return true;
+    if (e2 && e2.id.toLowerCase() === clean1) return true;
+
+    return false;
   },
 
   isSameUser(id1?: string, id2?: string): boolean {
     if (!id1 || !id2) return false;
     if (id1 === id2) return true;
+    const clean1 = String(id1).toLowerCase().trim();
+    const clean2 = String(id2).toLowerCase().trim();
+    if (clean1 === clean2) return true;
+
     const u1 = this.resolveUser(id1);
     const u2 = this.resolveUser(id2);
     if (u1 && u2) {
       if (u1.id === u2.id) return true;
-      if (u1.email && u2.email && u1.email.toLowerCase() === u2.email.toLowerCase()) return true;
+      if (u1.email && u2.email && u1.email.toLowerCase().trim() === u2.email.toLowerCase().trim()) return true;
       if (u1.cpf && u2.cpf && u1.cpf === u2.cpf) return true;
     }
-    return id1.toLowerCase().trim() === id2.toLowerCase().trim();
+    if (u1 && u1.id.toLowerCase() === clean2) return true;
+    if (u2 && u2.id.toLowerCase() === clean1) return true;
+
+    return false;
   },
 
   generateUniqueDummyCpf(): string {
@@ -771,8 +788,8 @@ export const db = {
   // ── SINCRONIZAÇÃO E RESTAURAÇÃO TOTAL DOS DADOS DO SUPABASE ──
   async pullFromSupabase() {
     try {
-      const { data: usersData } = await supabase.from('users').select('*');
-      if (usersData) {
+      const { data: usersData, error: uErr } = await supabase.from('users').select('*');
+      if (!uErr && usersData && usersData.length > 0) {
         memoryUsers = usersData.map(u => ({
           id: u.id,
           name: u.name,
@@ -789,8 +806,8 @@ export const db = {
         }));
       }
 
-      const { data: estsData } = await supabase.from('establishments').select('*');
-      if (estsData) {
+      const { data: estsData, error: eErr } = await supabase.from('establishments').select('*');
+      if (!eErr && estsData && estsData.length > 0) {
         memoryEstablishments = estsData.map(e => ({
           id: e.id,
           name: e.name,
@@ -811,8 +828,8 @@ export const db = {
         }));
       }
 
-      const { data: schData } = await supabase.from('schedules').select('*');
-      if (schData) {
+      const { data: schData, error: sErr } = await supabase.from('schedules').select('*');
+      if (!sErr && schData && schData.length > 0) {
         memorySchedules = schData.map(s => {
           let chat: string | undefined = undefined;
           let createdBy: string | undefined = undefined;
@@ -842,34 +859,33 @@ export const db = {
         });
       }
 
-      const { data: delData } = await supabase.from('deliveries').select('*');
-      if (delData) {
-        // Varredura profunda do localStorage
-        const recoveredFromStorage = scanAllLocalStorageDeliveries();
-        const currentMemoryMap = new Map<string, Delivery>();
-        memoryDeliveries.forEach(d => currentMemoryMap.set(d.id, d));
+      const { data: delData, error: dErr } = await supabase.from('deliveries').select('*');
+      if (!dErr && delData) {
+        const backupList = loadMasterDeliveriesBackup();
+        const existingLocalMap = new Map<string, Delivery>();
+        
+        backupList.forEach(d => existingLocalMap.set(d.id, d));
+        memoryDeliveries.forEach(d => existingLocalMap.set(d.id, d));
 
-        // Mapeamento e restauração dos números de todas as entregas
-        memoryDeliveries = delData.map(d => {
-          const fromStorage = recoveredFromStorage.get(d.id);
-          const fromMemory = currentMemoryMap.get(d.id);
+        // Mapeamento dos registros vindos do Supabase
+        const fetchedDeliveries: Delivery[] = delData.map(d => {
+          const localItem = existingLocalMap.get(d.id);
 
-          // 1. Extração profunda de order_number
-          let orderNumber: string | undefined = extractOrderNumberDeep(d.order_number);
-          let notes: string | undefined = fromStorage?.notes || fromMemory?.notes;
-          let customerChat: string | undefined = fromStorage?.customerChat || fromMemory?.customerChat;
-          let deliveryType: 'standard' | 'same_address' = fromStorage?.deliveryType || fromMemory?.deliveryType || 'standard';
-          let additionalValue: number = fromStorage?.additionalValue || fromMemory?.additionalValue || 0;
-          let additionalReason: string | undefined = fromStorage?.additionalReason || fromMemory?.additionalReason;
-          let linkedOrderNumber: string | undefined = fromStorage?.linkedOrderNumber || fromMemory?.linkedOrderNumber;
-          let linkedDeliveryId: string | undefined = undefined;
-          let paymentMethod: PaymentMethodType = fromStorage?.paymentMethod || fromMemory?.paymentMethod || 'already_paid';
-          let orderCollectionAmount: number | undefined = fromStorage?.orderCollectionAmount || fromMemory?.orderCollectionAmount;
-          let changeFor: number | undefined = fromStorage?.changeFor || fromMemory?.changeFor;
-          let updatedAt = d.updated_at;
-          let paid = Boolean(d.paid || fromStorage?.paid || fromMemory?.paid);
+          let orderNumber: string | undefined = extractOrderNumberDeep(d.order_number) || localItem?.orderNumber;
+          let notes: string | undefined = localItem?.notes;
+          let customerChat: string | undefined = localItem?.customerChat;
+          let deliveryType: 'standard' | 'same_address' = localItem?.deliveryType || 'standard';
+          let additionalValue: number = localItem?.additionalValue || 0;
+          let additionalReason: string | undefined = localItem?.additionalReason;
+          let linkedOrderNumber: string | undefined = localItem?.linkedOrderNumber;
+          let linkedDeliveryId: string | undefined = localItem?.linkedDeliveryId;
+          let paymentMethod: PaymentMethodType = localItem?.paymentMethod || 'already_paid';
+          let orderCollectionAmount: number | undefined = localItem?.orderCollectionAmount;
+          let changeFor: number | undefined = localItem?.changeFor;
+          let updatedAt = d.updated_at || localItem?.updatedAt;
+          let paid = Boolean(d.paid || localItem?.paid);
 
-          if (d.order_number && d.order_number.startsWith('{')) {
+          if (d.order_number && String(d.order_number).startsWith('{')) {
             try {
               const parsed = JSON.parse(d.order_number);
               if (parsed.orderNumber || parsed.o) {
@@ -911,14 +927,6 @@ export const db = {
             } catch (e) {}
           }
 
-          // 2. Se o banco não trouxe número, usa a restauração encontrada do storage ou memória
-          if (!orderNumber && fromStorage?.orderNumber) {
-            orderNumber = fromStorage.orderNumber;
-          }
-          if (!orderNumber && fromMemory?.orderNumber) {
-            orderNumber = fromMemory.orderNumber;
-          }
-
           return {
             id: d.id,
             riderId: d.rider_id,
@@ -944,16 +952,27 @@ export const db = {
           };
         });
 
-        // Salva backup permanente master com todos os números restaurados
+        // Mescla sem perder corridas locais recém-adicionadas
+        const fetchedIdSet = new Set(fetchedDeliveries.map(d => d.id));
+        const mergedList = [...fetchedDeliveries];
+
+        existingLocalMap.forEach((localD, localId) => {
+          if (!fetchedIdSet.has(localId)) {
+            // Se foi adicionada localmente e ainda não desceu do banco, mantém na memória
+            mergedList.push(localD);
+          }
+        });
+
+        memoryDeliveries = mergedList;
         saveMasterDeliveriesBackup(memoryDeliveries);
       }
 
-      const { data: reqsData } = await supabase.from('partner_requests').select('*');
-      if (reqsData) {
+      const { data: reqsData, error: rErr } = await supabase.from('partner_requests').select('*');
+      if (!rErr && reqsData && reqsData.length > 0) {
         memoryRequests = reqsData.map(r => ({
           id: r.id,
           establishmentName: r.establishment_name,
-          ownerName: r.ownerName,
+          ownerName: r.owner_name,
           phone: r.phone,
           address: r.address,
           status: r.status,
@@ -961,8 +980,8 @@ export const db = {
         }));
       }
 
-      const { data: locData } = await supabase.from('rider_locations').select('*');
-      if (locData) {
+      const { data: locData, error: lErr } = await supabase.from('rider_locations').select('*');
+      if (!lErr && locData) {
         const mappedLocs: Record<string, RiderLocation> = {};
         locData.forEach(l => {
           const rId = l.rider_id;
