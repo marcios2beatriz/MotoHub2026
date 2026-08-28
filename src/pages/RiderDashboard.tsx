@@ -31,6 +31,7 @@ import {
   HelpCircle,
   Loader2,
   Wallet,
+  Coins,
   Receipt,
   Search,
   Tag,
@@ -92,11 +93,6 @@ export default function RiderDashboard() {
   const [activeToast, setActiveToast] = useState<ChatToast | null>(null);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
-  // Armazenar mensagens anteriores para disparar alertas quando chegar uma NOVA mensagem
-  const prevNotesRef = useRef<{ [deliveryId: string]: string }>({});
-  const prevCustomerChatsRef = useRef<{ [deliveryId: string]: string }>({});
-  const prevScheduleChatsRef = useRef<{ [scheduleId: string]: string }>({});
-
   // Estados para busca na aba de tarifas
   const [rateSearch, setRateSearch] = useState('');
   const [ratePriceFilter, setRatePriceFilter] = useState<number | 'all'>('all');
@@ -141,11 +137,11 @@ export default function RiderDashboard() {
   const [scheduleEstFilter, setScheduleEstFilter] = useState('');
   const [scheduleDateFilter, setScheduleDateFilter] = useState('');
 
-  // Filtros de Corridas
+  // --- FILTROS DE CORRIDAS (STATUS + TIPO/ADICIONAL) ---
   const [deliveryStatusFilter, setDeliveryStatusFilter] = useState<'all' | 'active' | 'pending' | 'rejected' | 'cancelled'>('all');
   const [deliveryFeatureFilter, setDeliveryFeatureFilter] = useState<'all' | 'with_additional' | 'linked' | 'standard'>('all');
 
-  // Filtros de Turno Inteligente
+  // --- FILTROS DE TURNO INTELIGENTE NO HISTÓRICO DE CORRIDAS ---
   const [filterMode, setFilterMode] = useState<'smart_shift' | 'date_range' | 'all'>('smart_shift');
   const [smartDate, setSmartDate] = useState<string>(db.getOperationalDateString());
   const [smartPeriod, setSmartPeriod] = useState<'all_shifts' | 'night_shift' | 'morning_shift' | 'afternoon_shift'>('all_shifts');
@@ -155,7 +151,7 @@ export default function RiderDashboard() {
   const [historyDateTo, setHistoryDateTo] = useState('');
   const [historyOrderNumberFilter, setHistoryOrderNumberFilter] = useState('');
 
-  // Filtros da Aba de Ganhos
+  // --- FILTROS DA ABA HISTÓRICO DE GANHOS ---
   const [earningsPeriodMode, setEarningsPeriodMode] = useState<'this_week' | 'last_week' | 'today' | 'this_month' | 'custom'>('this_week');
   const [earningsCustomFrom, setEarningsCustomFrom] = useState<string>('');
   const [earningsCustomTo, setEarningsCustomTo] = useState<string>('');
@@ -224,85 +220,6 @@ export default function RiderDashboard() {
 
     const sortedNotifications = [...allNotifications].sort((a, b) => b.date.localeCompare(a.date));
 
-    // ── VERIFICAÇÃO INTELIGENTE DE NOVAS MENSAGENS PARA NOTIFICAR ──
-    sortedDeliveries.forEach(del => {
-      // 1. Observações de Corrida (Loja -> Motoboy)
-      const prevNote = prevNotesRef.current[del.id];
-      if (prevNote !== undefined && del.notes && del.notes !== prevNote) {
-        const prevLines = prevNote.split('\n');
-        const currentLines = del.notes.split('\n');
-        if (currentLines.length > prevLines.length) {
-          const lastMsg = currentLines[currentLines.length - 1];
-          if (!lastMsg.includes('- Motoboy')) {
-            const sender = lastMsg.includes('- Estabelecimento') ? 'Estabelecimento' : 'Administrador';
-            const msgContent = lastMsg.includes(']: ') ? lastMsg.substring(lastMsg.indexOf(']: ') + 3) : lastMsg;
-            
-            playNotificationSound();
-            sendDeviceNotification(`Nova instrução de ${sender}`, `Pedido #${del.orderNumber || del.id.slice(-4)}: "${msgContent}"`);
-            setActiveToast({
-              id: 'toast-' + Date.now(),
-              title: `Instrução da Loja - Pedido #${del.orderNumber || del.id.slice(-4)}`,
-              message: msgContent,
-              sender,
-              onClick: () => setNotesDeliveryId(del.id)
-            });
-          }
-        }
-      }
-      prevNotesRef.current[del.id] = del.notes || '';
-
-      // 2. Chat com Cliente (Cliente -> Motoboy)
-      const prevChat = prevCustomerChatsRef.current[del.id];
-      if (prevChat !== undefined && del.customerChat && del.customerChat !== prevChat) {
-        const prevLines = prevChat.split('\n');
-        const currentLines = del.customerChat.split('\n');
-        if (currentLines.length > prevLines.length) {
-          const lastMsg = currentLines[currentLines.length - 1];
-          if (!lastMsg.includes('- Motoboy')) {
-            const msgContent = lastMsg.includes(']: ') ? lastMsg.substring(lastMsg.indexOf(']: ') + 3) : lastMsg;
-            
-            playNotificationSound();
-            sendDeviceNotification(`Nova mensagem do Cliente`, `Pedido #${del.orderNumber || del.id.slice(-4)}: "${msgContent}"`);
-            setActiveToast({
-              id: 'toast-cust-' + Date.now(),
-              title: `Mensagem do Cliente - Pedido #${del.orderNumber || del.id.slice(-4)}`,
-              message: msgContent,
-              sender: 'Cliente',
-              onClick: () => setCustomerChatDeliveryId(del.id)
-            });
-          }
-        }
-      }
-      prevCustomerChatsRef.current[del.customerChat ? del.id : ''] = del.customerChat || '';
-    });
-
-    // 3. Chat do Turno (Loja/Admin -> Motoboy)
-    sortedSchedules.forEach(sch => {
-      const prevSchChat = prevScheduleChatsRef.current[sch.id];
-      if (prevSchChat !== undefined && sch.chat && sch.chat !== prevSchChat) {
-        const prevLines = prevSchChat.split('\n');
-        const currentLines = sch.chat.split('\n');
-        if (currentLines.length > prevLines.length) {
-          const lastMsg = currentLines[currentLines.length - 1];
-          if (!lastMsg.includes('- Motoboy')) {
-            const sender = lastMsg.includes('- Estabelecimento') ? 'Estabelecimento' : 'Administrador';
-            const msgContent = lastMsg.includes(']: ') ? lastMsg.substring(lastMsg.indexOf(']: ') + 3) : lastMsg;
-            
-            playNotificationSound();
-            sendDeviceNotification(`Aviso no Chat de Turno (${sender})`, msgContent);
-            setActiveToast({
-              id: 'toast-sch-' + Date.now(),
-              title: `Aviso do Turno - ${sender}`,
-              message: msgContent,
-              sender,
-              onClick: () => setActiveScheduleChatId(sch.id)
-            });
-          }
-        }
-      }
-      prevScheduleChatsRef.current[sch.id] = sch.chat || '';
-    });
-
     setSchedules(sortedSchedules);
     setDeliveries(sortedDeliveries);
     setNotifications(sortedNotifications);
@@ -354,7 +271,7 @@ export default function RiderDashboard() {
 
     const interval = setInterval(() => {
       db.pullFromSupabase().then(() => loadData());
-    }, 2500);
+    }, 2000);
 
     const handleSyncComplete = () => loadData();
     const handleHistoryUpdated = () => loadData();
@@ -511,19 +428,6 @@ export default function RiderDashboard() {
       return;
     }
 
-    // ── VALIDAÇÃO ESTRITA DE MESMO ENDEREÇO ──
-    if (launchForm.deliveryType === 'same_address') {
-      const linkedClean = (launchForm.linkedOrderNumber || '').trim().replace('#', '');
-      if (!linkedClean) {
-        alert('Erro: Para lançar como "Mesmo Endereço (R$ 4,00)", é OBRIGATÓRIO vincular ao Nº do Pedido Principal já lançado hoje.');
-        return;
-      }
-      if (linkedClean === cleanOrderNumber) {
-        alert('Erro: O número do pedido atual não pode ser igual ao pedido principal vinculado.');
-        return;
-      }
-    }
-
     const collectionAmount = launchForm.orderCollectionAmount ? parseFloat(launchForm.orderCollectionAmount.replace(',', '.')) : undefined;
     const changeForValue = launchForm.changeFor ? parseFloat(launchForm.changeFor.replace(',', '.')) : undefined;
 
@@ -532,15 +436,14 @@ export default function RiderDashboard() {
       return;
     }
 
-    // ── BLOQUEIO DE DUPLICIDADES PARA MOTOBOYS ──
     const dupCheck = db.checkDuplicateOrderNumber(cleanOrderNumber, operationalTodayStr, new Date().toTimeString().slice(0, 5), editingDelivery?.id);
     if (dupCheck.isDuplicate) {
       db.unlockOrder(cleanOrderNumber, operationalTodayStr, new Date().toTimeString().slice(0, 5));
       const scheduledEst = getScheduledEstablishmentsToday()[0]?.name || dupCheck.establishmentName || 'seu estabelecimento';
       alert(
-        `⛔ Bloqueio de Duplicidade: O pedido #${cleanOrderNumber} já consta lançado hoje por "${dupCheck.riderName}".\n\n` +
-        `Motoboys não podem duplicar números de pedidos diretamente.\n\n` +
-        `Se for uma entrega compartilhada/dividida, solicite ao Gerente do estabelecimento (${scheduledEst}) ou Administrador para lançar para você.`
+        `⚠️ Atenção: Não é possível lançar o pedido #${cleanOrderNumber}.\n\n` +
+        `Este número de pedido já consta lançado hoje por "${dupCheck.riderName}".\n\n` +
+        `Caso seja uma entrega duplicada ou dividida, por favor solicite o lançamento ao Administrador ou ao Estabelecimento (${scheduledEst}) onde você está escalado / lotado.`
       );
       return;
     }
@@ -671,7 +574,7 @@ export default function RiderDashboard() {
   const todaySchedule = schedules.find(s => isSameDayString(s.date, operationalTodayStr));
   const riderHistoryEsts = getRiderHistoryEstablishments();
 
-  // Filtragem de Corridas de Hoje
+  // Filtragem de Corridas de Hoje com Status e Tipo
   const filteredTodayDeliveries = todayDeliveries.filter(d => {
     if (deliveryStatusFilter !== 'all' && d.status !== deliveryStatusFilter) return false;
 
@@ -689,7 +592,7 @@ export default function RiderDashboard() {
     return true;
   });
 
-  // Filtragem de Histórico
+  // Filtragem de Histórico com Turno Inteligente + Tipo
   const historyDeliveries = deliveries.filter(d => {
     let matchesEst = true;
     if (historyEstFilter) {
@@ -807,7 +710,7 @@ export default function RiderDashboard() {
   const earningsDeliveriesCount = filteredEarningsDeliveries.length;
   const earningsGrossTotal = filteredEarningsDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
   
-  // Isenção de R$ 1,00 para corridas de Mesmo Endereço (R$ 4,00)
+  // Cálculo com isenção de R$ 1,00 para corridas de Mesmo Endereço (R$ 4,00)
   const earningsAdminCut = filteredEarningsDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
   const earningsRiderNet = Math.max(0, earningsGrossTotal - earningsAdminCut);
   const isAllEarningsPaid = earningsDeliveriesCount > 0 && filteredEarningsDeliveries.every(d => d.paid);
@@ -838,6 +741,7 @@ export default function RiderDashboard() {
   const isSameAddress = launchForm.deliveryType === 'same_address';
   const isPaymentOnDelivery = launchForm.paymentMethod !== 'already_paid';
 
+  // Helper para renderizar badge de pagamento
   const renderPaymentBadge = (delivery: Delivery) => {
     const pm = delivery.paymentMethod || 'already_paid';
     if (pm === 'already_paid') return null;
@@ -1497,7 +1401,7 @@ export default function RiderDashboard() {
                             type="date"
                             value={historyDateFrom}
                             onChange={(e) => setHistoryDateFrom(e.target.value)}
-                            className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
                           />
                         </div>
                         <div>
@@ -1506,7 +1410,7 @@ export default function RiderDashboard() {
                             type="date"
                             value={historyDateTo}
                             onChange={(e) => setHistoryDateTo(e.target.value)}
-                            className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
                           />
                         </div>
                       </div>
@@ -2104,6 +2008,7 @@ export default function RiderDashboard() {
                     const isHigh = item.price >= 12;
                     const isMedium = item.price === 10;
                     const isStandard = item.price === 8;
+                    const isLow = item.price === 7;
 
                     return (
                       <div 
@@ -2257,7 +2162,7 @@ export default function RiderDashboard() {
                     }`}
                   >
                     <div className="flex items-center gap-1">
-                      <Link2 className="h-3 w-3" />
+                      <Link2 className="h-3.5 w-3.5" />
                       <span>Mesmo Endereço</span>
                     </div>
                     <span className="text-[10px] font-bold mt-0.5 opacity-90">R$ 4,00</span>

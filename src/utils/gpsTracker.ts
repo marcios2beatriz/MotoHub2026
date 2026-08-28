@@ -166,7 +166,9 @@ class HighPrecisionGpsTracker {
     };
 
     document.addEventListener('visibilitychange', () => {
-      handleReactivate();
+      if (document.visibilityState === 'visible') {
+        handleReactivate();
+      }
     });
     window.addEventListener('focus', handleReactivate);
   }
@@ -186,8 +188,9 @@ class HighPrecisionGpsTracker {
   public setNavigating(navigating: boolean) {
     this.currentState.isNavigating = navigating;
     this.notify();
-    this.enableAudioKeepAlive();
-    this.enableWakeLock();
+    if (navigating) {
+      this.enableAudioKeepAlive();
+    }
   }
 
   private forceLocationPoll() {
@@ -215,7 +218,7 @@ class HighPrecisionGpsTracker {
     if (this.lastLocation) {
       distanceMoved = calculateDistanceMeters(this.lastLocation.lat, this.lastLocation.lng, lat, lng);
       
-      if (distanceMoved < 1.2) {
+      if (distanceMoved < 1.5) {
         lat = this.lastLocation.lat;
         lng = this.lastLocation.lng;
       } else {
@@ -225,7 +228,7 @@ class HighPrecisionGpsTracker {
       }
     }
 
-    if (speedKmh >= 3 && distanceMoved > 1.5) {
+    if (speedKmh >= 4 && distanceMoved > 2) {
       if (rawHeadingVal !== null && !isNaN(rawHeadingVal) && rawHeadingVal >= 0) {
         rawHeading = Math.round(rawHeadingVal);
       } else if (this.lastLocation && distanceMoved > 1) {
@@ -294,7 +297,7 @@ class HighPrecisionGpsTracker {
     this.enableWakeLock();
     this.enableAudioKeepAlive();
 
-    // 1. MODO NATIVO ANDROID / CAPACITOR (Foreground Service Contínuo)
+    // 1. MODO NATIVO ANDROID / CAPACITOR (Foreground Service com Notificação)
     if (Capacitor.isNativePlatform()) {
       try {
         const perm = await Geolocation.requestPermissions();
@@ -304,18 +307,15 @@ class HighPrecisionGpsTracker {
           return;
         }
 
+        // Tenta iniciar o plugin nativo de Background Geolocation com notificação fixa no Android
         try {
-          if (this.bgWatcherId) {
-            await BackgroundGeolocation.removeWatcher({ id: this.bgWatcherId });
-          }
-
           this.bgWatcherId = await BackgroundGeolocation.addWatcher(
             {
               backgroundTitle: 'MotoHub Delivery',
-              backgroundMessage: 'Sua localização está sendo transmitida em tempo real para as lojas.',
+              backgroundMessage: 'Rastreamento GPS ativo em segundo plano.',
               requestPermissions: true,
               stale: false,
-              distanceFilter: 1
+              distanceFilter: 2
             },
             (location, error) => {
               if (error) {
@@ -333,53 +333,62 @@ class HighPrecisionGpsTracker {
               }
             }
           );
+          return;
         } catch (bgErr) {
           console.warn('BackgroundGeolocation plugin fallback:', bgErr);
         }
 
-        if (!this.watchId) {
-          this.watchId = await Geolocation.watchPosition(
-            { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 },
-            (pos, err) => {
-              if (err) {
-                this.handleError(err);
-                return;
-              }
-              if (pos) {
-                this.handleSuccess(
-                  pos.coords.latitude,
-                  pos.coords.longitude,
-                  pos.coords.accuracy,
-                  pos.coords.speed,
-                  pos.coords.heading
-                );
-              }
+        // Fallback nativo Geolocation.watchPosition
+        this.watchId = await Geolocation.watchPosition(
+          { enableHighAccuracy: true },
+          (pos, err) => {
+            if (err) {
+              this.handleError(err);
+              return;
             }
-          );
-        }
+            if (pos) {
+              this.handleSuccess(
+                pos.coords.latitude,
+                pos.coords.longitude,
+                pos.coords.accuracy,
+                pos.coords.speed,
+                pos.coords.heading
+              );
+            }
+          }
+        );
+        return;
       } catch (e) {
         console.warn('Fallback para Geolocation Web:', e);
       }
     }
 
     // 2. MODO WEB / NAVEGADOR
-    if (typeof navigator !== 'undefined' && navigator.geolocation) {
-      const options: PositionOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 };
-      this.forceLocationPoll();
+    if (!navigator.geolocation) {
+      this.currentState = {
+        ...this.currentState,
+        quality: 'off',
+        errorMessage: 'Dispositivo sem suporte a geolocalização.'
+      };
+      this.notify();
+      return;
+    }
 
-      if (this.watchId === null) {
-        this.watchId = navigator.geolocation.watchPosition(
-          (pos) => this.handleSuccess(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, pos.coords.speed, pos.coords.heading),
-          (err) => this.handleError(err),
-          options
-        );
-      }
+    const options: PositionOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 };
+    this.forceLocationPoll();
 
-      if (!this.fallbackTimer) {
-        this.fallbackTimer = setInterval(() => {
-          this.forceLocationPoll();
-        }, 2000);
-      }
+    if (this.watchId === null) {
+      this.watchId = navigator.geolocation.watchPosition(
+        (pos) => this.handleSuccess(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, pos.coords.speed, pos.coords.heading),
+        (err) => this.handleError(err),
+        options
+      );
+    }
+
+    if (!this.fallbackTimer) {
+      this.fallbackTimer = setInterval(() => {
+        this.forceLocationPoll();
+      }, 3000);
     }
   }
 
