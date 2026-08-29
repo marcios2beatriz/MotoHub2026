@@ -190,7 +190,7 @@ export default function EstablishmentDashboard() {
     loadData();
     const interval = setInterval(() => {
       db.pullFromSupabase().then(() => loadData());
-    }, 2000);
+    }, 2500);
 
     const handleDataUpdate = () => loadData();
     window.addEventListener('db-sync-complete', handleDataUpdate);
@@ -569,7 +569,7 @@ export default function EstablishmentDashboard() {
         await db.setDeliveries(updated);
       } else {
         const newDelivery: Delivery = {
-          id: 'd_' + Date.now(),
+          id: 'd_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
           riderId: deliveryForm.riderId,
           establishmentId: currentEst.id,
           date: deliveryForm.date,

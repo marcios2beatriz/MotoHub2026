@@ -158,109 +158,38 @@ export function getDeliveryOperationalDate(dateStr: string, timeStr: string = '1
 
 // Chaves para persistência local
 const SESSION_USER_KEY = 'motohub_session_user';
-const DELIVERIES_STORAGE_BACKUP_KEY = 'motohub_deliveries_master_recovery_v3';
+const DELIVERIES_STORAGE_MASTER_KEY = 'motohub_deliveries_master_v4';
 
-// Extração profunda de número de pedido
-function extractOrderNumberDeep(raw?: string): string | undefined {
+// Extração segura do número de pedido
+function extractOrderNumberSafe(raw?: string): string | undefined {
   if (!raw) return undefined;
-  const trimmed = raw.trim();
+  const trimmed = String(raw).trim();
   if (!trimmed) return undefined;
 
   if (trimmed.startsWith('{')) {
     try {
       const parsed = JSON.parse(trimmed);
-      if (parsed.orderNumber) return String(parsed.orderNumber).replace('#', '').trim();
-      if (parsed.o) return String(parsed.o).replace('#', '').trim();
-      if (parsed.num) return String(parsed.num).replace('#', '').trim();
-      if (parsed.number) return String(parsed.number).replace('#', '').trim();
+      const val = parsed.o || parsed.orderNumber || parsed.num || parsed.number;
+      if (val) return String(val).replace('#', '').trim();
     } catch {}
-
-    const regexList = [
-      /"(?:o|orderNumber|order_number|num|number)"\s*:\s*"([^"]+)"/i,
-      /"(?:o|orderNumber|order_number|num|number)"\s*:\s*(\d{1,8})/i,
-      /#(\d{1,6})/
-    ];
-
-    for (const reg of regexList) {
-      const match = trimmed.match(reg);
-      if (match && match[1]) {
-        return match[1].replace('#', '').trim();
-      }
-    }
   }
 
-  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
-    const hashMatch = trimmed.match(/#(\d{1,6})/);
-    if (hashMatch && hashMatch[1]) return hashMatch[1];
-
-    const cleanNum = trimmed.replace(/\D/g, '');
-    if (cleanNum && cleanNum.length <= 6) return cleanNum;
-
-    return trimmed.replace('#', '').trim();
-  }
-
-  return undefined;
-}
-
-function scanAllLocalStorageDeliveries(): Map<string, any> {
-  const recoveredMap = new Map<string, any>();
-
-  try {
-    const allKeys = Object.keys(localStorage);
-    for (const key of allKeys) {
-      if (key.includes('deliv') || key.includes('motohub') || key.includes('nav') || key.includes('backup') || key.includes('route')) {
-        try {
-          const val = localStorage.getItem(key);
-          if (!val) continue;
-          const parsed = JSON.parse(val);
-
-          const candidateArray: any[] = Array.isArray(parsed) 
-            ? parsed 
-            : (parsed.deliveries && Array.isArray(parsed.deliveries) ? parsed.deliveries : (parsed.id ? [parsed] : []));
-
-          for (const item of candidateArray) {
-            if (item && item.id) {
-              const num = item.orderNumber || item.order_number || extractOrderNumberDeep(item.order_number);
-              if (num || item.notes || item.paid !== undefined || item.paymentMethod) {
-                const existing = recoveredMap.get(item.id) || {};
-                recoveredMap.set(item.id, {
-                  ...existing,
-                  orderNumber: num ? String(num).replace('#', '').trim() : existing.orderNumber,
-                  notes: item.notes || existing.notes,
-                  customerChat: item.customerChat || existing.customerChat,
-                  additionalValue: item.additionalValue !== undefined ? Number(item.additionalValue) : existing.additionalValue,
-                  additionalReason: item.additionalReason || existing.additionalReason,
-                  linkedOrderNumber: item.linkedOrderNumber ? String(item.linkedOrderNumber).replace('#', '').trim() : existing.linkedOrderNumber,
-                  deliveryType: item.deliveryType || existing.deliveryType,
-                  paid: item.paid !== undefined ? Boolean(item.paid) : existing.paid,
-                  paymentMethod: (item.paymentMethod as PaymentMethodType) || existing.paymentMethod,
-                  orderCollectionAmount: item.orderCollectionAmount !== undefined ? Number(item.orderCollectionAmount) : existing.orderCollectionAmount,
-                  changeFor: item.changeFor !== undefined ? Number(item.changeFor) : existing.changeFor
-                });
-              }
-            }
-          }
-        } catch {}
-      }
-    }
-  } catch {}
-
-  return recoveredMap;
-}
-
-function saveMasterDeliveriesBackup(dels: Delivery[]) {
-  try {
-    localStorage.setItem(DELIVERIES_STORAGE_BACKUP_KEY, JSON.stringify(dels));
-  } catch {}
+  return trimmed.replace('#', '').trim();
 }
 
 function loadMasterDeliveriesBackup(): Delivery[] {
   try {
-    const data = localStorage.getItem(DELIVERIES_STORAGE_BACKUP_KEY);
+    const data = localStorage.getItem(DELIVERIES_STORAGE_MASTER_KEY);
     return data ? JSON.parse(data) : [];
   } catch {
     return [];
   }
+}
+
+function saveMasterDeliveriesBackup(dels: Delivery[]) {
+  try {
+    localStorage.setItem(DELIVERIES_STORAGE_MASTER_KEY, JSON.stringify(dels));
+  } catch {}
 }
 
 // Cache em memória
@@ -272,6 +201,16 @@ let memoryNotifications: Notification[] = [];
 let memoryRequests: PartnerRequest[] = [];
 let memoryLocations: Record<string, RiderLocation> = {};
 let memoryRouteHistory: RouteHistoryItem[] = [];
+
+// Mapa de entregas recém-criadas/editadas localmente para não serem destruídas por pulls concorrentes
+const locallyCreatedDeliveries = new Map<string, Delivery>();
+
+// Preenche o mapa com as entregas já salvas no localStorage
+memoryDeliveries.forEach(d => {
+  if (d && d.id) {
+    locallyCreatedDeliveries.set(d.id, d);
+  }
+});
 
 const inFlightOrderLocks = new Set<string>();
 
@@ -532,10 +471,19 @@ export const db = {
     return memoryDeliveries;
   },
 
+  // Gravação pontual ou em lote com salvamento imediato e garantia anti-perda
   async setDeliveries(deliveries: Delivery[]) {
     memoryDeliveries = deliveries;
     saveMasterDeliveriesBackup(deliveries);
 
+    // Registra todas no mapa de entregas ativas locais
+    deliveries.forEach(d => {
+      if (d && d.id) {
+        locallyCreatedDeliveries.set(d.id, d);
+      }
+    });
+
+    // Prepara payload compacto seguro para o Supabase
     const payload = deliveries.map(d => {
       const cleanOrderNum = d.orderNumber ? String(d.orderNumber).replace('#', '').trim() : '';
 
@@ -548,7 +496,7 @@ export const db = {
       if (d.additionalReason) compactMeta.r = d.additionalReason.slice(0, 30);
       if (d.linkedOrderNumber) compactMeta.l = String(d.linkedOrderNumber).replace('#', '').slice(0, 10);
       if (d.paid) compactMeta.p = 1;
-      if (d.notes) compactMeta.n = d.notes.slice(0, 60);
+      if (d.notes) compactMeta.n = d.notes.slice(0, 80);
       if (d.paymentMethod && d.paymentMethod !== 'already_paid') compactMeta.pm = d.paymentMethod;
       if (d.orderCollectionAmount && Number(d.orderCollectionAmount) > 0) compactMeta.ca = Number(d.orderCollectionAmount);
       if (d.changeFor && Number(d.changeFor) > 0) compactMeta.cf = Number(d.changeFor);
@@ -569,23 +517,42 @@ export const db = {
     });
 
     if (payload.length > 0) {
-      await supabase.from('deliveries').upsert(payload, { onConflict: 'id' });
+      try {
+        // Envia em fatias de 100 para evitar payload grande demais
+        const chunkSize = 100;
+        for (let i = 0; i < payload.length; i += chunkSize) {
+          const chunk = payload.slice(i, i + chunkSize);
+          const { error } = await supabase.from('deliveries').upsert(chunk, { onConflict: 'id' });
+          if (error) {
+            console.warn('Aviso no upsert de entregas:', error);
+          }
+        }
+      } catch (err) {
+        console.warn('Erro na conexão com Supabase:', err);
+      }
     }
-    await this.pullFromSupabase();
+
+    window.dispatchEvent(new Event('db-sync-complete'));
   },
 
   async deleteDelivery(id: string) {
+    locallyCreatedDeliveries.delete(id);
     memoryDeliveries = memoryDeliveries.filter(d => d.id !== id);
     saveMasterDeliveriesBackup(memoryDeliveries);
-    await supabase.from('deliveries').delete().eq('id', id);
-    await this.pullFromSupabase();
+    try {
+      await supabase.from('deliveries').delete().eq('id', id);
+    } catch (e) {}
+    window.dispatchEvent(new Event('db-sync-complete'));
   },
 
   async clearAllDeliveries() {
+    locallyCreatedDeliveries.clear();
     memoryDeliveries = [];
     saveMasterDeliveriesBackup([]);
-    await supabase.from('deliveries').delete().neq('id', '');
-    await this.pullFromSupabase();
+    try {
+      await supabase.from('deliveries').delete().neq('id', '');
+    } catch (e) {}
+    window.dispatchEvent(new Event('db-sync-complete'));
   },
 
   getNotifications(): Notification[] {
@@ -762,7 +729,7 @@ export const db = {
     return `000.000.000-${rand()}${rand()}`;
   },
 
-  // ── SINCRONIZAÇÃO TOTAL E CONTÍNUA SEM LIMITE DE CORRIDAS ──
+  // ── SINCRONIZAÇÃO COM MERGE SEGURO ANTI-PERDA DE CORRIDAS ──
   async pullFromSupabase() {
     try {
       const { data: usersData } = await supabase.from('users').select('*').limit(10000);
@@ -836,80 +803,41 @@ export const db = {
         });
       }
 
-      const { data: delData } = await supabase.from('deliveries').select('*').limit(20000);
-      if (delData) {
-        const recoveredFromStorage = scanAllLocalStorageDeliveries();
-        const currentMemoryMap = new Map<string, Delivery>();
-        memoryDeliveries.forEach(d => currentMemoryMap.set(d.id, d));
+      const { data: delData, error: delError } = await supabase.from('deliveries').select('*').limit(20000);
+      if (!delError && delData) {
+        const remoteDeliveriesMap = new Map<string, Delivery>();
 
-        memoryDeliveries = delData.map(d => {
-          const fromStorage = recoveredFromStorage.get(d.id);
-          const fromMemory = currentMemoryMap.get(d.id);
-
-          let orderNumber: string | undefined = extractOrderNumberDeep(d.order_number);
-          let notes: string | undefined = fromStorage?.notes || fromMemory?.notes;
-          let customerChat: string | undefined = fromStorage?.customerChat || fromMemory?.customerChat;
-          let deliveryType: 'standard' | 'same_address' = fromStorage?.deliveryType || fromMemory?.deliveryType || 'standard';
-          let additionalValue: number = fromStorage?.additionalValue || fromMemory?.additionalValue || 0;
-          let additionalReason: string | undefined = fromStorage?.additionalReason || fromMemory?.additionalReason;
-          let linkedOrderNumber: string | undefined = fromStorage?.linkedOrderNumber || fromMemory?.linkedOrderNumber;
-          let linkedDeliveryId: string | undefined = undefined;
-          let paymentMethod: PaymentMethodType = fromStorage?.paymentMethod || fromMemory?.paymentMethod || 'already_paid';
-          let orderCollectionAmount: number | undefined = fromStorage?.orderCollectionAmount || fromMemory?.orderCollectionAmount;
-          let changeFor: number | undefined = fromStorage?.changeFor || fromMemory?.changeFor;
-          let updatedAt = d.updated_at;
-          let paid = Boolean(d.paid || fromStorage?.paid || fromMemory?.paid);
+        delData.forEach(d => {
+          let orderNumber: string | undefined = extractOrderNumberSafe(d.order_number);
+          let notes: string | undefined = undefined;
+          let customerChat: string | undefined = undefined;
+          let deliveryType: 'standard' | 'same_address' = 'standard';
+          let additionalValue: number = 0;
+          let additionalReason: string | undefined = undefined;
+          let linkedOrderNumber: string | undefined = undefined;
+          let paymentMethod: PaymentMethodType = 'already_paid';
+          let orderCollectionAmount: number | undefined = undefined;
+          let changeFor: number | undefined = undefined;
+          let paid = Boolean(d.paid);
 
           if (d.order_number && d.order_number.startsWith('{')) {
             try {
               const parsed = JSON.parse(d.order_number);
-              if (parsed.orderNumber || parsed.o) {
-                orderNumber = String(parsed.orderNumber || parsed.o).replace('#', '').trim();
-              }
-              if (parsed.notes || parsed.n) {
-                notes = parsed.notes || parsed.n;
-              }
-              if (parsed.customerChat || parsed.c) {
-                customerChat = parsed.customerChat || parsed.c;
-              }
-              if (parsed.deliveryType || parsed.t) {
-                deliveryType = parsed.deliveryType || (parsed.t === 'm' ? 'same_address' : 'standard');
-              }
-              if (parsed.additionalValue !== undefined || parsed.a !== undefined) {
-                additionalValue = Number(parsed.additionalValue ?? parsed.a ?? 0);
-              }
-              if (parsed.additionalReason || parsed.r) {
-                additionalReason = parsed.additionalReason || parsed.r;
-              }
-              if (parsed.linkedOrderNumber || parsed.l) {
-                linkedOrderNumber = String(parsed.linkedOrderNumber || parsed.l).replace('#', '').trim();
-              }
-              if (parsed.pm) {
-                const validPm: PaymentMethodType[] = ['already_paid', 'money', 'card_debit', 'card_credit', 'pix_delivery'];
-                if (validPm.includes(parsed.pm as PaymentMethodType)) {
-                  paymentMethod = parsed.pm as PaymentMethodType;
-                }
-              }
-              if (parsed.ca !== undefined) {
-                orderCollectionAmount = Number(parsed.ca);
-              }
-              if (parsed.cf !== undefined) {
-                changeFor = Number(parsed.cf);
-              }
-              if (parsed.p === 1 || parsed.p === true || parsed.paid === true) {
-                paid = true;
-              }
+              if (parsed.o || parsed.orderNumber) orderNumber = String(parsed.o || parsed.orderNumber).replace('#', '').trim();
+              if (parsed.n || parsed.notes) notes = parsed.n || parsed.notes;
+              if (parsed.c || parsed.customerChat) customerChat = parsed.c || parsed.customerChat;
+              if (parsed.t || parsed.deliveryType) deliveryType = parsed.t === 'm' || parsed.deliveryType === 'same_address' ? 'same_address' : 'standard';
+              if (parsed.a !== undefined || parsed.additionalValue !== undefined) additionalValue = Number(parsed.a ?? parsed.additionalValue ?? 0);
+              if (parsed.r || parsed.additionalReason) additionalReason = parsed.r || parsed.additionalReason;
+              if (parsed.l || parsed.linkedOrderNumber) linkedOrderNumber = String(parsed.l || parsed.linkedOrderNumber).replace('#', '').trim();
+              if (parsed.pm) paymentMethod = parsed.pm as PaymentMethodType;
+              if (parsed.ca !== undefined) orderCollectionAmount = Number(parsed.ca);
+              if (parsed.cf !== undefined) changeFor = Number(parsed.cf);
+              if (parsed.p === 1 || parsed.p === true) paid = true;
             } catch (e) {}
           }
 
-          if (!orderNumber && fromStorage?.orderNumber) {
-            orderNumber = fromStorage.orderNumber;
-          }
-          if (!orderNumber && fromMemory?.orderNumber) {
-            orderNumber = fromMemory.orderNumber;
-          }
-
-          return {
+          const parsedDelivery: Delivery = {
             id: d.id,
             riderId: d.rider_id,
             establishmentId: d.establishment_id,
@@ -925,15 +853,54 @@ export const db = {
             additionalValue,
             additionalReason,
             linkedOrderNumber,
-            linkedDeliveryId,
             paymentMethod,
             orderCollectionAmount,
             changeFor,
-            updatedAt,
+            updatedAt: d.updated_at,
             paid
           };
+
+          remoteDeliveriesMap.set(d.id, parsedDelivery);
         });
 
+        // MERGE SEGURO: Preserva todas as entregas locais recém criadas que ainda não subiram ou estão em sincronização
+        const mergedDeliveries: Delivery[] = [];
+        const processedIds = new Set<string>();
+
+        // 1. Adiciona as remotas atualizando com dados locais caso haja edição pendente
+        remoteDeliveriesMap.forEach((remoteDel, id) => {
+          const localDel = locallyCreatedDeliveries.get(id);
+          if (localDel) {
+            // Preserva orderNumber e campos importantes se a remota perdeu
+            mergedDeliveries.push({
+              ...remoteDel,
+              orderNumber: localDel.orderNumber || remoteDel.orderNumber,
+              notes: localDel.notes || remoteDel.notes,
+              customerChat: localDel.customerChat || remoteDel.customerChat,
+              deliveryType: localDel.deliveryType || remoteDel.deliveryType,
+              additionalValue: localDel.additionalValue ?? remoteDel.additionalValue,
+              additionalReason: localDel.additionalReason || remoteDel.additionalReason,
+              linkedOrderNumber: localDel.linkedOrderNumber || remoteDel.linkedOrderNumber,
+              paymentMethod: localDel.paymentMethod || remoteDel.paymentMethod,
+              orderCollectionAmount: localDel.orderCollectionAmount ?? remoteDel.orderCollectionAmount,
+              changeFor: localDel.changeFor ?? remoteDel.changeFor,
+              paid: localDel.paid ?? remoteDel.paid
+            });
+          } else {
+            mergedDeliveries.push(remoteDel);
+          }
+          processedIds.add(id);
+        });
+
+        // 2. Adiciona as locais que ainda não constam no Supabase
+        locallyCreatedDeliveries.forEach((localDel, id) => {
+          if (!processedIds.has(id)) {
+            mergedDeliveries.push(localDel);
+            processedIds.add(id);
+          }
+        });
+
+        memoryDeliveries = mergedDeliveries;
         saveMasterDeliveriesBackup(memoryDeliveries);
       }
 
