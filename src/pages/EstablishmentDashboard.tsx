@@ -32,7 +32,14 @@ import {
   Banknote,
   CreditCard,
   QrCode,
-  Wallet
+  Wallet,
+  Receipt,
+  Coins,
+  Search,
+  CheckCircle2,
+  Clock,
+  TrendingUp,
+  X
 } from 'lucide-react';
 import L from 'leaflet';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
@@ -44,9 +51,24 @@ import { realtimeGps } from '../utils/realtimeGps';
 
 const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
 
+const getThisMonday = (): string => {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
+
+  const year = monday.getFullYear();
+  const month = String(monday.getMonth() + 1).padStart(2, '0');
+  const dateNum = String(monday.getDate()).padStart(2, '0');
+  return `${year}-${month}-${dateNum}`;
+};
+
 export default function EstablishmentDashboard() {
   const navigate = useNavigate();
   const [user] = useState(db.getCurrentUser());
+
+  // Aba ativa: Operação diária, Repasses individuais, Histórico de Corridas ou Mapa
+  const [activeTab, setActiveTab] = useState<'operation' | 'settlements' | 'deliveries_history' | 'map_fullscreen'>('operation');
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [allRiders, setAllRiders] = useState<User[]>([]);
@@ -56,7 +78,17 @@ export default function EstablishmentDashboard() {
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Filtros de corridas
+  // --- FILTROS DA ABA DE REPASSES INDIVIDUAIS DOS MOTOBOYS ---
+  const [settlePeriodMode, setSettlePeriodMode] = useState<'this_week' | 'last_week' | 'today' | 'this_month' | 'custom'>('this_week');
+  const [settleCustomFrom, setSettleCustomFrom] = useState<string>('');
+  const [settleCustomTo, setSettleCustomTo] = useState<string>('');
+  const [settleRiderSearch, setSettleRiderSearch] = useState<string>('');
+  const [settlePaidFilter, setSettlePaidFilter] = useState<'unpaid' | 'paid' | 'all'>('unpaid');
+  const [settleFeatureFilter, setSettleFeatureFilter] = useState<'all' | 'with_additional' | 'linked' | 'standard'>('all');
+  const [settlePaymentFilter, setSettlePaymentFilter] = useState<'all' | 'to_collect' | 'money' | 'card' | 'pix' | 'already_paid'>('all');
+  const [selectedRiderDetailsId, setSelectedRiderDetailsId] = useState<string | null>(null);
+
+  // --- FILTROS DE HISTÓRICO DE CORRIDAS ---
   const [filterMode, setFilterMode] = useState<'smart_shift' | 'date_range' | 'all'>('smart_shift');
   const [smartDate, setSmartDate] = useState<string>(db.getOperationalDateString());
   const [smartPeriod, setSmartPeriod] = useState<'all_shifts' | 'night_shift' | 'morning_shift' | 'afternoon_shift'>('all_shifts');
@@ -295,7 +327,7 @@ export default function EstablishmentDashboard() {
       }
       hasSetInitialMapBoundsRef.current = true;
     }
-  }, [onlineScheduledRiderLocations]);
+  }, [onlineScheduledRiderLocations, activeTab]);
 
   useEffect(() => {
     if (mapRef.current) {
@@ -303,7 +335,7 @@ export default function EstablishmentDashboard() {
         mapRef.current?.invalidateSize();
       }, 100);
     }
-  }, [isMapExpanded]);
+  }, [isMapExpanded, activeTab]);
 
   const handleLogout = () => {
     db.setCurrentUser(null);
@@ -592,6 +624,7 @@ export default function EstablishmentDashboard() {
     setSmartDate(db.getOperationalDateString(d));
   };
 
+  // --- REPASSE / BAIXA DO MOTOBOY ---
   const handleSettleRiderDeliveries = async (riderId: string, deliveryIds: string[]) => {
     const rider = db.resolveUser(riderId);
     if (!rider) return;
@@ -604,6 +637,95 @@ export default function EstablishmentDashboard() {
       loadData();
     }
   };
+
+  const handleUnsettleRiderDeliveries = async (riderId: string, deliveryIds: string[]) => {
+    const rider = db.resolveUser(riderId);
+    if (!rider) return;
+
+    if (confirm(`Deseja reverter e marcar as ${deliveryIds.length} corrida(s) de ${rider.name} como A REPASSAR (PENDENTES)?`)) {
+      const allDeliveries = db.getDeliveries();
+      const idSet = new Set(deliveryIds);
+      const updated = allDeliveries.map(d => idSet.has(d.id) ? { ...d, paid: false, updatedAt: new Date().toISOString() } : d);
+      await db.setDeliveries(updated);
+      loadData();
+    }
+  };
+
+  // --- CÁLCULO DE LIMITES DE DATA DA ABA DE REPASSES ---
+  const getSettleDateBounds = (): { start: string; end: string; label: string } => {
+    const now = new Date();
+    if (settlePeriodMode === 'today') {
+      const tStr = db.getOperationalDateString();
+      return { start: tStr, end: tStr, label: 'Hoje (Turno Atual)' };
+    }
+
+    if (settlePeriodMode === 'this_week') {
+      const monStr = getThisMonday();
+      const [y, m, d] = monStr.split('-').map(Number);
+      const sun = new Date(y, m - 1, d + 6);
+      const sunStr = `${sun.getFullYear()}-${String(sun.getMonth() + 1).padStart(2, '0')}-${String(sun.getDate()).padStart(2, '0')}`;
+      return { start: monStr, end: sunStr, label: 'Esta Semana (Segunda a Domingo)' };
+    }
+
+    if (settlePeriodMode === 'last_week') {
+      const monStr = getThisMonday();
+      const [y, m, d] = monStr.split('-').map(Number);
+      const lastMon = new Date(y, m - 1, d - 7);
+      const lastSun = new Date(y, m - 1, d - 1);
+      const lastMonStr = `${lastMon.getFullYear()}-${String(lastMon.getMonth() + 1).padStart(2, '0')}-${String(lastSun.getDate()).padStart(2, '0')}`;
+      const lastSunStr = `${lastSun.getFullYear()}-${String(lastSun.getMonth() + 1).padStart(2, '0')}-${String(lastSun.getDate()).padStart(2, '0')}`;
+      return { start: lastMonStr, end: lastSunStr, label: 'Semana Passada' };
+    }
+
+    if (settlePeriodMode === 'this_month') {
+      const y = now.getFullYear();
+      const m = now.getMonth();
+      const startStr = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+      const lastDay = new Date(y, m + 1, 0).getDate();
+      const endStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      return { start: startStr, end: endStr, label: 'Este Mês' };
+    }
+
+    return {
+      start: settleCustomFrom || '1970-01-01',
+      end: settleCustomTo || '2099-12-31',
+      label: 'Período Personalizado'
+    };
+  };
+
+  const settleBounds = getSettleDateBounds();
+
+  // Filtragem de corridas para a aba de repasses
+  const filteredSettleDeliveries = deliveries.filter(d => {
+    if (d.status !== 'active') return false;
+
+    if (d.date < settleBounds.start || d.date > settleBounds.end) return false;
+
+    if (settlePaidFilter === 'unpaid' && d.paid) return false;
+    if (settlePaidFilter === 'paid' && !d.paid) return false;
+
+    if (settleFeatureFilter === 'with_additional' && (!d.additionalValue || Number(d.additionalValue) <= 0)) return false;
+    if (settleFeatureFilter === 'linked' && (d.deliveryType !== 'same_address' && !d.linkedOrderNumber)) return false;
+    if (settleFeatureFilter === 'standard' && (d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber) || (d.additionalValue && Number(d.additionalValue) > 0))) return false;
+
+    if (settlePaymentFilter === 'to_collect' && (!d.paymentMethod || d.paymentMethod === 'already_paid')) return false;
+    if (settlePaymentFilter === 'money' && d.paymentMethod !== 'money') return false;
+    if (settlePaymentFilter === 'card' && d.paymentMethod !== 'card_debit' && d.paymentMethod !== 'card_credit') return false;
+    if (settlePaymentFilter === 'pix' && d.paymentMethod !== 'pix_delivery') return false;
+    if (settlePaymentFilter === 'already_paid' && d.paymentMethod && d.paymentMethod !== 'already_paid') return false;
+
+    return true;
+  });
+
+  // Lista de motoboys que possuem corridas ou escalas no estabelecimento
+  const relevantRiders = allRiders.filter(r => {
+    const hasSchedules = establishmentSchedules.some(s => db.isSameUser(s.riderId, r.id));
+    const hasDeliveries = deliveries.some(d => db.isSameUser(d.riderId, r.id));
+    return hasSchedules || hasDeliveries;
+  }).filter(r => 
+    r.name.toLowerCase().includes(settleRiderSearch.toLowerCase()) || 
+    r.phone.includes(settleRiderSearch)
+  );
 
   const renderPaymentBadge = (delivery: Delivery) => {
     const pm = delivery.paymentMethod || 'already_paid';
@@ -676,7 +798,6 @@ export default function EstablishmentDashboard() {
       if (notesFilter === 'with_notes' && !hasNotes) return false;
       if (notesFilter === 'without_notes' && hasNotes) return false;
 
-      // Filtro de com adicional / vinculado / padrão
       if (featureFilter === 'with_additional') {
         const hasAdd = Number(d.additionalValue || 0) > 0;
         if (!hasAdd) return false;
@@ -688,7 +809,6 @@ export default function EstablishmentDashboard() {
         if (!isStandard) return false;
       }
 
-      // Filtro de Cobrança ao Cliente / Forma de Pagamento
       if (paymentFilter === 'to_collect') {
         const isCollect = d.paymentMethod && d.paymentMethod !== 'already_paid';
         if (!isCollect) return false;
@@ -746,6 +866,8 @@ export default function EstablishmentDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans pb-12">
+      
+      {/* Header Principal */}
       <header className="bg-slate-900 text-white shadow-md sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
           <div className="flex items-center space-x-3">
@@ -788,116 +910,534 @@ export default function EstablishmentDashboard() {
         </div>
       </header>
 
-      <main className="max-w-7xl w-full mx-auto px-4 mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1">
-        <div className="lg:col-span-7 xl:col-span-8 space-y-6">
-          <div className="grid grid-cols-3 gap-4">
-            <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 flex items-center space-x-3">
-              <div className="p-3 bg-purple-100 text-purple-600 rounded-xl flex-shrink-0">
-                <Users className="h-5 w-5" />
+      {/* BARRA DE NAVEGAÇÃO DE ABAS DO ESTABELECIMENTO */}
+      <div className="bg-white border-b border-slate-200 sticky top-[57px] z-30 shadow-xs">
+        <div className="max-w-7xl mx-auto px-4 py-2 flex items-center gap-1.5 overflow-x-auto">
+          <button
+            onClick={() => setActiveTab('operation')}
+            className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 flex-shrink-0 ${
+              activeTab === 'operation'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <TrendingUp className="h-4 w-4" />
+            <span>Operação & Rastreamento</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('settlements')}
+            className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 flex-shrink-0 ${
+              activeTab === 'settlements'
+                ? 'bg-emerald-600 text-white shadow-sm'
+                : 'text-emerald-800 bg-emerald-50/60 hover:bg-emerald-100/80 border border-emerald-200'
+            }`}
+          >
+            <Wallet className="h-4 w-4 text-emerald-500" />
+            <span>Repasses dos Motoboys (Fechamento)</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('deliveries_history')}
+            className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 flex-shrink-0 ${
+              activeTab === 'deliveries_history'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <Check className="h-4 w-4" />
+            <span>Todas as Corridas ({deliveries.length})</span>
+          </button>
+        </div>
+      </div>
+
+      <main className="max-w-7xl w-full mx-auto px-4 mt-6 flex-1">
+        
+        {/* ========================================================================= */}
+        {/* ABA 1: OPERAÇÃO DO DIA + CENTRAL DE RASTREAMENTO */}
+        {/* ========================================================================= */}
+        {activeTab === 'operation' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-7 xl:col-span-8 space-y-6">
+              
+              {/* Métricas do Dia */}
+              <div className="grid grid-cols-3 gap-4">
+                <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 flex items-center space-x-3">
+                  <div className="p-3 bg-purple-100 text-purple-600 rounded-xl flex-shrink-0">
+                    <Users className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">MOTOBOYS HOJE</p>
+                    <p className="text-2xl font-black text-slate-800 leading-tight mt-0.5">{todaySchedules.length}</p>
+                  </div>
+                </div>
+
+                <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 flex items-center space-x-3">
+                  <div className="p-3 bg-emerald-100 text-emerald-600 rounded-xl flex-shrink-0">
+                    <DollarSign className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">TOTAL HOJE</p>
+                    <p className="text-2xl font-black text-slate-800 leading-tight mt-0.5">R$ {todayRevenue.toFixed(2)}</p>
+                  </div>
+                </div>
+
+                <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 flex items-center space-x-3">
+                  <div className="p-3 bg-indigo-100 text-indigo-600 rounded-xl flex-shrink-0">
+                    <Bike className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">CORRIDAS HOJE</p>
+                    <p className="text-2xl font-black text-slate-800 leading-tight mt-0.5">{todayApprovedDeliveries.length}</p>
+                  </div>
+                </div>
               </div>
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">MOTOBOYS HOJE</p>
-                <p className="text-2xl font-black text-slate-800 leading-tight mt-0.5">{todaySchedules.length}</p>
+
+              {/* Botão de Atalho para Repasses */}
+              <div className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white p-4 rounded-2xl shadow-md flex items-center justify-between gap-3">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2.5 bg-white/15 rounded-xl">
+                    <Wallet className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <h4 className="font-extrabold text-sm sm:text-base">Fechamento & Repasse de Motoboys</h4>
+                    <p className="text-xs text-emerald-100 opacity-90">Consulte os repasses com as 5 métricas por período semanal ou diário</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setActiveTab('settlements')}
+                  className="bg-white hover:bg-emerald-50 text-emerald-900 px-4 py-2 rounded-xl text-xs font-black shadow-sm transition-all flex-shrink-0"
+                >
+                  Abrir Repasses →
+                </button>
               </div>
+
+              {/* Corridas de Hoje */}
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex items-center space-x-2">
+                    <Check className="h-5 w-5 text-indigo-600" />
+                    <div>
+                      <h3 className="font-extrabold text-slate-800 text-base">
+                        Corridas de Hoje ({todayDeliveries.length})
+                      </h3>
+                      <p className="text-xs text-slate-400">Entregas despachadas no turno atual</p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleOpenLaunchModal()}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition-colors flex items-center gap-1 shadow-sm"
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span>Lançar Corrida</span>
+                  </button>
+                </div>
+
+                {todayDeliveries.length === 0 ? (
+                  <div className="text-center py-10 text-xs text-slate-400">
+                    Nenhuma corrida lançada hoje até o momento.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {todayDeliveries.map(del => {
+                      const rider = db.resolveUser(del.riderId);
+                      const isSame = del.deliveryType === 'same_address';
+                      const hasAdd = Number(del.additionalValue || 0) > 0;
+
+                      return (
+                        <div key={del.id} className="py-3 flex flex-col space-y-1 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0 space-y-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {del.orderNumber && (
+                                  <span className="bg-indigo-600 text-white font-black text-[10px] px-2 py-0.5 rounded-md">
+                                    #{del.orderNumber}
+                                  </span>
+                                )}
+                                <p className="font-extrabold text-slate-800 text-xs">{rider?.name || 'Motoboy'}</p>
+                                
+                                {isSame && (
+                                  <span className="bg-purple-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-0.5">
+                                    <Link2 className="h-2.5 w-2.5" />
+                                    <span>Mesmo (R$4)</span>
+                                  </span>
+                                )}
+
+                                {hasAdd && (
+                                  <span className="bg-amber-100 text-amber-900 text-[9px] font-bold px-1.5 py-0.5 rounded-full">
+                                    + R$ {Number(del.additionalValue).toFixed(2)}
+                                  </span>
+                                )}
+
+                                <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${
+                                  del.status === 'active' ? 'bg-emerald-100 text-emerald-800' :
+                                  del.status === 'pending' ? 'bg-amber-100 text-amber-800 font-black animate-pulse' :
+                                  'bg-red-100 text-red-800'
+                                }`}>
+                                  {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : 'Rejeitada'}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-400">{del.time}</p>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                              {del.status === 'pending' && (
+                                <button
+                                  onClick={() => handleApproveDelivery(del.id)}
+                                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-bold"
+                                >
+                                  Aprovar
+                                </button>
+                              )}
+                              <button
+                                onClick={() => handleShareTracking(del.id)}
+                                className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded text-[11px] font-bold flex items-center gap-1"
+                              >
+                                <Share2 className="h-3 w-3" />
+                                <span>{copiedId === del.id ? 'Copiado!' : 'Rastreio'}</span>
+                              </button>
+                              <span className="font-black text-xs text-emerald-700 ml-1">
+                                R$ {Number(del.value).toFixed(2)}
+                              </span>
+                            </div>
+                          </div>
+
+                          {renderPaymentBadge(del)}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
             </div>
 
-            <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 flex items-center space-x-3">
-              <div className="p-3 bg-emerald-100 text-emerald-600 rounded-xl flex-shrink-0">
-                <DollarSign className="h-5 w-5" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">TOTAL HOJE</p>
-                <p className="text-2xl font-black text-slate-800 leading-tight mt-0.5">R$ {todayRevenue.toFixed(2)}</p>
-              </div>
-            </div>
+            {/* Central de Rastreamento GPS */}
+            <div className="lg:col-span-5 xl:col-span-4 space-y-6">
+              <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/80 space-y-4 sticky top-20">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                  <div className="flex items-center space-x-2">
+                    <MapIcon className="h-5 w-5 text-indigo-600" />
+                    <div>
+                      <h3 className="font-extrabold text-slate-800 text-base">Central de Rastreamento</h3>
+                      <p className="text-[11px] text-slate-400">{onlineRidersCount} motoboy(s) online escalado(s) hoje</p>
+                    </div>
+                  </div>
 
-            <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 flex items-center space-x-3">
-              <div className="p-3 bg-indigo-100 text-indigo-600 rounded-xl flex-shrink-0">
-                <Bike className="h-5 w-5" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">CORRIDAS HOJE</p>
-                <p className="text-2xl font-black text-slate-800 leading-tight mt-0.5">{todayApprovedDeliveries.length}</p>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={handleRecenterMap}
+                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-extrabold px-2.5 py-1.5 rounded-lg border border-indigo-100 flex items-center gap-1"
+                      title="Centralizar Motoboys"
+                    >
+                      <LocateFixed className="h-3.5 w-3.5" />
+                      <span>Centralizar</span>
+                    </button>
+                    <button
+                      onClick={() => setIsMapExpanded(!isMapExpanded)}
+                      className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+                      title="Expandir Mapa em Tela Cheia"
+                    >
+                      {isMapExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className={isMapExpanded ? "fixed inset-0 top-0 left-0 w-screen h-screen z-[99999] bg-slate-900 p-3 sm:p-5 flex flex-col space-y-3" : "w-full h-[480px] rounded-2xl border border-slate-200/80 overflow-hidden relative"}>
+                  {isMapExpanded && (
+                    <div className="flex items-center justify-between bg-slate-800 text-white px-4 py-3 rounded-2xl border border-slate-700 flex-shrink-0 shadow-lg z-10">
+                      <div className="flex items-center space-x-3">
+                        <div className="p-2 bg-indigo-600 rounded-xl text-white">
+                          <MapIcon className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <h3 className="font-extrabold text-sm sm:text-base">Central de Rastreamento - Tela Cheia</h3>
+                          <p className="text-xs text-slate-400">{onlineRidersCount} motoboy(s) online escalado(s) hoje</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={handleRecenterMap}
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 shadow-sm"
+                        >
+                          <LocateFixed className="h-4 w-4" />
+                          <span>Centralizar</span>
+                        </button>
+                        <button
+                          onClick={() => setIsMapExpanded(false)}
+                          className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-sm"
+                        >
+                          <Minimize2 className="h-4 w-4" />
+                          <span>Sair da Tela Cheia</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  <div ref={mapContainerRef} className="w-full h-full rounded-2xl overflow-hidden" />
+                </div>
               </div>
             </div>
           </div>
+        )}
 
-          {/* NOVO: SEÇÃO DE REPASSE INDIVIDUAL POR MOTOBOY COM AS 5 MÉTRICAS */}
-          <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200/80 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center space-x-2">
-                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
-                  <Wallet className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="font-extrabold text-slate-800 text-base">
-                    Repasse Individual por Motoboy ({todaySchedules.length})
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Discriminação completa: Corridas, Mesmo Endereço (R$ 4 isento), Adicionais, Taxa Adm (R$ 1) e Líquido Motoboy
-                  </p>
-                </div>
+        {/* ========================================================================= */}
+        {/* ABA 2: REPASSES INDIVIDUAIS DOS MOTOBOYS (FECHAMENTO COM 5 MÉTRICAS) */}
+        {/* ========================================================================= */}
+        {activeTab === 'settlements' && (
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200/80 space-y-6 animate-fadeIn">
+            
+            {/* Header da Aba de Repasses */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
+                  <Wallet className="h-6 w-6 text-emerald-600" />
+                  <span>Repasses Individuais dos Motoboys</span>
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Fechamento financeiro com 5 métricas: Corridas, Mesmo Endereço (R$4 isento), Adicionais, Taxa Adm (R$1) e Líquido
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  value={settleFeatureFilter}
+                  onChange={(e) => setSettleFeatureFilter(e.target.value as any)}
+                  className="px-3 py-1.5 border border-purple-300 rounded-xl text-xs font-bold text-purple-900 bg-purple-50 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                >
+                  <option value="all">Todos os Tipos</option>
+                  <option value="with_additional">✨ Com Adicional</option>
+                  <option value="linked">🔗 Vinculadas (Mesmo End.)</option>
+                  <option value="standard">Padrão</option>
+                </select>
+
+                <select
+                  value={settlePaidFilter}
+                  onChange={(e) => setSettlePaidFilter(e.target.value as any)}
+                  className="px-3 py-1.5 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                >
+                  <option value="unpaid">A Repassar (Pendentes de Baixa)</option>
+                  <option value="paid">Já Pagas (Baixadas)</option>
+                  <option value="all">Todas as Corridas</option>
+                </select>
               </div>
             </div>
 
-            {todaySchedules.length === 0 ? (
-              <div className="text-center py-8 text-xs text-slate-400">
-                Nenhum motoboy escalado para este estabelecimento hoje.
+            {/* PAINEL DE FILTROS AVANÇADOS: BUSCA POR NOME, PERÍODOS E SEMANAIS */}
+            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
+              
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/60 pb-3">
+                <span className="text-xs font-black uppercase text-indigo-900 flex items-center gap-1.5 tracking-wider">
+                  <Filter className="h-4 w-4 text-emerald-600" />
+                  <span>Período Selecionado: {settleBounds.label}</span>
+                </span>
+
+                {/* Campo de Busca por Nome de Motoboy */}
+                <div className="relative w-full sm:w-72">
+                  <input
+                    type="text"
+                    placeholder="Buscar motoboy por nome ou telefone..."
+                    value={settleRiderSearch}
+                    onChange={(e) => setSettleRiderSearch(e.target.value)}
+                    className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 shadow-xs"
+                  />
+                  <Search className="h-4 w-4 text-slate-400 absolute left-3 top-2.5" />
+                  {settleRiderSearch && (
+                    <button onClick={() => setSettleRiderSearch('')} className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Botões de Período Rápido */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSettlePeriodMode('this_week')}
+                  className={`py-2 rounded-xl text-xs font-black transition-all border ${
+                    settlePeriodMode === 'this_week' 
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' 
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  📅 Esta Semana
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSettlePeriodMode('last_week')}
+                  className={`py-2 rounded-xl text-xs font-black transition-all border ${
+                    settlePeriodMode === 'last_week' 
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' 
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  ⏮️ Semana Passada
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSettlePeriodMode('today')}
+                  className={`py-2 rounded-xl text-xs font-black transition-all border ${
+                    settlePeriodMode === 'today' 
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' 
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  ⚡ Hoje (Turno)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSettlePeriodMode('this_month')}
+                  className={`py-2 rounded-xl text-xs font-black transition-all border ${
+                    settlePeriodMode === 'this_month' 
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' 
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  📆 Este Mês
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSettlePeriodMode('custom')}
+                  className={`py-2 rounded-xl text-xs font-black transition-all border ${
+                    settlePeriodMode === 'custom' 
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' 
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  🔍 Personalizado
+                </button>
+              </div>
+
+              {/* Seletor de Datas Personalizado */}
+              {settlePeriodMode === 'custom' && (
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data Inicial</label>
+                    <input
+                      type="date"
+                      value={settleCustomFrom}
+                      onChange={(e) => setSettleCustomFrom(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data Final</label>
+                    <input
+                      type="date"
+                      value={settleCustomTo}
+                      onChange={(e) => setSettleCustomTo(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-bold"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* CARDS COM AS 5 MÉTRICAS DE CADA MOTOBOY */}
+            {relevantRiders.length === 0 ? (
+              <div className="text-center py-12 bg-slate-50 border border-slate-200 rounded-2xl text-slate-400 text-xs">
+                Nenhum motoboy encontrado para os filtros selecionados.
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {todaySchedules.map((sch) => {
-                  const rider = db.resolveUser(sch.riderId);
-                  const riderDeliveries = filteredDeliveries.filter(d => d.riderId === sch.riderId && d.status === 'active');
-                  const allPaid = riderDeliveries.length > 0 && riderDeliveries.every(d => d.paid);
+                {relevantRiders.map(rider => {
+                  const riderDeliveries = filteredSettleDeliveries.filter(d => db.isSameUser(d.riderId, rider.id));
+                  const count = riderDeliveries.length;
+                  const allPaid = count > 0 && riderDeliveries.every(d => d.paid);
 
                   return (
-                    <RiderFinancialMetricsCard
-                      key={sch.id}
-                      riderName={rider?.name || 'Motoboy'}
-                      riderPhone={rider?.phone}
-                      deliveries={riderDeliveries}
-                      isPaid={allPaid}
-                      showSettleButton={true}
-                      onSettle={() => handleSettleRiderDeliveries(sch.riderId, riderDeliveries.map(d => d.id))}
-                      periodLabel={smartDate}
-                    />
+                    <div key={rider.id} className="space-y-2">
+                      <RiderFinancialMetricsCard
+                        riderName={rider.name}
+                        riderPhone={rider.phone}
+                        deliveries={riderDeliveries}
+                        isPaid={allPaid}
+                        showSettleButton={true}
+                        onSettle={() => handleSettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
+                        onUnsettle={() => handleUnsettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
+                        periodLabel={settleBounds.label}
+                      />
+
+                      {count > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedRiderDetailsId(selectedRiderDetailsId === rider.id ? null : rider.id)}
+                          className="w-full py-1.5 text-center text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50/50 hover:bg-indigo-100/60 rounded-xl border border-indigo-100 transition-colors"
+                        >
+                          {selectedRiderDetailsId === rider.id ? 'Ocultar Detalhes das Corridas ▲' : `Ver ${count} Corrida(s) Detalhada(s) ▼`}
+                        </button>
+                      )}
+
+                      {/* Tabela detalhada expansível */}
+                      {selectedRiderDetailsId === rider.id && count > 0 && (
+                        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 space-y-2 text-xs animate-fadeIn">
+                          <p className="font-extrabold text-slate-700 text-[11px] uppercase tracking-wider">
+                            Corridas de {rider.name} ({settleBounds.label})
+                          </p>
+                          <div className="divide-y divide-slate-200/60 max-h-56 overflow-y-auto">
+                            {riderDeliveries.map(del => (
+                              <div key={del.id} className="py-2 flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                  <div className="flex items-center gap-1.5">
+                                    {del.orderNumber && (
+                                      <span className="font-black bg-indigo-600 text-white text-[9px] px-1.5 py-0.2 rounded">
+                                        #{del.orderNumber}
+                                      </span>
+                                    )}
+                                    <span className="font-mono text-[11px] text-slate-600">{del.time}</span>
+                                    <span className="text-[10px] text-slate-400">({new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR')})</span>
+                                  </div>
+                                  {del.deliveryType === 'same_address' && (
+                                    <span className="text-[9px] font-bold text-purple-700">Mesmo Endereço (R$ 4)</span>
+                                  )}
+                                  {Number(del.additionalValue || 0) > 0 && (
+                                    <span className="text-[9px] font-bold text-amber-700">+ Adicional R$ {Number(del.additionalValue).toFixed(2)}</span>
+                                  )}
+                                </div>
+                                <span className="font-black text-slate-800 text-xs">
+                                  R$ {Number(del.value).toFixed(2)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
               </div>
             )}
           </div>
+        )}
 
-          {/* LISTAGEM DE CORRIDAS */}
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 space-y-4">
+        {/* ========================================================================= */}
+        {/* ABA 3: TODAS AS CORRIDAS E HISTÓRICO COMPLETO */}
+        {/* ========================================================================= */}
+        {activeTab === 'deliveries_history' && (
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 space-y-4 animate-fadeIn">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-2">
                 <Check className="h-5 w-5 text-indigo-600" />
                 <div>
                   <h3 className="font-extrabold text-slate-800 text-base">
-                    Corridas Lançadas e Histórico ({filteredDeliveries.length})
+                    Histórico Completo de Corridas ({filteredDeliveries.length})
                   </h3>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    Acesse todas as corridas registradas no estabelecimento por período e status
+                    Filtre todas as entregas por turno, data, número de pedido ou observações
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center space-x-2 flex-wrap gap-y-2">
-                {pendingDeliveries.length > 0 && (
-                  <button
-                    onClick={handleApproveAllPendingDeliveries}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl text-xs font-black transition-all shadow-md flex items-center gap-1.5"
-                    title="Aprovar todas as corridas pendentes"
-                  >
-                    <CheckCheck className="h-3.5 w-3.5" />
-                    <span>Aprovar em Massa ({pendingDeliveries.length})</span>
-                  </button>
-                )}
-
+              <div className="flex items-center space-x-2">
                 <button
                   onClick={() => setShowBatchModal(true)}
-                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 self-start sm:self-center"
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 shadow-sm"
                 >
                   <Layers className="h-3.5 w-3.5" />
                   <span>Lançar em Lote</span>
@@ -1019,7 +1559,6 @@ export default function EstablishmentDashboard() {
                   </div>
                 </div>
 
-                {/* FILTRO: COBRANÇA AO CLIENTE / PAGAMENTO */}
                 <div>
                   <label className="block text-[10px] font-black text-amber-800 uppercase mb-1 flex items-center gap-1">
                     <Banknote className="h-3 w-3 text-amber-600" />
@@ -1128,7 +1667,6 @@ export default function EstablishmentDashboard() {
                             )}
                             <p className="font-extrabold text-slate-800 text-sm truncate">{rider?.name || 'Motoboy'}</p>
 
-                            {/* Badge Mesmo Endereço com Vinculação */}
                             {isSame && (
                               <span className="bg-purple-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
                                 <Link2 className="h-2.5 w-2.5" />
@@ -1136,7 +1674,6 @@ export default function EstablishmentDashboard() {
                               </span>
                             )}
 
-                            {/* Badge Valor Adicional com Motivo */}
                             {hasAdditional && (
                               <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-black px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
                                 <Sparkles className="h-2.5 w-2.5 text-amber-600" />
@@ -1235,7 +1772,6 @@ export default function EstablishmentDashboard() {
                         </div>
                       </div>
 
-                      {/* BADGE DE COBRANÇA NA ENTREGA */}
                       {renderPaymentBadge(del)}
                     </div>
                   );
@@ -1243,74 +1779,7 @@ export default function EstablishmentDashboard() {
               </div>
             )}
           </div>
-        </div>
-
-        {/* Central de Rastreamento GPS */}
-        <div className="lg:col-span-5 xl:col-span-4 space-y-6">
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/80 space-y-4 sticky top-20">
-            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-              <div className="flex items-center space-x-2">
-                <MapIcon className="h-5 w-5 text-indigo-600" />
-                <div>
-                  <h3 className="font-extrabold text-slate-800 text-base">Central de Rastreamento</h3>
-                  <p className="text-[11px] text-slate-400">{onlineRidersCount} motoboy(s) online escalado(s) hoje</p>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={handleRecenterMap}
-                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-extrabold px-2.5 py-1.5 rounded-lg border border-indigo-100 flex items-center gap-1"
-                  title="Centralizar Motoboys"
-                >
-                  <LocateFixed className="h-3.5 w-3.5" />
-                  <span>Centralizar</span>
-                </button>
-                <button
-                  onClick={() => setIsMapExpanded(!isMapExpanded)}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
-                  title="Expandir Mapa em Tela Cheia"
-                >
-                  {isMapExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
-
-            <div className={isMapExpanded ? "fixed inset-0 top-0 left-0 w-screen h-screen z-[99999] bg-slate-900 p-3 sm:p-5 flex flex-col space-y-3" : "w-full h-[520px] rounded-2xl border border-slate-200/80 overflow-hidden relative"}>
-              {isMapExpanded && (
-                <div className="flex items-center justify-between bg-slate-800 text-white px-4 py-3 rounded-2xl border border-slate-700 flex-shrink-0 shadow-lg z-10">
-                  <div className="flex items-center space-x-3">
-                    <div className="p-2 bg-indigo-600 rounded-xl text-white">
-                      <MapIcon className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <h3 className="font-extrabold text-sm sm:text-base">Central de Rastreamento - Tela Cheia</h3>
-                      <p className="text-xs text-slate-400">{onlineRidersCount} motoboy(s) online escalado(s) hoje</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center space-x-2">
-                    <button
-                      onClick={handleRecenterMap}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 shadow-sm"
-                    >
-                      <LocateFixed className="h-4 w-4" />
-                      <span>Centralizar</span>
-                    </button>
-                    <button
-                      onClick={() => setIsMapExpanded(false)}
-                      className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-sm"
-                    >
-                      <Minimize2 className="h-4 w-4" />
-                      <span>Sair da Tela Cheia</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-              <div ref={mapContainerRef} className="w-full h-full rounded-2xl overflow-hidden" />
-            </div>
-          </div>
-        </div>
+        )}
 
       </main>
 
