@@ -902,6 +902,14 @@ export default function EstablishmentDashboard() {
               </button>
             )}
             <button
+              onClick={() => handleOpenLaunchModal()}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 shadow-sm"
+              title="Lançar corrida individual"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Lançar Corrida</span>
+            </button>
+            <button
               onClick={() => setShowBatchModal(true)}
               className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 shadow-sm"
               title="Lançar múltiplas corridas em lote"
@@ -1529,6 +1537,13 @@ export default function EstablishmentDashboard() {
               </div>
 
               <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => handleOpenLaunchModal()}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 shadow-sm"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Lançar Corrida</span>
+                </button>
                 <button
                   onClick={() => setShowBatchModal(true)}
                   className="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 shadow-sm"
