@@ -63,6 +63,7 @@ import DeliveryNotesModal from '../components/DeliveryNotesModal';
 import ScheduleChatModal from '../components/ScheduleChatModal';
 import BatchDeliveryModal from '../components/BatchDeliveryModal';
 import ChatToastBanner, { ChatToast } from '../components/ChatToastBanner';
+import RiderFinancialMetricsCard from '../components/RiderFinancialMetricsCard';
 import { sendDeviceNotification, playNotificationSound, requestNotificationPermission } from '../utils/notifications';
 import { realtimeGps } from '../utils/realtimeGps';
 
@@ -2663,7 +2664,7 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* ABA FECHAMENTO FINANCEIRO REORGANIZADA COM DIVISÃO DE GANHOS */}
+          {/* ABA FECHAMENTO FINANCEIRO REORGANIZADA COM DIVISÃO DE GANHOS E 5 MÉTRICAS */}
           {activeTab === 'finance' && (
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6">
               
@@ -2894,13 +2895,13 @@ export default function AdminDashboard() {
 
               </div>
 
-              {/* SEÇÃO 1: FECHAMENTO POR MOTOBOY */}
+              {/* SEÇÃO 1: FECHAMENTO POR MOTOBOY COM AS 5 MÉTRICAS */}
               {financeActiveSection === 'riders' && (
                 <div className="space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <h3 className="font-extrabold text-slate-800 text-base flex items-center gap-2">
                       <Bike className="h-5 w-5 text-indigo-600" />
-                      <span>Extrato por Motoboy ({users.filter(u => u.role === 'rider').length})</span>
+                      <span>Repasse Individual por Motoboy ({users.filter(u => u.role === 'rider').length})</span>
                     </h3>
 
                     <div className="w-full sm:w-64">
@@ -2921,85 +2922,20 @@ export default function AdminDashboard() {
                       .map(rider => {
                         const riderDeliveries = financeFilteredDeliveries.filter(d => d.riderId === rider.id);
                         const count = riderDeliveries.length;
-                        const grossVal = riderDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
-                        const adminCut = riderDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
-                        const riderNet = Math.max(0, grossVal - adminCut);
                         const allPaid = count > 0 && riderDeliveries.every(d => d.paid);
 
                         return (
-                          <div 
-                            key={rider.id} 
-                            className={`p-5 rounded-2xl border transition-all ${
-                              count > 0 
-                                ? allPaid 
-                                  ? 'bg-slate-50 border-slate-200' 
-                                  : 'bg-white border-indigo-200 shadow-sm hover:border-indigo-400' 
-                                : 'bg-slate-50/50 border-slate-200 opacity-60'
-                            }`}
-                          >
-                            <div className="flex justify-between items-start">
-                              <div className="flex items-center space-x-3 min-w-0">
-                                <div className="w-10 h-10 rounded-full bg-indigo-600 text-white font-black text-sm flex items-center justify-center flex-shrink-0">
-                                  {rider.name.charAt(0).toUpperCase()}
-                                </div>
-                                <div className="min-w-0">
-                                  <h4 className="font-extrabold text-slate-900 text-base truncate">{rider.name}</h4>
-                                  <p className="text-xs text-slate-500 font-mono">{rider.phone || 'Sem telefone'}</p>
-                                </div>
-                              </div>
-
-                              <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase ${
-                                count === 0 ? 'bg-slate-100 text-slate-500' :
-                                allPaid ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'
-                              }`}>
-                                {count === 0 ? 'Sem Corridas' : allPaid ? 'Pago' : 'A Repassar'}
-                              </span>
-                            </div>
-
-                            {/* Detalhamento dos Valores */}
-                            <div className="grid grid-cols-3 gap-2 pt-3.5 pb-2 text-center border-t border-slate-100 mt-3">
-                              <div className="bg-slate-50 rounded-xl p-2 border border-slate-100">
-                                <p className="text-[9px] font-extrabold text-slate-400 uppercase">Corridas</p>
-                                <p className="text-sm font-black text-slate-800 mt-0.5">{count}</p>
-                              </div>
-                              <div className="bg-amber-50/60 rounded-xl p-2 border border-amber-200">
-                                <p className="text-[9px] font-extrabold text-amber-800 uppercase">Taxa Adm (R$1)</p>
-                                <p className="text-sm font-black text-amber-700 mt-0.5">R$ {adminCut.toFixed(2)}</p>
-                              </div>
-                              <div className="bg-emerald-50 rounded-xl p-2 border border-emerald-200">
-                                <p className="text-[9px] font-extrabold text-emerald-800 uppercase">Líquido Motoboy</p>
-                                <p className="text-sm font-black text-emerald-700 mt-0.5">R$ {riderNet.toFixed(2)}</p>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-100">
-                              <span className="text-slate-500 font-medium">
-                                Bruto Total: <strong className="text-slate-700">R$ {grossVal.toFixed(2)}</strong>
-                              </span>
-
-                              {count > 0 && (
-                                <div className="flex items-center space-x-1.5">
-                                  {allPaid ? (
-                                    <button
-                                      onClick={() => handleUnsettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
-                                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-bold transition-colors"
-                                      title="Desmarcar como pago"
-                                    >
-                                      Reverter
-                                    </button>
-                                  ) : (
-                                    <button
-                                      onClick={() => handleSettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
-                                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-black transition-all shadow-sm flex items-center gap-1"
-                                    >
-                                      <Check className="h-3.5 w-3.5" />
-                                      <span>Dar Baixa (Pagar)</span>
-                                    </button>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </div>
+                          <RiderFinancialMetricsCard
+                            key={rider.id}
+                            riderName={rider.name}
+                            riderPhone={rider.phone}
+                            deliveries={riderDeliveries}
+                            isPaid={allPaid}
+                            showSettleButton={true}
+                            onSettle={() => handleSettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
+                            onUnsettle={() => handleUnsettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
+                            periodLabel={financeBounds.label}
+                          />
                         );
                       })}
                   </div>

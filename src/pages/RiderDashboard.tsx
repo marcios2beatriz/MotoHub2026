@@ -45,6 +45,7 @@ import CustomerChatModal from '../components/CustomerChatModal';
 import ScheduleChatModal from '../components/ScheduleChatModal';
 import RiderNavigationMap from '../components/RiderNavigationMap';
 import ChatToastBanner, { ChatToast } from '../components/ChatToastBanner';
+import RiderFinancialMetricsCard from '../components/RiderFinancialMetricsCard';
 import { sendDeviceNotification, playNotificationSound, requestNotificationPermission } from '../utils/notifications';
 import { gpsTracker, GpsState } from '../utils/gpsTracker';
 
@@ -709,13 +710,7 @@ export default function RiderDashboard() {
     return true;
   });
 
-  const earningsDeliveriesCount = filteredEarningsDeliveries.length;
-  const earningsGrossTotal = filteredEarningsDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
-  
-  // Cálculo com isenção de R$ 1,00 para corridas de Mesmo Endereço (R$ 4,00)
-  const earningsAdminCut = filteredEarningsDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
-  const earningsRiderNet = Math.max(0, earningsGrossTotal - earningsAdminCut);
-  const isAllEarningsPaid = earningsDeliveriesCount > 0 && filteredEarningsDeliveries.every(d => d.paid);
+  const isAllEarningsPaid = filteredEarningsDeliveries.length > 0 && filteredEarningsDeliveries.every(d => d.paid);
 
   // --- FILTRAGEM DA TABELA DE BAIRROS ---
   const filteredNeighborhoods = NEIGHBORHOOD_RATES.filter(item => {
@@ -1625,7 +1620,7 @@ export default function RiderDashboard() {
           </div>
         )}
 
-        {/* ABA: HISTÓRICO DE GANHOS DO MOTOBOY */}
+        {/* ABA: HISTÓRICO DE GANHOS DO MOTOBOY COM AS 5 MÉTRICAS */}
         {activeTab === 'earnings' && (
           <div className="space-y-6">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6">
@@ -1638,7 +1633,7 @@ export default function RiderDashboard() {
                     <span>Histórico de Ganhos & Repasses</span>
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Acompanhe seu faturamento líquido (corridas de mesmo endereço R$ 4,00 são 100% isentas da taxa adm)
+                    Acompanhe seu faturamento com discriminação das 5 métricas financeiras
                   </p>
                 </div>
 
@@ -1777,84 +1772,15 @@ export default function RiderDashboard() {
                 </div>
               </div>
 
-              {/* CARD DE GANHOS DO MOTOBOY */}
-              <div className="p-6 rounded-3xl border-2 border-indigo-200/90 bg-white shadow-md space-y-4">
-                
-                {/* Header do Card com Nome, Telefone e Badge de Status */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3.5 min-w-0">
-                    <div className="w-12 h-12 rounded-full bg-indigo-600 text-white font-black text-lg flex items-center justify-center flex-shrink-0 shadow-md">
-                      {user?.name ? user.name.charAt(0).toUpperCase() : 'M'}
-                    </div>
-                    <div className="min-w-0">
-                      <h3 className="font-extrabold text-slate-900 text-base sm:text-lg truncate">
-                        {user?.name}
-                      </h3>
-                      <p className="text-xs text-slate-500 font-mono mt-0.5">
-                        {user?.phone || 'Telefone não cadastrado'}
-                      </p>
-                    </div>
-                  </div>
-
-                  <span className={`text-[11px] font-black px-3.5 py-1 rounded-full uppercase tracking-wider shadow-xs ${
-                    earningsDeliveriesCount === 0 
-                      ? 'bg-slate-100 text-slate-500' 
-                      : isAllEarningsPaid 
-                        ? 'bg-emerald-100 text-emerald-800' 
-                        : 'bg-amber-100 text-amber-900 border border-amber-300'
-                  }`}>
-                    {earningsDeliveriesCount === 0 ? 'SEM CORRIDAS' : isAllEarningsPaid ? 'PAGO' : 'A REPASSAR'}
-                  </span>
-                </div>
-
-                {/* Grid dos 3 Blocos (Corridas, Taxa Adm R$ 1, Líquido Motoboy) */}
-                <div className="grid grid-cols-3 gap-2.5 pt-2 text-center">
-                  
-                  {/* Bloco 1: Corridas */}
-                  <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 flex flex-col justify-center">
-                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider">CORRIDAS</p>
-                    <p className="text-2xl sm:text-3xl font-black text-slate-900 mt-1">
-                      {earningsDeliveriesCount}
-                    </p>
-                  </div>
-
-                  {/* Bloco 2: Taxa Adm (R$ 1) */}
-                  <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-3.5 flex flex-col justify-center">
-                    <p className="text-[10px] font-black text-amber-800 uppercase tracking-wider">TAXA ADM (R$1)</p>
-                    <p className="text-xl sm:text-2xl font-black text-amber-700 mt-1">
-                      R$ {earningsAdminCut.toFixed(2)}
-                    </p>
-                  </div>
-
-                  {/* Bloco 3: Líquido Motoboy */}
-                  <div className="bg-emerald-50 border-2 border-emerald-300 rounded-2xl p-3.5 flex flex-col justify-center">
-                    <p className="text-[10px] font-black text-emerald-800 uppercase tracking-wider">LÍQUIDO MOTOBOY</p>
-                    <p className="text-xl sm:text-2xl font-black text-emerald-700 mt-1">
-                      R$ {earningsRiderNet.toFixed(2)}
-                    </p>
-                  </div>
-
-                </div>
-
-                {/* Linha Inferior com Bruto Total e Status */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-3 border-t border-slate-100 text-xs">
-                  <div className="text-slate-600 font-bold">
-                    <span>Bruto Total: </span>
-                    <strong className="text-slate-900 font-black text-sm">
-                      R$ {earningsGrossTotal.toFixed(2)}
-                    </strong>
-                  </div>
-
-                  <div className="text-right">
-                    <span className="text-[11px] text-slate-400 font-semibold">
-                      {earningsDeliveriesCount > 0 
-                        ? `${earningsDeliveriesCount} corrida(s) no período de ${earningsBounds.label}` 
-                        : 'Nenhuma corrida registrada no período'}
-                    </span>
-                  </div>
-                </div>
-
-              </div>
+              {/* CARD PRINCIPAL COM AS 5 MÉTRICAS */}
+              <RiderFinancialMetricsCard
+                riderName={user?.name || 'Motoboy'}
+                riderPhone={user?.phone}
+                deliveries={filteredEarningsDeliveries}
+                isPaid={isAllEarningsPaid}
+                showSettleButton={false}
+                periodLabel={earningsBounds.label}
+              />
 
               {/* LISTA DISCRIMINADA DAS CORRIDAS DO PERÍODO */}
               <div className="space-y-3 pt-2">
@@ -1891,7 +1817,7 @@ export default function RiderDashboard() {
                               {isSame && (
                                 <span className="bg-purple-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-0.5">
                                   <Link2 className="h-2.5 w-2.5" />
-                                  <span>Mesmo Endereço</span>
+                                  <span>Mesmo Endereço (R$ 4)</span>
                                 </span>
                               )}
 
@@ -2015,7 +1941,6 @@ export default function RiderDashboard() {
                     const isHigh = item.price >= 12;
                     const isMedium = item.price === 10;
                     const isStandard = item.price === 8;
-                    const isLow = item.price === 7;
 
                     return (
                       <div 

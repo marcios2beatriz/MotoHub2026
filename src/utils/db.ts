@@ -160,13 +160,12 @@ export function getDeliveryOperationalDate(dateStr: string, timeStr: string = '1
 const SESSION_USER_KEY = 'motohub_session_user';
 const DELIVERIES_STORAGE_BACKUP_KEY = 'motohub_deliveries_master_recovery_v3';
 
-// ── EXTRAÇÃO INTELIGENTE E RESILIENTE DE NÚMERO DO PEDIDO ──
+// Extração profunda de número de pedido
 function extractOrderNumberDeep(raw?: string): string | undefined {
   if (!raw) return undefined;
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
 
-  // 1. Tenta extração via JSON
   if (trimmed.startsWith('{')) {
     try {
       const parsed = JSON.parse(trimmed);
@@ -176,7 +175,6 @@ function extractOrderNumberDeep(raw?: string): string | undefined {
       if (parsed.number) return String(parsed.number).replace('#', '').trim();
     } catch {}
 
-    // 2. Extração via Regex em JSON truncado ou corrompido
     const regexList = [
       /"(?:o|orderNumber|order_number|num|number)"\s*:\s*"([^"]+)"/i,
       /"(?:o|orderNumber|order_number|num|number)"\s*:\s*(\d{1,8})/i,
@@ -191,7 +189,6 @@ function extractOrderNumberDeep(raw?: string): string | undefined {
     }
   }
 
-  // 3. String direta com hashtag ou números (ex: "#1042", "1042", "Pedido 1042")
   if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
     const hashMatch = trimmed.match(/#(\d{1,6})/);
     if (hashMatch && hashMatch[1]) return hashMatch[1];
@@ -205,8 +202,7 @@ function extractOrderNumberDeep(raw?: string): string | undefined {
   return undefined;
 }
 
-// ── VARREDURA COMPLETA DE TODAS AS CHAVES DO LOCALSTORAGE PARA RESGATAR PEDIDOS ──
-function scanAllLocalStorageDeliveries(): Map<string, { orderNumber?: string; notes?: string; customerChat?: string; additionalValue?: number; additionalReason?: string; linkedOrderNumber?: string; deliveryType?: 'standard' | 'same_address'; paid?: boolean; paymentMethod?: PaymentMethodType; orderCollectionAmount?: number; changeFor?: number }> {
+function scanAllLocalStorageDeliveries(): Map<string, any> {
   const recoveredMap = new Map<string, any>();
 
   try {
@@ -532,7 +528,6 @@ export const db = {
     await this.pullFromSupabase();
   },
 
-  // ── GERENCIAMENTO E SERIALIZAÇÃO DE CORRIDAS ──
   getDeliveries(): Delivery[] {
     return memoryDeliveries;
   },
@@ -544,7 +539,6 @@ export const db = {
     const payload = deliveries.map(d => {
       const cleanOrderNum = d.orderNumber ? String(d.orderNumber).replace('#', '').trim() : '';
 
-      // Monta objeto compacto garantindo o campo "o" (orderNumber) sempre presente
       const compactMeta: any = {
         o: cleanOrderNum
       };
@@ -768,10 +762,10 @@ export const db = {
     return `000.000.000-${rand()}${rand()}`;
   },
 
-  // ── SINCRONIZAÇÃO E RESTAURAÇÃO TOTAL DOS DADOS DO SUPABASE ──
+  // ── SINCRONIZAÇÃO TOTAL E CONTÍNUA SEM LIMITE DE CORRIDAS ──
   async pullFromSupabase() {
     try {
-      const { data: usersData } = await supabase.from('users').select('*');
+      const { data: usersData } = await supabase.from('users').select('*').limit(10000);
       if (usersData) {
         memoryUsers = usersData.map(u => ({
           id: u.id,
@@ -789,7 +783,7 @@ export const db = {
         }));
       }
 
-      const { data: estsData } = await supabase.from('establishments').select('*');
+      const { data: estsData } = await supabase.from('establishments').select('*').limit(10000);
       if (estsData) {
         memoryEstablishments = estsData.map(e => ({
           id: e.id,
@@ -811,7 +805,7 @@ export const db = {
         }));
       }
 
-      const { data: schData } = await supabase.from('schedules').select('*');
+      const { data: schData } = await supabase.from('schedules').select('*').limit(10000);
       if (schData) {
         memorySchedules = schData.map(s => {
           let chat: string | undefined = undefined;
@@ -842,19 +836,16 @@ export const db = {
         });
       }
 
-      const { data: delData } = await supabase.from('deliveries').select('*');
+      const { data: delData } = await supabase.from('deliveries').select('*').limit(20000);
       if (delData) {
-        // Varredura profunda do localStorage
         const recoveredFromStorage = scanAllLocalStorageDeliveries();
         const currentMemoryMap = new Map<string, Delivery>();
         memoryDeliveries.forEach(d => currentMemoryMap.set(d.id, d));
 
-        // Mapeamento e restauração dos números de todas as entregas
         memoryDeliveries = delData.map(d => {
           const fromStorage = recoveredFromStorage.get(d.id);
           const fromMemory = currentMemoryMap.get(d.id);
 
-          // 1. Extração profunda de order_number
           let orderNumber: string | undefined = extractOrderNumberDeep(d.order_number);
           let notes: string | undefined = fromStorage?.notes || fromMemory?.notes;
           let customerChat: string | undefined = fromStorage?.customerChat || fromMemory?.customerChat;
@@ -911,7 +902,6 @@ export const db = {
             } catch (e) {}
           }
 
-          // 2. Se o banco não trouxe número, usa a restauração encontrada do storage ou memória
           if (!orderNumber && fromStorage?.orderNumber) {
             orderNumber = fromStorage.orderNumber;
           }
@@ -944,11 +934,10 @@ export const db = {
           };
         });
 
-        // Salva backup permanente master com todos os números restaurados
         saveMasterDeliveriesBackup(memoryDeliveries);
       }
 
-      const { data: reqsData } = await supabase.from('partner_requests').select('*');
+      const { data: reqsData } = await supabase.from('partner_requests').select('*').limit(10000);
       if (reqsData) {
         memoryRequests = reqsData.map(r => ({
           id: r.id,
@@ -961,7 +950,7 @@ export const db = {
         }));
       }
 
-      const { data: locData } = await supabase.from('rider_locations').select('*');
+      const { data: locData } = await supabase.from('rider_locations').select('*').limit(10000);
       if (locData) {
         const mappedLocs: Record<string, RiderLocation> = {};
         locData.forEach(l => {
@@ -986,5 +975,4 @@ export const db = {
   }
 };
 
-// Executa a carga inicial diretamente do Supabase
 db.pullFromSupabase();
