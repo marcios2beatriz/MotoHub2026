@@ -95,7 +95,7 @@ export default function EstablishmentDashboard() {
   const [settleCustomFrom, setSettleCustomFrom] = useState<string>('');
   const [settleCustomTo, setSettleCustomTo] = useState<string>('');
   const [settleRiderSearch, setSettleRiderSearch] = useState<string>('');
-  const [settlePaidFilter, setSettlePaidFilter] = useState<'unpaid' | 'paid' | 'all'>('unpaid');
+  const [settlePaidFilter, setSettlePaidFilter] = useState<'unpaid' | 'paid' | 'all'>('all');
   const [settleFeatureFilter, setSettleFeatureFilter] = useState<'all' | 'same_order_number' | 'with_additional' | 'linked' | 'standard'>('all');
   const [settlePaymentFilter, setSettlePaymentFilter] = useState<'all' | 'to_collect' | 'money' | 'card' | 'pix' | 'already_paid'>('all');
   const [selectedRiderDetailsId, setSelectedRiderDetailsId] = useState<string | null>(null);
@@ -873,7 +873,7 @@ export default function EstablishmentDashboard() {
         if (!orderNum.includes(cleanTarget) && !delId.includes(cleanTarget)) return false;
       }
 
-      if (riderFilter !== 'all' && d.riderId !== riderFilter) return false;
+      if (riderFilter !== 'all' && !db.isSameUser(d.riderId, riderFilter)) return false;
       if (statusFilter !== 'all' && d.status !== statusFilter) return false;
 
       if (filterMode === 'smart_shift') {
@@ -1011,9 +1011,7 @@ export default function EstablishmentDashboard() {
 
       <main className="max-w-7xl w-full mx-auto px-4 mt-6 flex-1">
         
-        {/* ========================================================================= */}
         {/* ABA 1: OPERAÇÃO DO DIA + CARDS DOS MOTOBOYS ESCALADOS + RASTREAMENTO */}
-        {/* ========================================================================= */}
         {activeTab === 'operation' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="lg:col-span-7 xl:col-span-8 space-y-6">
@@ -1051,7 +1049,7 @@ export default function EstablishmentDashboard() {
                 </div>
               </div>
 
-              {/* SEÇÃO PRINCIPAL: CARDS DOS MOTOBOYS ESCALADOS HOJE COM AÇÕES RÁPIDAS */}
+              {/* CARDS DOS MOTOBOYS ESCALADOS HOJE */}
               <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200/80 space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <div className="flex items-center space-x-2">
@@ -1092,7 +1090,6 @@ export default function EstablishmentDashboard() {
                       return (
                         <div key={sch.id} className="bg-white border border-slate-200/90 rounded-2xl p-4 space-y-3.5 shadow-xs hover:border-indigo-300 transition-all flex flex-col justify-between">
                           
-                          {/* Top: Header do Motoboy */}
                           <div>
                             <div className="flex items-start justify-between">
                               <div className="flex items-center space-x-3 min-w-0">
@@ -1118,7 +1115,6 @@ export default function EstablishmentDashboard() {
                               </span>
                             </div>
 
-                            {/* Detalhes do Turno */}
                             <div className="flex items-center gap-2 text-xs text-slate-600 mt-3 bg-slate-50 px-3 py-2 rounded-xl border border-slate-100">
                               <Clock className="h-4 w-4 text-indigo-600" />
                               <span className="font-extrabold text-slate-800">Turno da {getShiftLabel(sch.shift)}</span>
@@ -1127,7 +1123,6 @@ export default function EstablishmentDashboard() {
                             </div>
                           </div>
 
-                          {/* Ações Rápidas */}
                           <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
                             <button
                               onClick={() => handleOpenLaunchModal(sch.riderId)}
@@ -1332,9 +1327,7 @@ export default function EstablishmentDashboard() {
           </div>
         )}
 
-        {/* ========================================================================= */}
         {/* ABA 2: REPASSES INDIVIDUAIS DOS MOTOBOYS (FECHAMENTO COM 5 MÉTRICAS) */}
-        {/* ========================================================================= */}
         {activeTab === 'settlements' && (
           <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200/80 space-y-6 animate-fadeIn">
             
@@ -1368,14 +1361,14 @@ export default function EstablishmentDashboard() {
                   onChange={(e) => setSettlePaidFilter(e.target.value as any)}
                   className="px-3 py-1.5 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 >
+                  <option value="all">Todas as Corridas</option>
                   <option value="unpaid">A Repassar (Pendentes de Baixa)</option>
                   <option value="paid">Já Pagas (Baixadas)</option>
-                  <option value="all">Todas as Corridas</option>
                 </select>
               </div>
             </div>
 
-            {/* PAINEL DE FILTROS AVANÇADOS: BUSCA POR NOME, PERÍODOS E SEMANAIS */}
+            {/* PAINEL DE FILTROS AVANÇADOS */}
             <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
               
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/60 pb-3">
@@ -1567,9 +1560,7 @@ export default function EstablishmentDashboard() {
           </div>
         )}
 
-        {/* ========================================================================= */}
         {/* ABA 3: TODAS AS CORRIDAS E HISTÓRICO COMPLETO */}
-        {/* ========================================================================= */}
         {activeTab === 'deliveries_history' && (
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 space-y-4 animate-fadeIn">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
@@ -1846,7 +1837,6 @@ export default function EstablishmentDashboard() {
                             )}
                             <p className="font-extrabold text-slate-800 text-sm truncate">{rider?.name || 'Motoboy'}</p>
 
-                            {/* Badge de Repetição do mesmo número de pedido */}
                             {repeatCount > 1 && (
                               <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-0.5 shadow-xs border border-amber-600 animate-pulse">
                                 <Copy className="h-2.5 w-2.5" />
@@ -1854,15 +1844,13 @@ export default function EstablishmentDashboard() {
                               </span>
                             )}
 
-                            {/* Badge Mesmo Endereço com Vinculação */}
                             {isSame && (
                               <span className="bg-purple-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
-                                <Link2 className="h-2.5 w-2.5" />
+                                <Link2 className="h-3 w-3" />
                                 <span>Mesmo Endereço {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : ''}</span>
                               </span>
                             )}
 
-                            {/* Badge Valor Adicional com Motivo */}
                             {hasAdditional && (
                               <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-black px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
                                 <Sparkles className="h-2.5 w-2.5 text-amber-600" />
@@ -1961,7 +1949,6 @@ export default function EstablishmentDashboard() {
                         </div>
                       </div>
 
-                      {/* BADGE DE COBRANÇA NA ENTREGA */}
                       {renderPaymentBadge(del)}
                     </div>
                   );

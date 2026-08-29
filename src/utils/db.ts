@@ -152,7 +152,7 @@ export function getDeliveryOperationalDate(dateStr: string, timeStr: string = '1
 }
 
 const SESSION_USER_KEY = 'motohub_session_user';
-const DELIVERIES_STORAGE_MASTER_KEY = 'motohub_deliveries_master_v6';
+const DELIVERIES_STORAGE_MASTER_KEY = 'motohub_deliveries_master_v7';
 
 function extractOrderNumberSafe(raw?: string): string | undefined {
   if (!raw) return undefined;
@@ -170,10 +170,10 @@ function extractOrderNumberSafe(raw?: string): string | undefined {
   return trimmed.replace('#', '').trim();
 }
 
-// Recupera de todas as chaves já usadas para não perder nenhuma corrida criada
 function loadMasterDeliveriesBackup(): Delivery[] {
   const merged = new Map<string, Delivery>();
   const keysToScan = [
+    'motohub_deliveries_master_v7',
     'motohub_deliveries_master_v6',
     'motohub_deliveries_master_v5',
     'motohub_deliveries_master_v4',
@@ -306,7 +306,7 @@ export const db = {
     const targetOpDate = getDeliveryOperationalDate(date, time);
     return memoryDeliveries.filter(d => {
       if (d.status === 'cancelled' || d.status === 'rejected') return false;
-      if (riderId && d.riderId !== riderId) return false;
+      if (riderId && !this.isSameUser(d.riderId, riderId)) return false;
       const dOpDate = getDeliveryOperationalDate(d.date, d.time);
       return isSameDayString(dOpDate, targetOpDate);
     });
@@ -465,6 +465,9 @@ export const db = {
     memorySchedules = schedules;
     
     const payload = schedules.map(s => {
+      const canonicalRider = this.resolveUser(s.riderId);
+      const canonicalEst = this.resolveEstablishment(s.establishmentId);
+
       const serializedCreatedBy = JSON.stringify({
         createdBy: s.createdBy || '',
         chat: s.chat || '',
@@ -473,8 +476,8 @@ export const db = {
 
       return {
         id: s.id,
-        rider_id: s.riderId,
-        establishment_id: s.establishmentId,
+        rider_id: canonicalRider?.id || s.riderId,
+        establishment_id: canonicalEst?.id || s.establishmentId,
         date: s.date,
         shift: s.shift,
         start_time: s.startTime,
@@ -500,16 +503,27 @@ export const db = {
   },
 
   async setDeliveries(deliveries: Delivery[]) {
-    memoryDeliveries = deliveries;
-    saveMasterDeliveriesBackup(deliveries);
+    // Normaliza todos os IDs para os canônicos de usuários e estabelecimentos
+    const normalized = deliveries.map(d => {
+      const canonicalRider = this.resolveUser(d.riderId);
+      const canonicalEst = this.resolveEstablishment(d.establishmentId);
+      return {
+        ...d,
+        riderId: canonicalRider?.id || d.riderId,
+        establishmentId: canonicalEst?.id || d.establishmentId
+      };
+    });
 
-    deliveries.forEach(d => {
+    memoryDeliveries = normalized;
+    saveMasterDeliveriesBackup(normalized);
+
+    normalized.forEach(d => {
       if (d && d.id) {
         locallyCreatedDeliveries.set(d.id, d);
       }
     });
 
-    const payload = deliveries.map(formatDeliveryPayload);
+    const payload = normalized.map(formatDeliveryPayload);
 
     if (payload.length > 0) {
       try {
@@ -554,7 +568,7 @@ export const db = {
     memoryNotifications = notifications;
     const payload = notifications.map(n => ({
       id: n.id,
-      rider_id: n.riderId,
+      rider_id: this.resolveUser(n.riderId)?.id || n.riderId,
       title: n.title,
       message: n.message,
       date: n.date,
@@ -623,12 +637,13 @@ export const db = {
   async updateRiderLocation(riderId: string, riderName: string, lat: number, lng: number) {
     if (!riderId || !lat || !lng || isNaN(lat) || isNaN(lng)) return;
 
+    const canonicalId = this.resolveUser(riderId)?.id || riderId;
     const updatedAt = new Date().toISOString();
-    memoryLocations[riderId] = { riderId, riderName, lat, lng, updatedAt };
+    memoryLocations[canonicalId] = { riderId: canonicalId, riderName, lat, lng, updatedAt };
 
     try {
       await supabase.from('rider_locations').upsert({
-        rider_id: riderId,
+        rider_id: canonicalId,
         rider_name: riderName,
         lat: lat,
         lng: lng,
@@ -640,10 +655,11 @@ export const db = {
   },
 
   async clearRiderLocation(riderId: string) {
-    realtimeGps.sendOffline(riderId);
-    delete memoryLocations[riderId];
+    const canonicalId = this.resolveUser(riderId)?.id || riderId;
+    realtimeGps.sendOffline(canonicalId);
+    delete memoryLocations[canonicalId];
     try {
-      await supabase.from('rider_locations').delete().eq('rider_id', riderId);
+      await supabase.from('rider_locations').delete().eq('rider_id', canonicalId);
     } catch (e) {}
   },
 
@@ -669,6 +685,7 @@ export const db = {
 
     const cleanId = id.toLowerCase().trim();
     return memoryUsers.find(u => 
+      (u.id && u.id.toLowerCase().trim() === cleanId) ||
       (u.email && u.email.toLowerCase().trim() === cleanId) ||
       (u.name && (
         u.name.toLowerCase().trim() === cleanId ||
@@ -685,11 +702,12 @@ export const db = {
 
     const cleanId = id.toLowerCase().trim();
     return memoryEstablishments.find(e => 
-      e.name && (
+      (e.id && e.id.toLowerCase().trim() === cleanId) ||
+      (e.name && (
         e.name.toLowerCase().trim() === cleanId ||
         e.name.toLowerCase().trim().includes(cleanId) ||
         cleanId.includes(e.name.toLowerCase().trim())
-      )
+      ))
     );
   },
 
@@ -778,10 +796,13 @@ export const db = {
             createdBy = s.created_by || undefined;
           }
 
+          const cRider = this.resolveUser(s.rider_id);
+          const cEst = this.resolveEstablishment(s.establishment_id);
+
           return {
             id: s.id,
-            riderId: s.rider_id,
-            establishmentId: s.establishment_id,
+            riderId: cRider?.id || s.rider_id,
+            establishmentId: cEst?.id || s.establishment_id,
             date: s.date,
             shift: s.shift,
             startTime: s.start_time,
@@ -852,10 +873,13 @@ export const db = {
             } catch (e) {}
           }
 
+          const cRider = this.resolveUser(d.rider_id);
+          const cEst = this.resolveEstablishment(d.establishment_id);
+
           const parsedDelivery: Delivery = {
             id: d.id,
-            riderId: d.rider_id,
-            establishmentId: d.establishment_id,
+            riderId: cRider?.id || d.rider_id,
+            establishmentId: cEst?.id || d.establishment_id,
             date: d.date,
             time: d.time,
             value: Number(d.value),
@@ -887,6 +911,8 @@ export const db = {
           if (localDel) {
             mergedDeliveries.push({
               ...remoteDel,
+              riderId: remoteDel.riderId || localDel.riderId,
+              establishmentId: remoteDel.establishmentId || localDel.establishmentId,
               orderNumber: localDel.orderNumber || remoteDel.orderNumber,
               notes: localDel.notes || remoteDel.notes,
               customerChat: localDel.customerChat || remoteDel.customerChat,
