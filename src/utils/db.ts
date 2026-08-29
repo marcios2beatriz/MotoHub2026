@@ -1,12 +1,9 @@
 "use client";
 
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from './supabase';
 import { realtimeGps } from './realtimeGps';
 
-// Configuração oficial do cliente Supabase
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://rqieirvzutdculcdsncb.supabase.co';
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_pjEo4HVVSPTMF-fQDwKpLQ_o9HAIOWR';
-export const supabase = createClient(supabaseUrl, supabaseKey);
+export { supabase };
 
 export type PaymentMethodType = 'already_paid' | 'money' | 'card_debit' | 'card_credit' | 'pix_delivery';
 
@@ -74,16 +71,14 @@ export interface Delivery {
   paid?: boolean;
   lostAt?: string;
   lostReason?: string;
-  // Campos de Vinculação e Valores Adicionais com Justificativa
   deliveryType?: 'standard' | 'same_address';
   additionalValue?: number;
   additionalReason?: string;
   linkedOrderNumber?: string;
   linkedDeliveryId?: string;
-  // Pagamento na Entrega
   paymentMethod?: PaymentMethodType;
-  orderCollectionAmount?: number; // Valor total do pedido a cobrar do cliente
-  changeFor?: number; // Troco para R$ X (se pagamento em dinheiro)
+  orderCollectionAmount?: number;
+  changeFor?: number;
 }
 
 export interface Notification {
@@ -156,11 +151,9 @@ export function getDeliveryOperationalDate(dateStr: string, timeStr: string = '1
   return cleanDate;
 }
 
-// Chaves para persistência local
 const SESSION_USER_KEY = 'motohub_session_user';
 const DELIVERIES_STORAGE_MASTER_KEY = 'motohub_deliveries_master_v4';
 
-// Extração segura do número de pedido
 function extractOrderNumberSafe(raw?: string): string | undefined {
   if (!raw) return undefined;
   const trimmed = String(raw).trim();
@@ -192,6 +185,36 @@ function saveMasterDeliveriesBackup(dels: Delivery[]) {
   } catch {}
 }
 
+function formatDeliveryPayload(d: Delivery) {
+  const cleanOrderNum = d.orderNumber ? String(d.orderNumber).replace('#', '').trim() : '';
+
+  const compactMeta: any = {
+    o: cleanOrderNum
+  };
+
+  if (d.deliveryType && d.deliveryType !== 'standard') compactMeta.t = 'm';
+  if (d.additionalValue && Number(d.additionalValue) > 0) compactMeta.a = Number(d.additionalValue);
+  if (d.additionalReason) compactMeta.r = d.additionalReason.slice(0, 30);
+  if (d.linkedOrderNumber) compactMeta.l = String(d.linkedOrderNumber).replace('#', '').slice(0, 10);
+  if (d.paid) compactMeta.p = 1;
+  if (d.notes) compactMeta.n = d.notes.slice(0, 80);
+  if (d.paymentMethod && d.paymentMethod !== 'already_paid') compactMeta.pm = d.paymentMethod;
+  if (d.orderCollectionAmount && Number(d.orderCollectionAmount) > 0) compactMeta.ca = Number(d.orderCollectionAmount);
+  if (d.changeFor && Number(d.changeFor) > 0) compactMeta.cf = Number(d.changeFor);
+
+  return {
+    id: d.id,
+    rider_id: d.riderId,
+    establishment_id: d.establishmentId,
+    date: d.date,
+    time: d.time,
+    value: d.value,
+    status: d.status,
+    schedule_id: d.scheduleId || null,
+    order_number: JSON.stringify(compactMeta)
+  };
+}
+
 // Cache em memória
 let memoryUsers: User[] = [];
 let memoryEstablishments: Establishment[] = [];
@@ -202,10 +225,7 @@ let memoryRequests: PartnerRequest[] = [];
 let memoryLocations: Record<string, RiderLocation> = {};
 let memoryRouteHistory: RouteHistoryItem[] = [];
 
-// Mapa de entregas recém-criadas/editadas localmente para não serem destruídas por pulls concorrentes
 const locallyCreatedDeliveries = new Map<string, Delivery>();
-
-// Preenche o mapa com as entregas já salvas no localStorage
 memoryDeliveries.forEach(d => {
   if (d && d.id) {
     locallyCreatedDeliveries.set(d.id, d);
@@ -476,59 +496,24 @@ export const db = {
     memoryDeliveries = deliveries;
     saveMasterDeliveriesBackup(deliveries);
 
-    // Registra todas no mapa de entregas ativas locais
     deliveries.forEach(d => {
       if (d && d.id) {
         locallyCreatedDeliveries.set(d.id, d);
       }
     });
 
-    // Prepara payload compacto seguro para o Supabase
-    const payload = deliveries.map(d => {
-      const cleanOrderNum = d.orderNumber ? String(d.orderNumber).replace('#', '').trim() : '';
-
-      const compactMeta: any = {
-        o: cleanOrderNum
-      };
-
-      if (d.deliveryType && d.deliveryType !== 'standard') compactMeta.t = 'm';
-      if (d.additionalValue && Number(d.additionalValue) > 0) compactMeta.a = Number(d.additionalValue);
-      if (d.additionalReason) compactMeta.r = d.additionalReason.slice(0, 30);
-      if (d.linkedOrderNumber) compactMeta.l = String(d.linkedOrderNumber).replace('#', '').slice(0, 10);
-      if (d.paid) compactMeta.p = 1;
-      if (d.notes) compactMeta.n = d.notes.slice(0, 80);
-      if (d.paymentMethod && d.paymentMethod !== 'already_paid') compactMeta.pm = d.paymentMethod;
-      if (d.orderCollectionAmount && Number(d.orderCollectionAmount) > 0) compactMeta.ca = Number(d.orderCollectionAmount);
-      if (d.changeFor && Number(d.changeFor) > 0) compactMeta.cf = Number(d.changeFor);
-
-      const serializedOrderNumber = JSON.stringify(compactMeta);
-
-      return {
-        id: d.id,
-        rider_id: d.riderId,
-        establishment_id: d.establishmentId,
-        date: d.date,
-        time: d.time,
-        value: d.value,
-        status: d.status,
-        schedule_id: d.scheduleId || null,
-        order_number: serializedOrderNumber
-      };
-    });
+    // Envia todas as entregas em chunks eficientes
+    const payload = deliveries.map(formatDeliveryPayload);
 
     if (payload.length > 0) {
       try {
-        // Envia em fatias de 100 para evitar payload grande demais
         const chunkSize = 100;
         for (let i = 0; i < payload.length; i += chunkSize) {
           const chunk = payload.slice(i, i + chunkSize);
-          const { error } = await supabase.from('deliveries').upsert(chunk, { onConflict: 'id' });
-          if (error) {
-            console.warn('Aviso no upsert de entregas:', error);
-          }
+          await supabase.from('deliveries').upsert(chunk, { onConflict: 'id' });
         }
       } catch (err) {
-        console.warn('Erro na conexão com Supabase:', err);
+        console.warn('Aviso no envio de entregas ao Supabase:', err);
       }
     }
 
@@ -729,7 +714,7 @@ export const db = {
     return `000.000.000-${rand()}${rand()}`;
   },
 
-  // ── SINCRONIZAÇÃO COM MERGE SEGURO ANTI-PERDA DE CORRIDAS ──
+  // ── SINCRONIZAÇÃO BIDIRECIONAL COM AUTO-PUSH DAS ENTREGAS FALTANTES ──
   async pullFromSupabase() {
     try {
       const { data: usersData } = await supabase.from('users').select('*').limit(10000);
@@ -863,15 +848,14 @@ export const db = {
           remoteDeliveriesMap.set(d.id, parsedDelivery);
         });
 
-        // MERGE SEGURO: Preserva todas as entregas locais recém criadas que ainda não subiram ou estão em sincronização
         const mergedDeliveries: Delivery[] = [];
+        const missingFromRemote: Delivery[] = [];
         const processedIds = new Set<string>();
 
-        // 1. Adiciona as remotas atualizando com dados locais caso haja edição pendente
+        // 1. Adiciona dados remotos
         remoteDeliveriesMap.forEach((remoteDel, id) => {
           const localDel = locallyCreatedDeliveries.get(id);
           if (localDel) {
-            // Preserva orderNumber e campos importantes se a remota perdeu
             mergedDeliveries.push({
               ...remoteDel,
               orderNumber: localDel.orderNumber || remoteDel.orderNumber,
@@ -892,16 +876,27 @@ export const db = {
           processedIds.add(id);
         });
 
-        // 2. Adiciona as locais que ainda não constam no Supabase
+        // 2. Identifica dados locais que não chegaram no Supabase e empurra automaticamente
         locallyCreatedDeliveries.forEach((localDel, id) => {
           if (!processedIds.has(id)) {
             mergedDeliveries.push(localDel);
+            missingFromRemote.push(localDel);
             processedIds.add(id);
           }
         });
 
         memoryDeliveries = mergedDeliveries;
         saveMasterDeliveriesBackup(memoryDeliveries);
+
+        // Se houver entregas locais que faltam no Supabase, sobe elas agora em segundo plano
+        if (missingFromRemote.length > 0) {
+          const missingPayload = missingFromRemote.map(formatDeliveryPayload);
+          supabase.from('deliveries').upsert(missingPayload, { onConflict: 'id' }).then(() => {
+            console.log(`[Auto-Sync] ${missingFromRemote.length} corridas sincronizadas com sucesso com o Supabase.`);
+          }).catch(e => {
+            console.warn('[Auto-Sync] Erro ao sincronizar pendências:', e);
+          });
+        }
       }
 
       const { data: reqsData } = await supabase.from('partner_requests').select('*').limit(10000);
