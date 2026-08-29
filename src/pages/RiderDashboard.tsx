@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, Schedule, Delivery, Notification, Establishment, RouteHistoryItem, getDeliveryOperationalDate, isSameDayString } from '../utils/db';
 import { NEIGHBORHOOD_RATES } from '../utils/neighborhoods';
@@ -39,7 +39,8 @@ import {
   Banknote,
   CheckCircle2,
   QrCode,
-  Copy
+  Copy,
+  ChevronDown
 } from 'lucide-react';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
 import CustomerChatModal from '../components/CustomerChatModal';
@@ -79,6 +80,8 @@ const getThisMonday = (): string => {
   return `${year}-${month}-${dateNum}`;
 };
 
+const PAGE_SIZE = 30;
+
 export default function RiderDashboard() {
   const navigate = useNavigate();
   const [user] = useState(db.getCurrentUser());
@@ -90,6 +93,8 @@ export default function RiderDashboard() {
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'navigation' | 'schedules' | 'history' | 'earnings' | 'rates' | 'notifications'>('dashboard');
   const [historySubTab, setHistorySubTab] = useState<'deliveries' | 'routes'>('deliveries');
+
+  const [historyDisplayLimit, setHistoryDisplayLimit] = useState(PAGE_SIZE);
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [activeToast, setActiveToast] = useState<ChatToast | null>(null);
@@ -289,7 +294,7 @@ export default function RiderDashboard() {
   }, [user, navigate, activeTab]);
 
   // Mapa de contagem de repetições por data e número de pedido
-  const orderNumberCountMap = React.useMemo(() => {
+  const orderNumberCountMap = useMemo(() => {
     const map = new Map<string, number>();
     deliveries.forEach(d => {
       if (d.status === 'cancelled') return;
@@ -356,7 +361,14 @@ export default function RiderDashboard() {
 
   const operationalTodayStr = db.getOperationalDateString();
 
-  const todayDeliveries = deliveries.filter(d => isSameDayString(d.date, operationalTodayStr));
+  // CORRIDAS APENAS DO DIA / TURNO ATUAL
+  const todayDeliveries = useMemo(() => {
+    return deliveries.filter(d => {
+      const opDate = getDeliveryOperationalDate(d.date, d.time);
+      return isSameDayString(opDate, operationalTodayStr);
+    });
+  }, [deliveries, operationalTodayStr]);
+
   const todayApprovedDeliveries = todayDeliveries.filter(d => d.status === 'active');
   const todayGrossEarnings = todayApprovedDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
   const todayNetEarnings = todayApprovedDeliveries.reduce((sum, d) => sum + getRiderNetForDelivery(d), 0);
@@ -503,7 +515,7 @@ export default function RiderDashboard() {
         alert('Corrida atualizada com sucesso!');
       } else {
         const newDelivery: Delivery = {
-          id: 'd_' + Date.now(),
+          id: 'd_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
           riderId: user.id,
           establishmentId: launchForm.establishmentId,
           date: operationalTodayStr,
@@ -622,57 +634,59 @@ export default function RiderDashboard() {
   });
 
   // Filtragem de Histórico com Turno Inteligente + Tipo
-  const historyDeliveries = deliveries.filter(d => {
-    let matchesEst = true;
-    if (historyEstFilter) {
-      matchesEst = db.isSameEstablishment(d.establishmentId, historyEstFilter);
-    }
-    if (!matchesEst) return false;
-
-    if (historyOrderNumberFilter.trim()) {
-      const cleanNum = historyOrderNumberFilter.trim().toLowerCase().replace('#', '');
-      const dNum = (d.orderNumber || '').toLowerCase().replace('#', '');
-      if (!dNum.includes(cleanNum)) return false;
-    }
-
-    if (deliveryFeatureFilter === 'same_order_number') {
-      const repeats = getOrderRepeatCount(d);
-      if (repeats <= 1) return false;
-    } else if (deliveryFeatureFilter === 'with_additional') {
-      const hasAdd = Number(d.additionalValue || 0) > 0;
-      if (!hasAdd) return false;
-    } else if (deliveryFeatureFilter === 'linked') {
-      const isLinked = d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber);
-      if (!isLinked) return false;
-    } else if (deliveryFeatureFilter === 'standard') {
-      const isStandard = d.deliveryType !== 'same_address' && !d.linkedOrderNumber && (!d.additionalValue || Number(d.additionalValue) <= 0);
-      if (!isStandard) return false;
-    }
-
-    if (filterMode === 'smart_shift') {
-      if (!smartDate) return true;
-      const opDate = getDeliveryOperationalDate(d.date, d.time);
-      const isDateMatch = isSameDayString(opDate, smartDate);
-      if (!isDateMatch) return false;
-
-      const [h] = (d.time || '12:00').split(':').map(Number);
-
-      if (smartPeriod === 'night_shift') {
-        return h >= 18 || h < 3;
-      } else if (smartPeriod === 'morning_shift') {
-        return h >= 6 && h < 12;
-      } else if (smartPeriod === 'afternoon_shift') {
-        return h >= 12 && h < 18;
+  const historyDeliveries = useMemo(() => {
+    return deliveries.filter(d => {
+      let matchesEst = true;
+      if (historyEstFilter) {
+        matchesEst = db.isSameEstablishment(d.establishmentId, historyEstFilter);
       }
-      return true;
-    } else if (filterMode === 'date_range') {
-      const matchesFrom = historyDateFrom ? d.date >= historyDateFrom : true;
-      const matchesTo = historyDateTo ? d.date <= historyDateTo : true;
-      return matchesFrom && matchesTo;
-    }
+      if (!matchesEst) return false;
 
-    return true;
-  });
+      if (historyOrderNumberFilter.trim()) {
+        const cleanNum = historyOrderNumberFilter.trim().toLowerCase().replace('#', '');
+        const dNum = (d.orderNumber || '').toLowerCase().replace('#', '');
+        if (!dNum.includes(cleanNum)) return false;
+      }
+
+      if (deliveryFeatureFilter === 'same_order_number') {
+        const repeats = getOrderRepeatCount(d);
+        if (repeats <= 1) return false;
+      } else if (deliveryFeatureFilter === 'with_additional') {
+        const hasAdd = Number(d.additionalValue || 0) > 0;
+        if (!hasAdd) return false;
+      } else if (deliveryFeatureFilter === 'linked') {
+        const isLinked = d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber);
+        if (!isLinked) return false;
+      } else if (deliveryFeatureFilter === 'standard') {
+        const isStandard = d.deliveryType !== 'same_address' && !d.linkedOrderNumber && (!d.additionalValue || Number(d.additionalValue) <= 0);
+        if (!isStandard) return false;
+      }
+
+      if (filterMode === 'smart_shift') {
+        if (!smartDate) return true;
+        const opDate = getDeliveryOperationalDate(d.date, d.time);
+        const isDateMatch = isSameDayString(opDate, smartDate);
+        if (!isDateMatch) return false;
+
+        const [h] = (d.time || '12:00').split(':').map(Number);
+
+        if (smartPeriod === 'night_shift') {
+          return h >= 18 || h < 3;
+        } else if (smartPeriod === 'morning_shift') {
+          return h >= 6 && h < 12;
+        } else if (smartPeriod === 'afternoon_shift') {
+          return h >= 12 && h < 18;
+        }
+        return true;
+      } else if (filterMode === 'date_range') {
+        const matchesFrom = historyDateFrom ? d.date >= historyDateFrom : true;
+        const matchesTo = historyDateTo ? d.date <= historyDateTo : true;
+        return matchesFrom && matchesTo;
+      }
+
+      return true;
+    });
+  }, [deliveries, historyEstFilter, historyOrderNumberFilter, deliveryFeatureFilter, filterMode, smartDate, smartPeriod, historyDateFrom, historyDateTo]);
 
   const historyTotalEarnings = historyDeliveries
     .filter(d => d.status === 'active')
@@ -981,9 +995,9 @@ export default function RiderDashboard() {
                   <TrendingUp className="h-6 w-6" />
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 font-medium uppercase">Corridas Aprovadas Hoje</p>
+                  <p className="text-xs text-slate-500 font-medium uppercase">Corridas de Hoje</p>
                   <p className="text-2xl font-bold text-slate-800">
-                    {todayApprovedDeliveries.length}
+                    {todayDeliveries.length}
                   </p>
                 </div>
               </div>
@@ -1047,7 +1061,7 @@ export default function RiderDashboard() {
               </div>
             )}
 
-            {/* SEÇÃO: CORRIDAS DE HOJE */}
+            {/* SEÇÃO: CORRIDAS DE HOJE (APENAS DO DIA OPERACIONAL ATUAL) */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <h3 className="text-lg font-bold text-slate-800 flex items-center space-x-2">
@@ -1084,7 +1098,7 @@ export default function RiderDashboard() {
 
               {filteredTodayDeliveries.length === 0 ? (
                 <div className="text-center py-12 text-slate-400">
-                  <p>Nenhuma corrida encontrada para este filtro.</p>
+                  <p>Nenhuma corrida lançada hoje com este filtro.</p>
                 </div>
               ) : (
                 <div className="divide-y divide-slate-100">
@@ -1110,7 +1124,7 @@ export default function RiderDashboard() {
 
                               {/* Badge de Repetição do mesmo número de pedido */}
                               {repeatCount > 1 && (
-                                <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-0.5 shadow-xs border border-amber-600 animate-pulse">
+                                <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-0.5 shadow-xs border border-amber-600 animate-pulse">
                                   <Copy className="h-2.5 w-2.5" />
                                   <span>Nº Repetido ({repeatCount}x)</span>
                                 </span>
@@ -1450,7 +1464,7 @@ export default function RiderDashboard() {
                             type="date"
                             value={historyDateFrom}
                             onChange={(e) => setHistoryDateFrom(e.target.value)}
-                            className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
                           />
                         </div>
                         <div>
@@ -1459,7 +1473,7 @@ export default function RiderDashboard() {
                             type="date"
                             value={historyDateTo}
                             onChange={(e) => setHistoryDateTo(e.target.value)}
-                            className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
                           />
                         </div>
                       </div>
@@ -1535,103 +1549,117 @@ export default function RiderDashboard() {
                       <p className="text-sm font-medium">Nenhum registro encontrado para este filtro.</p>
                     </div>
                   ) : (
-                    <div className="divide-y divide-slate-100">
-                      {historyDeliveries.map((del) => {
-                        const est = resolveEst(del.establishmentId);
-                        const hasNotes = Boolean(del.notes && del.notes.trim());
-                        const notesCount = del.notes ? del.notes.split('\n').filter(l => l.trim()).length : 0;
-                        const isSame = del.deliveryType === 'same_address';
-                        const hasAdditional = Number(del.additionalValue || 0) > 0;
-                        const repeatCount = getOrderRepeatCount(del);
+                    <div className="space-y-2">
+                      <div className="divide-y divide-slate-100">
+                        {historyDeliveries.slice(0, historyDisplayLimit).map((del) => {
+                          const est = resolveEst(del.establishmentId);
+                          const hasNotes = Boolean(del.notes && del.notes.trim());
+                          const notesCount = del.notes ? del.notes.split('\n').filter(l => l.trim()).length : 0;
+                          const isSame = del.deliveryType === 'same_address';
+                          const hasAdditional = Number(del.additionalValue || 0) > 0;
+                          const repeatCount = getOrderRepeatCount(del);
 
-                        return (
-                          <div key={del.id} className={`py-3.5 space-y-2 ${repeatCount > 1 ? 'bg-amber-50/30 p-3 rounded-xl border border-amber-200' : ''} ${isSame ? 'bg-purple-50/30 p-3 rounded-xl' : ''}`}>
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/50 px-2 rounded-lg">
-                              <div className="space-y-1.5 flex-1">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  {del.orderNumber && (
-                                    <span className="bg-indigo-600 text-white text-xs font-black px-2.5 py-1 rounded-lg shadow-sm flex-shrink-0 tracking-wide">
-                                      #{del.orderNumber}
-                                    </span>
-                                  )}
-                                  <p className="font-bold text-slate-800 text-sm">{est?.name || 'Estabelecimento'}</p>
-
-                                  {/* Badge de Repetição do mesmo número de pedido */}
-                                  {repeatCount > 1 && (
-                                    <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-0.5 shadow-xs border border-amber-600 animate-pulse">
-                                      <Copy className="h-2.5 w-2.5" />
-                                      <span>Nº Repetido ({repeatCount}x)</span>
-                                    </span>
-                                  )}
-
-                                  {isSame && (
-                                    <span className="bg-purple-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
-                                      <Link2 className="h-3 w-3" />
-                                      <span>Mesmo Endereço {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : ''}</span>
-                                    </span>
-                                  )}
-
-                                  {hasAdditional && (
-                                    <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
-                                      <Sparkles className="h-3 w-3 text-amber-600" />
-                                      <span>
-                                        + R$ {Number(del.additionalValue).toFixed(2)}
-                                        {del.additionalReason ? ` (${del.additionalReason})` : ' Extra'}
+                          return (
+                            <div key={del.id} className={`py-3.5 space-y-2 ${repeatCount > 1 ? 'bg-amber-50/30 p-3 rounded-xl border border-amber-200' : ''} ${isSame ? 'bg-purple-50/30 p-3 rounded-xl' : ''}`}>
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/50 px-2 rounded-lg">
+                                <div className="space-y-1.5 flex-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    {del.orderNumber && (
+                                      <span className="bg-indigo-600 text-white text-xs font-black px-2.5 py-1 rounded-lg shadow-sm flex-shrink-0 tracking-wide">
+                                        #{del.orderNumber}
                                       </span>
-                                    </span>
-                                  )}
+                                    )}
+                                    <p className="font-bold text-slate-800 text-sm">{est?.name || 'Estabelecimento'}</p>
 
-                                  <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
-                                    del.status === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
-                                  }`}>
-                                    {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : 'Cancelada'}
+                                    {/* Badge de Repetição do mesmo número de pedido */}
+                                    {repeatCount > 1 && (
+                                      <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-0.5 shadow-xs border border-amber-600 animate-pulse">
+                                        <Copy className="h-2.5 w-2.5" />
+                                        <span>Nº Repetido ({repeatCount}x)</span>
+                                      </span>
+                                    )}
+
+                                    {isSame && (
+                                      <span className="bg-purple-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                                        <Link2 className="h-3 w-3" />
+                                        <span>Mesmo Endereço {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : ''}</span>
+                                      </span>
+                                    )}
+
+                                    {hasAdditional && (
+                                      <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
+                                        <Sparkles className="h-3 w-3 text-amber-600" />
+                                        <span>
+                                          + R$ {Number(del.additionalValue).toFixed(2)}
+                                          {del.additionalReason ? ` (${del.additionalReason})` : ' Extra'}
+                                        </span>
+                                      </span>
+                                    )}
+
+                                    <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
+                                      del.status === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                                    }`}>
+                                      {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : 'Cancelada'}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-slate-400">
+                                    Data: <strong className="text-slate-600">{new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR')}</strong> às {del.time}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2 justify-between sm:justify-end flex-shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                                  <button
+                                    onClick={() => setNotesDeliveryId(del.id)}
+                                    className={`px-2.5 py-1.5 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 ${
+                                      hasNotes 
+                                        ? 'bg-amber-400 hover:bg-amber-500 text-amber-950 border border-amber-500 shadow-md ring-2 ring-amber-300' 
+                                        : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
+                                    }`}
+                                  >
+                                    <MessageSquare className="h-3.5 w-3.5" />
+                                    <span>Observações</span>
+                                    {hasNotes && (
+                                      <span className="bg-amber-950 text-amber-300 text-[10px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
+                                        {notesCount}
+                                      </span>
+                                    )}
+                                  </button>
+                                  
+                                  <button
+                                    onClick={() => handleShareTracking(del.id)}
+                                    className={`px-2 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${
+                                      copiedId === del.id 
+                                        ? 'bg-emerald-100 text-emerald-800' 
+                                        : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
+                                    }`}
+                                    title="Copiar Link de Rastreamento"
+                                  >
+                                    <Share2 className="h-3.5 w-3.5" />
+                                    <span>{copiedId === del.id ? 'Copiado!' : 'Rastreio'}</span>
+                                  </button>
+
+                                  <span className={`font-black text-sm ${del.status === 'active' ? 'text-emerald-600' : 'text-slate-400 line-through'}`}>
+                                    R$ {Number(del.value || 0).toFixed(2)}
                                   </span>
                                 </div>
-                                <p className="text-xs text-slate-400">
-                                  Data: <strong className="text-slate-600">{new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR')}</strong> às {del.time}
-                                </p>
                               </div>
-                              <div className="flex items-center gap-2 justify-between sm:justify-end flex-shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100">
-                                <button
-                                  onClick={() => setNotesDeliveryId(del.id)}
-                                  className={`px-2.5 py-1.5 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 ${
-                                    hasNotes 
-                                      ? 'bg-amber-400 hover:bg-amber-500 text-amber-950 border border-amber-500 shadow-md ring-2 ring-amber-300' 
-                                      : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
-                                  }`}
-                                >
-                                  <MessageSquare className="h-3.5 w-3.5" />
-                                  <span>Observações</span>
-                                  {hasNotes && (
-                                    <span className="bg-amber-950 text-amber-300 text-[10px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
-                                      {notesCount}
-                                    </span>
-                                  )}
-                                </button>
-                                
-                                <button
-                                  onClick={() => handleShareTracking(del.id)}
-                                  className={`px-2 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${
-                                    copiedId === del.id 
-                                      ? 'bg-emerald-100 text-emerald-800' 
-                                      : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
-                                  }`}
-                                  title="Copiar Link de Rastreamento"
-                                >
-                                  <Share2 className="h-3.5 w-3.5" />
-                                  <span>{copiedId === del.id ? 'Copiado!' : 'Rastreio'}</span>
-                                </button>
 
-                                <span className={`font-black text-sm ${del.status === 'active' ? 'text-emerald-600' : 'text-slate-400 line-through'}`}>
-                                  R$ {Number(del.value || 0).toFixed(2)}
-                                </span>
-                              </div>
+                              {renderPaymentBadge(del)}
                             </div>
+                          );
+                        })}
+                      </div>
 
-                            {renderPaymentBadge(del)}
-                          </div>
-                        );
-                      })}
+                      {historyDeliveries.length > historyDisplayLimit && (
+                        <div className="pt-3 text-center">
+                          <button
+                            onClick={() => setHistoryDisplayLimit(prev => prev + PAGE_SIZE)}
+                            className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-black transition-colors inline-flex items-center gap-1.5"
+                          >
+                            <ChevronDown className="h-4 w-4" />
+                            <span>Carregar mais ({historyDeliveries.length - historyDisplayLimit} restantes)</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
