@@ -2,6 +2,8 @@
 
 import React, { useEffect } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { Capacitor } from '@capacitor/core';
+import { App as CapApp } from '@capacitor/app';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
 import AdminDashboard from './pages/AdminDashboard';
@@ -19,19 +21,32 @@ function AppHandler({ children }: { children: React.ReactNode }) {
     // Puxar dados do Supabase na inicialização
     db.pullFromSupabase();
 
-    // Solicitar permissão de notificações nativas logo no início
+    // Solicitar permissão de notificações logo no início
     requestNotificationPermission();
 
-    // Sincronização periódica a cada 10 segundos para manter os dados atualizados em tempo real
+    // Ouvir retomada do aplicativo em primeiro plano no Android/iOS
+    let resumeListener: any = null;
+    if (Capacitor.isNativePlatform()) {
+      resumeListener = CapApp.addListener('appStateChange', (state) => {
+        if (state.isActive) {
+          db.pullFromSupabase();
+        }
+      });
+    }
+
+    // Sincronização periódica a cada 5 segundos para manter os dados atualizados em tempo real
     const syncInterval = setInterval(() => {
       const currentUser = db.getCurrentUser();
       if (currentUser) {
         db.pullFromSupabase();
       }
-    }, 10000);
+    }, 5000);
 
     return () => {
       clearInterval(syncInterval);
+      if (resumeListener) {
+        resumeListener.then((l: any) => l.remove()).catch(() => {});
+      }
     };
   }, [navigate]);
 

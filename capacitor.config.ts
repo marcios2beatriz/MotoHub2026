@@ -6,14 +6,25 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   server: {
     androidScheme: 'https',
-    cleartext: true
+    cleartext: true,
+    allowNavigation: [
+      'https://rqieirvzutdculcdsncb.supabase.co/*',
+      'https://*.googleapis.com/*',
+      'https://*.openstreetmap.org/*',
+      'https://*.cartocdn.com/*'
+    ]
   },
   plugins: {
     BackgroundGeolocation: {
       notificationTitle: 'MotoHub Delivery',
-      notificationText: 'Rastreamento GPS ativo em segundo plano.',
+      notificationText: 'Rastreamento GPS ativo em tempo real.',
       notificationIconColor: '#4f46e5'
     }
+  },
+  android: {
+    allowMixedContent: true,
+    captureInput: true,
+    webContentsDebuggingEnabled: false
   }
 };
 
