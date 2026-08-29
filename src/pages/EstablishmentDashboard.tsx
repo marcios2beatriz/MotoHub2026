@@ -1003,7 +1003,7 @@ export default function EstablishmentDashboard() {
                 </div>
               </div>
 
-              {/* SEÇÃO PRINCIPAL: CARDS DOS MOTOBOYS ESCALADOS HOJE COM AÇÕES RÁPIDAS E REPASSE */}
+              {/* SEÇÃO PRINCIPAL: CARDS DOS MOTOBOYS ESCALADOS HOJE COM AÇÕES RÁPIDAS */}
               <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200/80 space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <div className="flex items-center space-x-2">
@@ -1015,7 +1015,7 @@ export default function EstablishmentDashboard() {
                         Motoboys Escalados Hoje ({todaySchedules.length})
                       </h3>
                       <p className="text-xs text-slate-400">
-                        Acompanhe o faturamento em tempo real e lance corridas rapidamente
+                        Lance corridas rapidamente e consulte o status em tempo real
                       </p>
                     </div>
                   </div>
@@ -1039,74 +1039,62 @@ export default function EstablishmentDashboard() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {todaySchedules.map((sch) => {
                       const rider = db.resolveUser(sch.riderId);
-                      const riderDeliveriesToday = todayDeliveries.filter(d => db.isSameUser(d.riderId, sch.riderId));
-                      const approvedDeliveries = riderDeliveriesToday.filter(d => d.status === 'active');
                       const isOnline = onlineScheduledRiderLocations.some(l => l.riderId === sch.riderId);
-                      const allPaid = approvedDeliveries.length > 0 && approvedDeliveries.every(d => d.paid);
 
                       return (
-                        <div key={sch.id} className="bg-slate-50/60 border border-slate-200 rounded-2xl p-4 space-y-3 shadow-xs hover:border-indigo-300 transition-all flex flex-col justify-between">
+                        <div key={sch.id} className="bg-white border border-slate-200/90 rounded-2xl p-4 space-y-3.5 shadow-xs hover:border-indigo-300 transition-all flex flex-col justify-between">
                           
                           {/* Top: Header do Motoboy */}
                           <div>
                             <div className="flex items-start justify-between">
                               <div className="flex items-center space-x-3 min-w-0">
-                                <div className="w-10 h-10 rounded-full bg-indigo-600 text-white font-black text-sm flex items-center justify-center flex-shrink-0 shadow-sm">
+                                <div className="w-11 h-11 rounded-2xl bg-indigo-600 text-white font-black text-base flex items-center justify-center flex-shrink-0 shadow-sm">
                                   {rider?.name ? rider.name.charAt(0).toUpperCase() : 'M'}
                                 </div>
                                 <div className="min-w-0">
                                   <h4 className="font-extrabold text-slate-900 text-sm truncate">{rider?.name || 'Motoboy'}</h4>
-                                  <p className="text-[11px] text-slate-400 font-mono">{rider?.phone || 'Sem telefone'}</p>
+                                  <p className="text-[11px] text-slate-400 font-mono flex items-center gap-1 mt-0.5">
+                                    <Phone className="h-3 w-3 text-slate-400" />
+                                    <span>{rider?.phone || 'Sem telefone'}</span>
+                                  </p>
                                 </div>
                               </div>
 
-                              <span className={`text-[9px] font-extrabold px-2.5 py-0.5 rounded-full uppercase flex items-center gap-1 ${
+                              <span className={`text-[10px] font-black px-2.5 py-1 rounded-full uppercase flex items-center gap-1 ${
                                 isOnline 
                                   ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 animate-pulse' 
-                                  : 'bg-slate-200 text-slate-600'
+                                  : 'bg-slate-100 text-slate-500'
                               }`}>
                                 <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                                {isOnline ? 'Online GPS' : 'Offline'}
+                                {isOnline ? 'ONLINE' : 'OFFLINE'}
                               </span>
                             </div>
 
                             {/* Detalhes do Turno */}
-                            <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-2 bg-white px-2.5 py-1.5 rounded-xl border border-slate-100">
-                              <Clock className="h-3.5 w-3.5 text-indigo-500" />
-                              <span className="font-bold text-slate-700">Turno da {getShiftLabel(sch.shift)}</span>
-                              <span>•</span>
-                              <span className="font-mono text-slate-500">{sch.startTime} - {sch.endTime}</span>
+                            <div className="flex items-center gap-2 text-xs text-slate-600 mt-3 bg-slate-50 px-3 py-2 rounded-xl border border-slate-100">
+                              <Clock className="h-4 w-4 text-indigo-600" />
+                              <span className="font-extrabold text-slate-800">Turno da {getShiftLabel(sch.shift)}</span>
+                              <span className="text-slate-300">•</span>
+                              <span className="font-mono text-slate-500 font-semibold">{sch.startTime} - {sch.endTime}</span>
                             </div>
                           </div>
 
-                          {/* Card de Métricas do Motoboy no Turno */}
-                          <RiderFinancialMetricsCard
-                            riderName={rider?.name || 'Motoboy'}
-                            riderPhone={rider?.phone}
-                            deliveries={approvedDeliveries}
-                            isPaid={allPaid}
-                            showSettleButton={true}
-                            onSettle={() => handleSettleRiderDeliveries(sch.riderId, approvedDeliveries.map(d => d.id))}
-                            onUnsettle={() => handleUnsettleRiderDeliveries(sch.riderId, approvedDeliveries.map(d => d.id))}
-                            periodLabel="Hoje"
-                          />
-
                           {/* Ações Rápidas */}
-                          <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200/80">
+                          <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
                             <button
                               onClick={() => handleOpenLaunchModal(sch.riderId)}
-                              className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1"
+                              className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2.5 rounded-xl text-xs font-black transition-all shadow-sm flex items-center justify-center gap-1.5 active:scale-95"
                             >
-                              <Plus className="h-3.5 w-3.5" />
+                              <Plus className="h-4 w-4" />
                               <span>Lançar Corrida</span>
                             </button>
 
                             <button
                               onClick={() => setActiveScheduleChatId(sch.id)}
-                              className="px-3 py-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors flex items-center gap-1"
+                              className="px-3.5 py-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5"
                               title="Chat do Turno com o Motoboy"
                             >
-                              <MessageSquare className="h-3.5 w-3.5 text-indigo-600" />
+                              <MessageSquare className="h-4 w-4 text-indigo-600" />
                               <span>Chat</span>
                             </button>
                           </div>
