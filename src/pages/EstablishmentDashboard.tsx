@@ -39,7 +39,8 @@ import {
   CheckCircle2,
   Clock,
   TrendingUp,
-  X
+  X,
+  Phone
 } from 'lucide-react';
 import L from 'leaflet';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
@@ -63,12 +64,21 @@ const getThisMonday = (): string => {
   return `${year}-${month}-${dateNum}`;
 };
 
+export function getShiftLabel(shift: string): string {
+  switch(shift) {
+    case 'morning': return 'Manhã';
+    case 'afternoon': return 'Tarde';
+    case 'night': return 'Noite';
+    default: return shift || '';
+  }
+}
+
 export default function EstablishmentDashboard() {
   const navigate = useNavigate();
   const [user] = useState(db.getCurrentUser());
 
-  // Aba ativa: Operação diária, Repasses individuais, Histórico de Corridas ou Mapa
-  const [activeTab, setActiveTab] = useState<'operation' | 'settlements' | 'deliveries_history' | 'map_fullscreen'>('operation');
+  // Aba ativa: Operação diária, Repasses individuais, Histórico de Corridas
+  const [activeTab, setActiveTab] = useState<'operation' | 'settlements' | 'deliveries_history'>('operation');
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [allRiders, setAllRiders] = useState<User[]>([]);
@@ -954,7 +964,7 @@ export default function EstablishmentDashboard() {
       <main className="max-w-7xl w-full mx-auto px-4 mt-6 flex-1">
         
         {/* ========================================================================= */}
-        {/* ABA 1: OPERAÇÃO DO DIA + CENTRAL DE RASTREAMENTO */}
+        {/* ABA 1: OPERAÇÃO DO DIA + CARDS DOS MOTOBOYS ESCALADOS + RASTREAMENTO */}
         {/* ========================================================================= */}
         {activeTab === 'operation' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -993,23 +1003,119 @@ export default function EstablishmentDashboard() {
                 </div>
               </div>
 
-              {/* Botão de Atalho para Repasses */}
-              <div className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white p-4 rounded-2xl shadow-md flex items-center justify-between gap-3">
-                <div className="flex items-center space-x-3">
-                  <div className="p-2.5 bg-white/15 rounded-xl">
-                    <Wallet className="h-6 w-6" />
+              {/* SEÇÃO PRINCIPAL: CARDS DOS MOTOBOYS ESCALADOS HOJE COM AÇÕES RÁPIDAS E REPASSE */}
+              <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200/80 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex items-center space-x-2">
+                    <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
+                      <Users className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-extrabold text-slate-800 text-base">
+                        Motoboys Escalados Hoje ({todaySchedules.length})
+                      </h3>
+                      <p className="text-xs text-slate-400">
+                        Acompanhe o faturamento em tempo real e lance corridas rapidamente
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="font-extrabold text-sm sm:text-base">Fechamento & Repasse de Motoboys</h4>
-                    <p className="text-xs text-emerald-100 opacity-90">Consulte os repasses com as 5 métricas por período semanal ou diário</p>
-                  </div>
+
+                  <button
+                    onClick={() => handleOpenLaunchModal()}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-1.5 shadow-sm"
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span>Lançar Corrida</span>
+                  </button>
                 </div>
-                <button
-                  onClick={() => setActiveTab('settlements')}
-                  className="bg-white hover:bg-emerald-50 text-emerald-900 px-4 py-2 rounded-xl text-xs font-black shadow-sm transition-all flex-shrink-0"
-                >
-                  Abrir Repasses →
-                </button>
+
+                {todaySchedules.length === 0 ? (
+                  <div className="text-center py-10 bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-xs text-slate-400 space-y-1">
+                    <Users className="h-8 w-8 mx-auto text-slate-300 mb-1" />
+                    <p className="font-bold text-slate-600 text-sm">Nenhum motoboy escalado para hoje</p>
+                    <p className="text-slate-400 text-xs">Solicite ao Administrador o agendamento de escalas para seu estabelecimento.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {todaySchedules.map((sch) => {
+                      const rider = db.resolveUser(sch.riderId);
+                      const riderDeliveriesToday = todayDeliveries.filter(d => db.isSameUser(d.riderId, sch.riderId));
+                      const approvedDeliveries = riderDeliveriesToday.filter(d => d.status === 'active');
+                      const isOnline = onlineScheduledRiderLocations.some(l => l.riderId === sch.riderId);
+                      const allPaid = approvedDeliveries.length > 0 && approvedDeliveries.every(d => d.paid);
+
+                      return (
+                        <div key={sch.id} className="bg-slate-50/60 border border-slate-200 rounded-2xl p-4 space-y-3 shadow-xs hover:border-indigo-300 transition-all flex flex-col justify-between">
+                          
+                          {/* Top: Header do Motoboy */}
+                          <div>
+                            <div className="flex items-start justify-between">
+                              <div className="flex items-center space-x-3 min-w-0">
+                                <div className="w-10 h-10 rounded-full bg-indigo-600 text-white font-black text-sm flex items-center justify-center flex-shrink-0 shadow-sm">
+                                  {rider?.name ? rider.name.charAt(0).toUpperCase() : 'M'}
+                                </div>
+                                <div className="min-w-0">
+                                  <h4 className="font-extrabold text-slate-900 text-sm truncate">{rider?.name || 'Motoboy'}</h4>
+                                  <p className="text-[11px] text-slate-400 font-mono">{rider?.phone || 'Sem telefone'}</p>
+                                </div>
+                              </div>
+
+                              <span className={`text-[9px] font-extrabold px-2.5 py-0.5 rounded-full uppercase flex items-center gap-1 ${
+                                isOnline 
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 animate-pulse' 
+                                  : 'bg-slate-200 text-slate-600'
+                              }`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                                {isOnline ? 'Online GPS' : 'Offline'}
+                              </span>
+                            </div>
+
+                            {/* Detalhes do Turno */}
+                            <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-2 bg-white px-2.5 py-1.5 rounded-xl border border-slate-100">
+                              <Clock className="h-3.5 w-3.5 text-indigo-500" />
+                              <span className="font-bold text-slate-700">Turno da {getShiftLabel(sch.shift)}</span>
+                              <span>•</span>
+                              <span className="font-mono text-slate-500">{sch.startTime} - {sch.endTime}</span>
+                            </div>
+                          </div>
+
+                          {/* Card de Métricas do Motoboy no Turno */}
+                          <RiderFinancialMetricsCard
+                            riderName={rider?.name || 'Motoboy'}
+                            riderPhone={rider?.phone}
+                            deliveries={approvedDeliveries}
+                            isPaid={allPaid}
+                            showSettleButton={true}
+                            onSettle={() => handleSettleRiderDeliveries(sch.riderId, approvedDeliveries.map(d => d.id))}
+                            onUnsettle={() => handleUnsettleRiderDeliveries(sch.riderId, approvedDeliveries.map(d => d.id))}
+                            periodLabel="Hoje"
+                          />
+
+                          {/* Ações Rápidas */}
+                          <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200/80">
+                            <button
+                              onClick={() => handleOpenLaunchModal(sch.riderId)}
+                              className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                              <span>Lançar Corrida</span>
+                            </button>
+
+                            <button
+                              onClick={() => setActiveScheduleChatId(sch.id)}
+                              className="px-3 py-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors flex items-center gap-1"
+                              title="Chat do Turno com o Motoboy"
+                            >
+                              <MessageSquare className="h-3.5 w-3.5 text-indigo-600" />
+                              <span>Chat</span>
+                            </button>
+                          </div>
+
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Corridas de Hoje */}
@@ -1667,6 +1773,7 @@ export default function EstablishmentDashboard() {
                             )}
                             <p className="font-extrabold text-slate-800 text-sm truncate">{rider?.name || 'Motoboy'}</p>
 
+                            {/* Badge Mesmo Endereço com Vinculação */}
                             {isSame && (
                               <span className="bg-purple-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
                                 <Link2 className="h-2.5 w-2.5" />
@@ -1674,6 +1781,7 @@ export default function EstablishmentDashboard() {
                               </span>
                             )}
 
+                            {/* Badge Valor Adicional com Motivo */}
                             {hasAdditional && (
                               <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-black px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
                                 <Sparkles className="h-2.5 w-2.5 text-amber-600" />
@@ -1772,6 +1880,7 @@ export default function EstablishmentDashboard() {
                         </div>
                       </div>
 
+                      {/* BADGE DE COBRANÇA NA ENTREGA */}
                       {renderPaymentBadge(del)}
                     </div>
                   );
