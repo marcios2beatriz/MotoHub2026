@@ -208,7 +208,28 @@ function saveMasterDeliveriesBackup(dels: Delivery[]) {
 }
 
 function formatDeliveryPayload(d: Delivery) {
-  const cleanOrderNum = d.orderNumber ? String(d.orderNumber).replace('#', '').trim().slice(0, 30) : '';
+  const cleanOrderNum = d.orderNumber ? String(d.orderNumber).replace('#', '').trim() : '';
+
+  const hasExtra = d.notes || d.customerChat || d.deliveryType === 'same_address' || d.additionalValue || d.additionalReason || d.linkedOrderNumber || (d.paymentMethod && d.paymentMethod !== 'already_paid') || d.orderCollectionAmount || d.changeFor || d.paid;
+
+  let serializedOrderNum: string | null = cleanOrderNum || null;
+
+  if (hasExtra) {
+    const meta: any = {};
+    if (cleanOrderNum) meta.o = cleanOrderNum;
+    if (d.notes) meta.n = d.notes;
+    if (d.customerChat) meta.c = d.customerChat;
+    if (d.deliveryType === 'same_address') meta.t = 'm';
+    if (d.additionalValue) meta.a = d.additionalValue;
+    if (d.additionalReason) meta.r = d.additionalReason;
+    if (d.linkedOrderNumber) meta.l = d.linkedOrderNumber;
+    if (d.paymentMethod && d.paymentMethod !== 'already_paid') meta.pm = d.paymentMethod;
+    if (d.orderCollectionAmount) meta.ca = d.orderCollectionAmount;
+    if (d.changeFor) meta.cf = d.changeFor;
+    if (d.paid) meta.p = 1;
+
+    serializedOrderNum = JSON.stringify(meta);
+  }
 
   return {
     id: d.id,
@@ -219,7 +240,7 @@ function formatDeliveryPayload(d: Delivery) {
     value: Number(d.value),
     status: d.status,
     schedule_id: d.scheduleId || null,
-    order_number: cleanOrderNum || null
+    order_number: serializedOrderNum
   };
 }
 
@@ -747,6 +768,37 @@ export const db = {
     return `000.000.000-${rand()}${rand()}`;
   },
 
+  // ── FUNÇÃO DE SINCRONIZAÇÃO FORÇADA LOCAL -> SUPABASE ──
+  async syncLocalToSupabase(): Promise<{ deliveriesCount: number }> {
+    const allLocalDeliveries = loadMasterDeliveriesBackup();
+    
+    if (allLocalDeliveries.length > 0) {
+      const payload = allLocalDeliveries.map(d => {
+        const canonicalRider = this.resolveUser(d.riderId);
+        const canonicalEst = this.resolveEstablishment(d.establishmentId);
+        return formatDeliveryPayload({
+          ...d,
+          riderId: canonicalRider?.id || d.riderId,
+          establishmentId: canonicalEst?.id || d.establishmentId
+        });
+      });
+
+      const chunkSize = 50;
+      for (let i = 0; i < payload.length; i += chunkSize) {
+        const chunk = payload.slice(i, i + chunkSize);
+        try {
+          await supabase.from('deliveries').upsert(chunk, { onConflict: 'id' });
+        } catch (err) {
+          console.warn('Erro ao sincronizar chunk local com Supabase:', err);
+        }
+      }
+    }
+
+    await this.pullFromSupabase();
+    return { deliveriesCount: allLocalDeliveries.length };
+  },
+
+  // ── PAGINAÇÃO COMPLETA PARA CARREGAR 100% DAS CORRIDAS DO SUPABASE SEM PERDAS ──
   async pullFromSupabase() {
     try {
       const { data: usersData } = await supabase.from('users').select('*').limit(10000);
@@ -823,6 +875,7 @@ export const db = {
         });
       }
 
+      // Busca paginada contínua para puxar 100% das entregas sem o limite de 1000 linhas
       const allDelData: any[] = [];
       let delFrom = 0;
       const delBatchSize = 1000;

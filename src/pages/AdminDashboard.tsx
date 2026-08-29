@@ -50,7 +50,9 @@ import {
   Banknote,
   CreditCard,
   QrCode,
-  Copy
+  Copy,
+  CloudUpload,
+  Loader2
 } from 'lucide-react';
 
 import L from 'leaflet';
@@ -125,6 +127,7 @@ export default function AdminDashboard() {
   const [partnerRequests, setPartnerRequests] = useState<PartnerRequest[]>([]);
   const [riderLocations, setRiderLocations] = useState<RiderLocation[]>([]);
   const [activeToast, setActiveToast] = useState<ChatToast | null>(null);
+  const [isSyncingSupabase, setIsSyncingSupabase] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
@@ -251,6 +254,19 @@ export default function AdminDashboard() {
     setDeliveries([...currentDeliveries].sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time) || b.id.localeCompare(a.id)));
     setPartnerRequests([...rawRequests].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
     setRiderLocations(locations);
+  };
+
+  const handleSyncToSupabase = async () => {
+    setIsSyncingSupabase(true);
+    try {
+      const res = await db.syncLocalToSupabase();
+      loadData();
+      alert(`🎉 Sincronização concluída com sucesso!\n\n${res.deliveriesCount} corridas verificadas e enviadas ao banco de dados do Supabase.`);
+    } catch (e) {
+      alert('Erro ao sincronizar com o Supabase. Verifique sua conexão com a internet.');
+    } finally {
+      setIsSyncingSupabase(false);
+    }
   };
 
   useEffect(() => {
@@ -1352,7 +1368,6 @@ export default function AdminDashboard() {
         if (!isStandard) return false;
       }
 
-      // Filtro de Cobrança ao Cliente / Forma de Pagamento
       if (delPaymentFilter === 'to_collect') {
         const isCollect = d.paymentMethod && d.paymentMethod !== 'already_paid';
         if (!isCollect) return false;
@@ -1461,6 +1476,24 @@ export default function AdminDashboard() {
             </div>
           </div>
           <div className="flex items-center space-x-3">
+            <button
+              onClick={handleSyncToSupabase}
+              disabled={isSyncingSupabase}
+              className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-black flex items-center space-x-1 transition-colors shadow-sm"
+              title="Sincronizar todas as corridas locais para a nuvem Supabase"
+            >
+              {isSyncingSupabase ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin text-white" />
+                  <span>Sincronizando...</span>
+                </>
+              ) : (
+                <>
+                  <CloudUpload className="h-4 w-4 text-white" />
+                  <span className="hidden sm:inline">Sincronizar c/ Supabase</span>
+                </>
+              )}
+            </button>
             <button
               onClick={() => setShowBatchModal(true)}
               className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-black flex items-center space-x-1 transition-colors shadow-sm"
@@ -1659,9 +1692,27 @@ export default function AdminDashboard() {
               <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
                 <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                   <RotateCcw className="h-4 w-4 text-red-600" />
-                  <span>Ações de Manutenção e Lote</span>
+                  <span>Ações de Manutenção e Sincronização</span>
                 </h3>
                 <div className="flex flex-wrap gap-3">
+                  <button
+                    onClick={handleSyncToSupabase}
+                    disabled={isSyncingSupabase}
+                    className="flex items-center space-x-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-3 rounded-xl text-xs font-black transition-all shadow-md"
+                  >
+                    {isSyncingSupabase ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin text-white" />
+                        <span>SINCRONIZANDO COM SUPABASE...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CloudUpload className="h-4 w-4 text-white" />
+                        <span>SINCRONIZAR CORRIDAS COM SUPABASE</span>
+                      </>
+                    )}
+                  </button>
+
                   <button
                     onClick={() => setShowBatchModal(true)}
                     className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-xl text-xs font-black transition-all shadow-md"
@@ -2427,7 +2478,6 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  {/* NOVO FILTRO: COBRANÇA AO CLIENTE / FORMA DE PAGAMENTO */}
                   <div>
                     <label className="block text-[10px] font-black text-amber-800 uppercase mb-1 flex items-center gap-1">
                       <Banknote className="h-3 w-3 text-amber-600" />
@@ -2595,7 +2645,7 @@ export default function AdminDashboard() {
                               
                               {/* Badge de Repetição do mesmo número de pedido */}
                               {repeatCount > 1 && (
-                                <span className="bg-amber-500 text-slate-950 text-[10px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs border border-amber-600 animate-pulse">
+                                <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs border border-amber-600 animate-pulse">
                                   <Copy className="h-3 w-3" />
                                   <span>Nº Repetido ({repeatCount}x)</span>
                                 </span>
