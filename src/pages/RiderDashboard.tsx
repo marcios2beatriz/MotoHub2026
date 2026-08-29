@@ -333,7 +333,9 @@ export default function RiderDashboard() {
   const operationalTodayStr = db.getOperationalDateString();
 
   const todayDeliveries = deliveries.filter(d => isSameDayString(d.date, operationalTodayStr));
-  const todayEarnings = todayDeliveries.filter(d => d.status === 'active').reduce((sum, d) => sum + Number(d.value || 0), 0);
+  const todayApprovedDeliveries = todayDeliveries.filter(d => d.status === 'active');
+  const todayGrossEarnings = todayApprovedDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
+  const todayNetEarnings = todayApprovedDeliveries.reduce((sum, d) => sum + getRiderNetForDelivery(d), 0);
 
   const getFutureSchedules = () => {
     const limit = new Date();
@@ -931,8 +933,13 @@ export default function RiderDashboard() {
                   <DollarSign className="h-6 w-6" />
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 font-medium uppercase">Total Faturado Hoje</p>
-                  <p className="text-2xl font-bold text-slate-800">R$ {todayEarnings.toFixed(2)}</p>
+                  <p className="text-xs text-slate-500 font-medium uppercase">Total Faturado Hoje (Líquido)</p>
+                  <p className="text-2xl font-bold text-slate-800">R$ {todayNetEarnings.toFixed(2)}</p>
+                  {todayGrossEarnings > todayNetEarnings && (
+                    <p className="text-[11px] text-slate-400 font-semibold mt-0.5">
+                      Bruto: R$ {todayGrossEarnings.toFixed(2)} (taxa adm R$ 1 descontada apenas nas corridas padrão)
+                    </p>
+                  )}
                 </div>
               </div>
 
