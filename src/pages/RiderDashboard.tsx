@@ -53,7 +53,6 @@ import { gpsTracker, GpsState } from '../utils/gpsTracker';
 
 const ADMIN_FEE_PER_DELIVERY = 1.00;
 
-// Corridas de mesmo endereço (R$ 4,00) são 100% isentas da taxa administrativa
 export const getAdminFeeForDelivery = (d: Delivery): number => {
   const val = Number(d.value || 0);
   if (d.deliveryType === 'same_address' || val <= 4.00) {
@@ -100,7 +99,6 @@ export default function RiderDashboard() {
   const [activeToast, setActiveToast] = useState<ChatToast | null>(null);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
-  // Estados para busca na aba de tarifas
   const [rateSearch, setRateSearch] = useState('');
   const [ratePriceFilter, setRatePriceFilter] = useState<number | 'all'>('all');
 
@@ -144,11 +142,9 @@ export default function RiderDashboard() {
   const [scheduleEstFilter, setScheduleEstFilter] = useState('');
   const [scheduleDateFilter, setScheduleDateFilter] = useState('');
 
-  // --- FILTROS DE CORRIDAS (STATUS + TIPO/ADICIONAL) ---
   const [deliveryStatusFilter, setDeliveryStatusFilter] = useState<'all' | 'active' | 'pending' | 'rejected' | 'cancelled'>('all');
   const [deliveryFeatureFilter, setDeliveryFeatureFilter] = useState<'all' | 'same_order_number' | 'with_additional' | 'linked' | 'standard'>('all');
 
-  // --- FILTROS DE TURNO INTELIGENTE NO HISTÓRICO DE CORRIDAS ---
   const [filterMode, setFilterMode] = useState<'smart_shift' | 'date_range' | 'all'>('smart_shift');
   const [smartDate, setSmartDate] = useState<string>(db.getOperationalDateString());
   const [smartPeriod, setSmartPeriod] = useState<'all_shifts' | 'night_shift' | 'morning_shift' | 'afternoon_shift'>('all_shifts');
@@ -158,7 +154,6 @@ export default function RiderDashboard() {
   const [historyDateTo, setHistoryDateTo] = useState('');
   const [historyOrderNumberFilter, setHistoryOrderNumberFilter] = useState('');
 
-  // --- FILTROS DA ABA HISTÓRICO DE GANHOS ---
   const [earningsPeriodMode, setEarningsPeriodMode] = useState<'this_week' | 'last_week' | 'today' | 'this_month' | 'custom'>('this_week');
   const [earningsCustomFrom, setEarningsCustomFrom] = useState<string>('');
   const [earningsCustomTo, setEarningsCustomTo] = useState<string>('');
@@ -201,7 +196,7 @@ export default function RiderDashboard() {
   const loadData = () => {
     if (!user) return;
     const allUsers = db.getUsers();
-    const freshUser = allUsers.find(u => u.id === user.id) || user;
+    const freshUser = allUsers.find(u => db.isSameUser(u.id, user.id)) || user;
     
     const allSchedules = db.getSchedules().filter(s => {
       return db.isSameUser(s.riderId, freshUser.id);
@@ -293,7 +288,6 @@ export default function RiderDashboard() {
     };
   }, [user, navigate, activeTab]);
 
-  // Mapa de contagem de repetições por data e número de pedido
   const orderNumberCountMap = useMemo(() => {
     const map = new Map<string, number>();
     deliveries.forEach(d => {
@@ -361,11 +355,11 @@ export default function RiderDashboard() {
 
   const operationalTodayStr = db.getOperationalDateString();
 
-  // CORRIDAS APENAS DO DIA / TURNO ATUAL
+  // CORRIDAS DO DIA (compara tanto pela data do turno quanto pela data gravada)
   const todayDeliveries = useMemo(() => {
     return deliveries.filter(d => {
       const opDate = getDeliveryOperationalDate(d.date, d.time);
-      return isSameDayString(opDate, operationalTodayStr);
+      return isSameDayString(opDate, operationalTodayStr) || isSameDayString(d.date, operationalTodayStr);
     });
   }, [deliveries, operationalTodayStr]);
 
@@ -665,7 +659,7 @@ export default function RiderDashboard() {
       if (filterMode === 'smart_shift') {
         if (!smartDate) return true;
         const opDate = getDeliveryOperationalDate(d.date, d.time);
-        const isDateMatch = isSameDayString(opDate, smartDate);
+        const isDateMatch = isSameDayString(opDate, smartDate) || isSameDayString(d.date, smartDate);
         if (!isDateMatch) return false;
 
         const [h] = (d.time || '12:00').split(':').map(Number);
@@ -765,7 +759,6 @@ export default function RiderDashboard() {
 
   const isAllEarningsPaid = filteredEarningsDeliveries.length > 0 && filteredEarningsDeliveries.every(d => d.paid);
 
-  // --- FILTRAGEM DA TABELA DE BAIRROS ---
   const filteredNeighborhoods = NEIGHBORHOOD_RATES.filter(item => {
     const matchesSearch = item.name.toLowerCase().includes(rateSearch.toLowerCase().trim());
     const matchesPrice = ratePriceFilter === 'all' || item.price === ratePriceFilter;
@@ -894,7 +887,6 @@ export default function RiderDashboard() {
           </div>
         </div>
 
-        {/* BARRA DE NAVEGAÇÃO ENTRE ABAS */}
         <div className="grid grid-cols-4 sm:grid-cols-7 bg-white rounded-xl p-1 shadow-sm mb-6 border border-slate-200 gap-1 text-xs sticky top-[68px] z-20">
           <button
             onClick={() => setActiveTab('dashboard')}
@@ -1061,7 +1053,7 @@ export default function RiderDashboard() {
               </div>
             )}
 
-            {/* SEÇÃO: CORRIDAS DE HOJE (APENAS DO DIA OPERACIONAL ATUAL) */}
+            {/* SEÇÃO: CORRIDAS DE HOJE */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <h3 className="text-lg font-bold text-slate-800 flex items-center space-x-2">
@@ -1122,7 +1114,6 @@ export default function RiderDashboard() {
                               )}
                               <p className="font-bold text-slate-800 text-sm">{est?.name || 'Estabelecimento'}</p>
 
-                              {/* Badge de Repetição do mesmo número de pedido */}
                               {repeatCount > 1 && (
                                 <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-0.5 shadow-xs border border-amber-600 animate-pulse">
                                   <Copy className="h-2.5 w-2.5" />
@@ -1130,7 +1121,6 @@ export default function RiderDashboard() {
                                 </span>
                               )}
 
-                              {/* Badge Mesmo Endereço com Vinculação */}
                               {isSame && (
                                 <span className="bg-purple-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
                                   <Link2 className="h-3 w-3" />
@@ -1138,7 +1128,6 @@ export default function RiderDashboard() {
                                 </span>
                               )}
 
-                              {/* Badge Valor Adicional com Motivo */}
                               {hasAdditional && (
                                 <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
                                   <Sparkles className="h-3 w-3 text-amber-600" />
@@ -1383,7 +1372,6 @@ export default function RiderDashboard() {
 
               {historySubTab === 'deliveries' ? (
                 <>
-                  {/* CARD DE FILTRO DE TURNO, PERÍODO E TIPO */}
                   <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-3">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/70 pb-2.5">
                       <p className="text-xs font-black uppercase text-indigo-900 flex items-center gap-1.5 tracking-wider">
@@ -1571,7 +1559,6 @@ export default function RiderDashboard() {
                                     )}
                                     <p className="font-bold text-slate-800 text-sm">{est?.name || 'Estabelecimento'}</p>
 
-                                    {/* Badge de Repetição do mesmo número de pedido */}
                                     {repeatCount > 1 && (
                                       <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-0.5 shadow-xs border border-amber-600 animate-pulse">
                                         <Copy className="h-2.5 w-2.5" />
@@ -1709,7 +1696,6 @@ export default function RiderDashboard() {
           <div className="space-y-6">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6">
               
-              {/* Header da Aba de Ganhos */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
                 <div>
                   <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
@@ -1746,7 +1732,6 @@ export default function RiderDashboard() {
                 </div>
               </div>
 
-              {/* FILTROS DE PERÍODO */}
               <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
                 <div className="flex items-center justify-between border-b border-slate-200/60 pb-2.5">
                   <span className="text-xs font-black uppercase text-indigo-900 flex items-center gap-1.5 tracking-wider">
@@ -1857,7 +1842,6 @@ export default function RiderDashboard() {
                 </div>
               </div>
 
-              {/* CARD PRINCIPAL COM AS 5 MÉTRICAS */}
               <RiderFinancialMetricsCard
                 riderName={user?.name || 'Motoboy'}
                 riderPhone={user?.phone}
@@ -1867,7 +1851,6 @@ export default function RiderDashboard() {
                 periodLabel={earningsBounds.label}
               />
 
-              {/* LISTA DISCRIMINADA DAS CORRIDAS DO PERÍODO */}
               <div className="space-y-3 pt-2">
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-black uppercase text-slate-700 tracking-wider flex items-center gap-1.5">
@@ -1949,12 +1932,10 @@ export default function RiderDashboard() {
           </div>
         )}
 
-        {/* NOVA ABA INFORMATIVA: TABELA DE TARIFAS E PREÇOS POR BAIRRO */}
         {activeTab === 'rates' && (
           <div className="space-y-6 animate-fadeIn">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6">
               
-              {/* Header da Tabela */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
                 <div>
                   <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
@@ -1972,7 +1953,6 @@ export default function RiderDashboard() {
                 </div>
               </div>
 
-              {/* BARRA DE PESQUISA E FILTROS DE PREÇO */}
               <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
                 <div className="relative">
                   <input
@@ -1993,7 +1973,6 @@ export default function RiderDashboard() {
                   )}
                 </div>
 
-                {/* Filtro Rápido por Valor */}
                 <div className="flex items-center gap-1.5 flex-wrap pt-1">
                   <span className="text-[11px] font-black uppercase text-slate-500 mr-1">Faixa de Preço:</span>
                   <button
@@ -2022,7 +2001,6 @@ export default function RiderDashboard() {
                 </div>
               </div>
 
-              {/* GRID DOS BAIRROS */}
               {filteredNeighborhoods.length === 0 ? (
                 <div className="text-center py-12 bg-slate-50 border border-slate-200 rounded-2xl text-slate-400 space-y-2">
                   <Tag className="h-10 w-10 mx-auto text-slate-300" />
@@ -2070,7 +2048,6 @@ export default function RiderDashboard() {
                 </div>
               )}
 
-              {/* Informação de Rodapé */}
               <div className="bg-amber-50/60 border border-amber-200/70 p-3.5 rounded-2xl text-[11px] text-amber-900 font-medium flex items-center gap-2">
                 <AlertCircle className="h-4 w-4 text-amber-600 flex-shrink-0" />
                 <span>
@@ -2139,7 +2116,6 @@ export default function RiderDashboard() {
         )}
       </main>
 
-      {/* Modal de Lançamento de Corrida pelo Motoboy */}
       {showLaunchModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 animate-fadeIn">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
@@ -2158,7 +2134,6 @@ export default function RiderDashboard() {
 
             <form onSubmit={handleLaunchDelivery} className="space-y-3.5">
               
-              {/* SELEÇÃO DO TIPO: PADRÃO VS MESMO ENDEREÇO */}
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">
                   Tipo de Corrida
@@ -2195,7 +2170,6 @@ export default function RiderDashboard() {
                 </div>
               </div>
 
-              {/* VÍNCULO AO PEDIDO PRINCIPAL (QUANDO MESMO ENDEREÇO) */}
               {isSameAddress && (
                 <div className="bg-purple-50/80 border border-purple-200 p-3 rounded-xl space-y-2 animate-fadeIn">
                   <div className="flex items-center justify-between text-xs text-purple-900 font-extrabold">
@@ -2240,7 +2214,6 @@ export default function RiderDashboard() {
                 </div>
               )}
 
-              {/* BLOCO DE PAGAMENTO NA ENTREGA NO MODAL DO MOTOBOY */}
               <div className="bg-amber-50/60 border border-amber-300/80 p-3 rounded-2xl space-y-2.5">
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-black text-amber-900 uppercase flex items-center gap-1.5">
@@ -2394,7 +2367,6 @@ export default function RiderDashboard() {
                 </div>
               </div>
 
-              {/* VALOR BASE + VALOR ADICIONAL COM JUSTIFICATIVA */}
               <div className="space-y-2 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
                 <div className="grid grid-cols-2 gap-2">
                   <div>
@@ -2429,7 +2401,6 @@ export default function RiderDashboard() {
                   </div>
                 </div>
 
-                {/* Justificativa do adicional */}
                 <div>
                   <label className="block text-[10px] font-black text-amber-800 uppercase mb-1 flex items-center gap-1">
                     <HelpCircle className="h-3 w-3 text-amber-600" />

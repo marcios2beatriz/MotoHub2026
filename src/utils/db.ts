@@ -285,7 +285,7 @@ export const db = {
       if (!dNumber || dNumber !== cleanNumber) return false;
 
       const dOpDate = getDeliveryOperationalDate(d.date, d.time);
-      return isSameDayString(dOpDate, targetOpDate);
+      return isSameDayString(dOpDate, targetOpDate) || isSameDayString(d.date, date);
     });
 
     if (duplicate) {
@@ -308,7 +308,7 @@ export const db = {
       if (d.status === 'cancelled' || d.status === 'rejected') return false;
       if (riderId && !this.isSameUser(d.riderId, riderId)) return false;
       const dOpDate = getDeliveryOperationalDate(d.date, d.time);
-      return isSameDayString(dOpDate, targetOpDate);
+      return isSameDayString(dOpDate, targetOpDate) || isSameDayString(d.date, date);
     });
   },
 
@@ -503,7 +503,6 @@ export const db = {
   },
 
   async setDeliveries(deliveries: Delivery[]) {
-    // Normaliza todos os IDs para os canônicos de usuários e estabelecimentos
     const normalized = deliveries.map(d => {
       const canonicalRider = this.resolveUser(d.riderId);
       const canonicalEst = this.resolveEstablishment(d.establishmentId);
@@ -680,57 +679,67 @@ export const db = {
 
   resolveUser(id: string): User | undefined {
     if (!id) return undefined;
-    const found = memoryUsers.find(u => u.id === id);
-    if (found) return found;
+    const direct = memoryUsers.find(u => u.id === id);
+    if (direct) return direct;
 
-    const cleanId = id.toLowerCase().trim();
-    return memoryUsers.find(u => 
-      (u.id && u.id.toLowerCase().trim() === cleanId) ||
-      (u.email && u.email.toLowerCase().trim() === cleanId) ||
-      (u.name && (
-        u.name.toLowerCase().trim() === cleanId ||
-        u.name.toLowerCase().trim().includes(cleanId) ||
-        cleanId.includes(u.name.toLowerCase().trim())
-      ))
-    );
+    const clean = id.toLowerCase().trim();
+    const cleanDigits = clean.replace(/\D/g, '');
+
+    return memoryUsers.find(u => {
+      if (u.id && u.id.toLowerCase().trim() === clean) return true;
+      if (u.email && u.email.toLowerCase().trim() === clean) return true;
+      if (u.name && u.name.toLowerCase().trim() === clean) return true;
+      if (cleanDigits.length >= 8) {
+        if (u.cpf && u.cpf.replace(/\D/g, '') === cleanDigits) return true;
+        if (u.phone && u.phone.replace(/\D/g, '') === cleanDigits) return true;
+      }
+      return false;
+    });
   },
 
   resolveEstablishment(id: string): Establishment | undefined {
     if (!id) return undefined;
-    const found = memoryEstablishments.find(e => e.id === id);
-    if (found) return found;
+    const direct = memoryEstablishments.find(e => e.id === id);
+    if (direct) return direct;
 
-    const cleanId = id.toLowerCase().trim();
+    const clean = id.toLowerCase().trim();
     return memoryEstablishments.find(e => 
-      (e.id && e.id.toLowerCase().trim() === cleanId) ||
-      (e.name && (
-        e.name.toLowerCase().trim() === cleanId ||
-        e.name.toLowerCase().trim().includes(cleanId) ||
-        cleanId.includes(e.name.toLowerCase().trim())
-      ))
+      (e.id && e.id.toLowerCase().trim() === clean) ||
+      (e.name && e.name.toLowerCase().trim() === clean) ||
+      (e.email && e.email.toLowerCase().trim() === clean)
     );
   },
 
   isSameEstablishment(id1?: string, id2?: string): boolean {
     if (!id1 || !id2) return false;
     if (id1 === id2) return true;
+    const clean1 = id1.toLowerCase().trim();
+    const clean2 = id2.toLowerCase().trim();
+    if (clean1 === clean2) return true;
+
     const e1 = this.resolveEstablishment(id1);
     const e2 = this.resolveEstablishment(id2);
     if (e1 && e2) return e1.id === e2.id;
-    return id1.toLowerCase().trim() === id2.toLowerCase().trim();
+    return false;
   },
 
   isSameUser(id1?: string, id2?: string): boolean {
     if (!id1 || !id2) return false;
     if (id1 === id2) return true;
+    const clean1 = id1.toLowerCase().trim();
+    const clean2 = id2.toLowerCase().trim();
+    if (clean1 === clean2) return true;
+
     const u1 = this.resolveUser(id1);
     const u2 = this.resolveUser(id2);
     if (u1 && u2) {
       if (u1.id === u2.id) return true;
-      if (u1.email && u2.email && u1.email.toLowerCase() === u2.email.toLowerCase()) return true;
-      if (u1.cpf && u2.cpf && u1.cpf === u2.cpf) return true;
+      if (u1.email && u2.email && u1.email.toLowerCase().trim() === u2.email.toLowerCase().trim()) return true;
+      const cpf1 = u1.cpf ? u1.cpf.replace(/\D/g, '') : '';
+      const cpf2 = u2.cpf ? u2.cpf.replace(/\D/g, '') : '';
+      if (cpf1 && cpf2 && cpf1 === cpf2) return true;
     }
-    return id1.toLowerCase().trim() === id2.toLowerCase().trim();
+    return false;
   },
 
   generateUniqueDummyCpf(): string {
@@ -738,7 +747,6 @@ export const db = {
     return `000.000.000-${rand()}${rand()}`;
   },
 
-  // ── PAGINAÇÃO COMPLETA PARA CARREGAR 100% DAS CORRIDAS DO SUPABASE SEM PERDAS ──
   async pullFromSupabase() {
     try {
       const { data: usersData } = await supabase.from('users').select('*').limit(10000);
@@ -815,7 +823,6 @@ export const db = {
         });
       }
 
-      // Busca paginada contínua para puxar 100% das entregas sem o limite de 1000 linhas
       const allDelData: any[] = [];
       let delFrom = 0;
       const delBatchSize = 1000;
