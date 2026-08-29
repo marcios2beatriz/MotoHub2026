@@ -49,7 +49,8 @@ import {
   Link2,
   Banknote,
   CreditCard,
-  QrCode
+  QrCode,
+  Copy
 } from 'lucide-react';
 
 import L from 'leaflet';
@@ -146,21 +147,21 @@ export default function AdminDashboard() {
   const [delRiderFilter, setDelRiderFilter] = useState<string>('all');
   const [delEstFilter, setDelEstFilter] = useState<string>('all');
   const [delStatusFilter, setDelStatusFilter] = useState<string>('all');
-  const [delFeatureFilter, setDelFeatureFilter] = useState<'all' | 'with_additional' | 'linked' | 'standard'>('all');
+  const [delFeatureFilter, setDelFeatureFilter] = useState<'all' | 'same_order_number' | 'with_additional' | 'linked' | 'standard'>('all');
   const [delPaymentFilter, setDelPaymentFilter] = useState<'all' | 'to_collect' | 'money' | 'card' | 'pix' | 'already_paid'>('all');
   const [delDateFrom, setDelDateFrom] = useState<string>('');
   const [delDateTo, setDelDateTo] = useState<string>('');
   const [delSearchQuery, setDelSearchQuery] = useState<string>('');
   const [delOrderNumberFilter, setDelOrderNumberFilter] = useState<string>('');
   const [delNotesFilter, setDelNotesFilter] = useState<'all' | 'with_notes' | 'without_notes'>('all');
-  const [delSortOrder, setDelSortOrder] = useState<'date_desc' | 'date_asc' | 'value_desc' | 'value_asc' | 'rider_name' | 'est_name'>('date_desc');
+  const [delSortOrder, setDelSortOrder] = useState<'date_desc' | 'date_asc' | 'order_number_grouped' | 'value_desc' | 'value_asc' | 'rider_name' | 'est_name'>('date_desc');
 
   // Filtros de Fechamento Financeiro
   const [financePeriodMode, setFinancePeriodMode] = useState<'this_week' | 'last_week' | 'today' | 'this_month' | 'custom'>('this_week');
   const [financeCustomFrom, setFinanceCustomFrom] = useState<string>('');
   const [financeCustomTo, setFinanceCustomTo] = useState<string>('');
   const [financePaidFilter, setFinancePaidFilter] = useState<'unpaid' | 'paid' | 'all'>('unpaid');
-  const [financeFeatureFilter, setFinanceFeatureFilter] = useState<'all' | 'with_additional' | 'linked' | 'standard'>('all');
+  const [financeFeatureFilter, setFinanceFeatureFilter] = useState<'all' | 'same_order_number' | 'with_additional' | 'linked' | 'standard'>('all');
   const [financePaymentFilter, setFinancePaymentFilter] = useState<'all' | 'to_collect' | 'money' | 'card' | 'pix' | 'already_paid'>('all');
   const [financeRiderSearch, setFinanceRiderSearch] = useState<string>('');
   const [financeEstSearch, setFinanceEstSearch] = useState<string>('');
@@ -1055,6 +1056,28 @@ export default function AdminDashboard() {
     setDelSmartDate(db.getOperationalDateString(d));
   };
 
+  // Mapa de contagem de repetições por data e número de pedido
+  const orderNumberCountMap = React.useMemo(() => {
+    const map = new Map<string, number>();
+    deliveries.forEach(d => {
+      if (d.status === 'cancelled') return;
+      const num = (d.orderNumber || '').trim().replace('#', '');
+      if (num) {
+        const opDate = getDeliveryOperationalDate(d.date, d.time);
+        const key = `${opDate}_${num}`;
+        map.set(key, (map.get(key) || 0) + 1);
+      }
+    });
+    return map;
+  }, [deliveries]);
+
+  const getOrderRepeatCount = (d: Delivery): number => {
+    const num = (d.orderNumber || '').trim().replace('#', '');
+    if (!num) return 0;
+    const opDate = getDeliveryOperationalDate(d.date, d.time);
+    return orderNumberCountMap.get(`${opDate}_${num}`) || 0;
+  };
+
   const getFinanceDateBounds = (): { start: string; end: string; label: string } => {
     const now = new Date();
     if (financePeriodMode === 'today') {
@@ -1106,9 +1129,16 @@ export default function AdminDashboard() {
     if (financePaidFilter === 'unpaid' && d.paid) return false;
     if (financePaidFilter === 'paid' && !d.paid) return false;
 
-    if (financeFeatureFilter === 'with_additional' && (!d.additionalValue || Number(d.additionalValue) <= 0)) return false;
-    if (financeFeatureFilter === 'linked' && (d.deliveryType !== 'same_address' && !d.linkedOrderNumber)) return false;
-    if (financeFeatureFilter === 'standard' && (d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber) || (d.additionalValue && Number(d.additionalValue) > 0))) return false;
+    if (financeFeatureFilter === 'same_order_number') {
+      const repeats = getOrderRepeatCount(d);
+      if (repeats <= 1) return false;
+    } else if (financeFeatureFilter === 'with_additional' && (!d.additionalValue || Number(d.additionalValue) <= 0)) {
+      return false;
+    } else if (financeFeatureFilter === 'linked' && (d.deliveryType !== 'same_address' && !d.linkedOrderNumber)) {
+      return false;
+    } else if (financeFeatureFilter === 'standard' && (d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber) || (d.additionalValue && Number(d.additionalValue) > 0))) {
+      return false;
+    }
 
     // Filtro de cobrança no fechamento
     if (financePaymentFilter === 'to_collect' && (!d.paymentMethod || d.paymentMethod === 'already_paid')) return false;
@@ -1308,7 +1338,10 @@ export default function AdminDashboard() {
       if (delNotesFilter === 'with_notes' && !hasNotes) return false;
       if (delNotesFilter === 'without_notes' && hasNotes) return false;
 
-      if (delFeatureFilter === 'with_additional') {
+      if (delFeatureFilter === 'same_order_number') {
+        const repeats = getOrderRepeatCount(d);
+        if (repeats <= 1) return false;
+      } else if (delFeatureFilter === 'with_additional') {
         const hasAdd = Number(d.additionalValue || 0) > 0;
         if (!hasAdd) return false;
       } else if (delFeatureFilter === 'linked') {
@@ -1376,6 +1409,12 @@ export default function AdminDashboard() {
       return true;
     })
     .sort((a, b) => {
+      if (delSortOrder === 'order_number_grouped') {
+        const numA = parseInt((a.orderNumber || '0').replace(/\D/g, '') || '0', 10);
+        const numB = parseInt((b.orderNumber || '0').replace(/\D/g, '') || '0', 10);
+        if (numA !== numB) return numB - numA;
+        return b.date.localeCompare(a.date) || b.time.localeCompare(a.time);
+      }
       if (delSortOrder === 'date_desc') return b.date.localeCompare(a.date) || b.time.localeCompare(a.time) || b.id.localeCompare(a.id);
       if (delSortOrder === 'date_asc') return a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || a.id.localeCompare(b.id);
       if (delSortOrder === 'value_desc') return Number(b.value || 0) - Number(a.value || 0);
@@ -1662,11 +1701,26 @@ export default function AdminDashboard() {
                     {pendingDeliveries.map(del => {
                       const rider = users.find(u => u.id === del.riderId);
                       const est = establishments.find(e => e.id === del.establishmentId);
+                      const repeatCount = getOrderRepeatCount(del);
+
                       return (
                         <div key={del.id} className="py-2.5 flex items-center justify-between">
                           <div>
-                            <p className="text-xs font-bold text-slate-800">{rider?.name} — {est?.name}</p>
-                            <p className="text-[11px] text-slate-500">{del.date} às {del.time} • R$ {del.value.toFixed(2)}</p>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {del.orderNumber && (
+                                <span className="bg-indigo-600 text-white text-[10px] font-black px-2 py-0.5 rounded-md">
+                                  #{del.orderNumber}
+                                </span>
+                              )}
+                              <p className="text-xs font-bold text-slate-800">{rider?.name} — {est?.name}</p>
+                              {repeatCount > 1 && (
+                                <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                                  <Copy className="h-2.5 w-2.5" />
+                                  <span>Nº Repetido ({repeatCount}x)</span>
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-slate-500 mt-0.5">{del.date} às {del.time} • R$ {del.value.toFixed(2)}</p>
                             {renderPaymentBadge(del)}
                           </div>
                           <div className="flex items-center space-x-2">
@@ -2396,7 +2450,7 @@ export default function AdminDashboard() {
                   <div>
                     <label className="block text-[10px] font-bold text-purple-700 uppercase mb-1 flex items-center gap-1">
                       <Link2 className="h-3 w-3" />
-                      <span>Tipo / Adicional</span>
+                      <span>Tipo / Agrupamento</span>
                     </label>
                     <select
                       value={delFeatureFilter}
@@ -2404,6 +2458,7 @@ export default function AdminDashboard() {
                       className="w-full px-2.5 py-1.5 border border-purple-300 bg-purple-50/50 rounded-lg text-xs font-bold text-purple-900 focus:outline-none focus:ring-1 focus:ring-purple-500"
                     >
                       <option value="all">Todos os Tipos</option>
+                      <option value="same_order_number">👯‍♂️ Pedidos com Mesmo Nº (Repetidos)</option>
                       <option value="with_additional">✨ Com Adicional</option>
                       <option value="linked">🔗 Vinculadas (Mesmo Endereço)</option>
                       <option value="standard">Padrão (Sem Adicional/Vínculo)</option>
@@ -2488,7 +2543,7 @@ export default function AdminDashboard() {
                   <div>
                     <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
                       <ArrowUpDown className="h-3 w-3 text-indigo-600" />
-                      <span>Classificação</span>
+                      <span>Classificação / Mecanismo</span>
                     </label>
                     <select
                       value={delSortOrder}
@@ -2497,6 +2552,7 @@ export default function AdminDashboard() {
                     >
                       <option value="date_desc">Mais Recentes Primeiro</option>
                       <option value="date_asc">Mais Antigas Primeiro</option>
+                      <option value="order_number_grouped">👯‍♂️ Agrupar por Nº do Pedido (Mesmo Nº)</option>
                       <option value="value_desc">Maior Valor (R$)</option>
                       <option value="value_asc">Menor Valor (R$)</option>
                       <option value="rider_name">Nome do Motoboy (A-Z)</option>
@@ -2522,9 +2578,10 @@ export default function AdminDashboard() {
                     const notesCount = del.notes ? del.notes.split('\n').filter(l => l.trim()).length : 0;
                     const isSame = del.deliveryType === 'same_address';
                     const hasAdditional = Number(del.additionalValue || 0) > 0;
+                    const repeatCount = getOrderRepeatCount(del);
 
                     return (
-                      <div key={del.id} className="py-3.5 flex flex-col space-y-1.5 hover:bg-slate-50/60 p-2 rounded-xl transition-colors">
+                      <div key={del.id} className={`py-3.5 flex flex-col space-y-1.5 hover:bg-slate-50/60 p-2 rounded-xl transition-colors ${repeatCount > 1 ? 'border-l-4 border-l-amber-500 bg-amber-50/20' : ''}`}>
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                           <div className="min-w-0 space-y-1.5 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
@@ -2536,6 +2593,14 @@ export default function AdminDashboard() {
                               <p className="font-extrabold text-slate-800 text-sm">{rider?.name || 'Motoboy'}</p>
                               <span className="text-xs text-slate-500 font-medium">• {est?.name || 'Estabelecimento'}</span>
                               
+                              {/* Badge de Repetição do mesmo número de pedido */}
+                              {repeatCount > 1 && (
+                                <span className="bg-amber-500 text-slate-950 text-[10px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs border border-amber-600 animate-pulse">
+                                  <Copy className="h-3 w-3" />
+                                  <span>Nº Repetido ({repeatCount}x)</span>
+                                </span>
+                              )}
+
                               {/* Badge Mesmo Endereço com Vinculação */}
                               {isSame && (
                                 <span className="bg-purple-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
@@ -2741,6 +2806,7 @@ export default function AdminDashboard() {
                       className="px-2.5 py-1 bg-white border border-purple-300 rounded-lg text-xs font-bold text-purple-900 focus:outline-none focus:ring-1 focus:ring-purple-500"
                     >
                       <option value="all">Todos os Tipos</option>
+                      <option value="same_order_number">👯‍♂️ Pedidos com Mesmo Nº (Repetidos)</option>
                       <option value="with_additional">✨ Com Adicional</option>
                       <option value="linked">🔗 Vinculadas</option>
                       <option value="standard">Padrão</option>

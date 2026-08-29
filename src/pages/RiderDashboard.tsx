@@ -38,7 +38,8 @@ import {
   CreditCard,
   Banknote,
   CheckCircle2,
-  QrCode
+  QrCode,
+  Copy
 } from 'lucide-react';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
 import CustomerChatModal from '../components/CustomerChatModal';
@@ -140,7 +141,7 @@ export default function RiderDashboard() {
 
   // --- FILTROS DE CORRIDAS (STATUS + TIPO/ADICIONAL) ---
   const [deliveryStatusFilter, setDeliveryStatusFilter] = useState<'all' | 'active' | 'pending' | 'rejected' | 'cancelled'>('all');
-  const [deliveryFeatureFilter, setDeliveryFeatureFilter] = useState<'all' | 'with_additional' | 'linked' | 'standard'>('all');
+  const [deliveryFeatureFilter, setDeliveryFeatureFilter] = useState<'all' | 'same_order_number' | 'with_additional' | 'linked' | 'standard'>('all');
 
   // --- FILTROS DE TURNO INTELIGENTE NO HISTÓRICO DE CORRIDAS ---
   const [filterMode, setFilterMode] = useState<'smart_shift' | 'date_range' | 'all'>('smart_shift');
@@ -157,7 +158,7 @@ export default function RiderDashboard() {
   const [earningsCustomFrom, setEarningsCustomFrom] = useState<string>('');
   const [earningsCustomTo, setEarningsCustomTo] = useState<string>('');
   const [earningsPaidFilter, setEarningsPaidFilter] = useState<'all' | 'unpaid' | 'paid'>('all');
-  const [earningsFeatureFilter, setEarningsFeatureFilter] = useState<'all' | 'with_additional' | 'linked' | 'standard'>('all');
+  const [earningsFeatureFilter, setEarningsFeatureFilter] = useState<'all' | 'same_order_number' | 'with_additional' | 'linked' | 'standard'>('all');
   const [earningsEstFilter, setEarningsEstFilter] = useState<string>('');
 
   const resolveEst = (id: string): Establishment | undefined => {
@@ -286,6 +287,28 @@ export default function RiderDashboard() {
       window.removeEventListener('route-history-updated', handleHistoryUpdated);
     };
   }, [user, navigate, activeTab]);
+
+  // Mapa de contagem de repetições por data e número de pedido
+  const orderNumberCountMap = React.useMemo(() => {
+    const map = new Map<string, number>();
+    deliveries.forEach(d => {
+      if (d.status === 'cancelled') return;
+      const num = (d.orderNumber || '').trim().replace('#', '');
+      if (num) {
+        const opDate = getDeliveryOperationalDate(d.date, d.time);
+        const key = `${opDate}_${num}`;
+        map.set(key, (map.get(key) || 0) + 1);
+      }
+    });
+    return map;
+  }, [deliveries]);
+
+  const getOrderRepeatCount = (d: Delivery): number => {
+    const num = (d.orderNumber || '').trim().replace('#', '');
+    if (!num) return 0;
+    const opDate = getDeliveryOperationalDate(d.date, d.time);
+    return orderNumberCountMap.get(`${opDate}_${num}`) || 0;
+  };
 
   const handleLogout = async () => {
     if (user) {
@@ -581,7 +604,10 @@ export default function RiderDashboard() {
   const filteredTodayDeliveries = todayDeliveries.filter(d => {
     if (deliveryStatusFilter !== 'all' && d.status !== deliveryStatusFilter) return false;
 
-    if (deliveryFeatureFilter === 'with_additional') {
+    if (deliveryFeatureFilter === 'same_order_number') {
+      const repeats = getOrderRepeatCount(d);
+      if (repeats <= 1) return false;
+    } else if (deliveryFeatureFilter === 'with_additional') {
       const hasAdd = Number(d.additionalValue || 0) > 0;
       if (!hasAdd) return false;
     } else if (deliveryFeatureFilter === 'linked') {
@@ -609,7 +635,10 @@ export default function RiderDashboard() {
       if (!dNum.includes(cleanNum)) return false;
     }
 
-    if (deliveryFeatureFilter === 'with_additional') {
+    if (deliveryFeatureFilter === 'same_order_number') {
+      const repeats = getOrderRepeatCount(d);
+      if (repeats <= 1) return false;
+    } else if (deliveryFeatureFilter === 'with_additional') {
       const hasAdd = Number(d.additionalValue || 0) > 0;
       if (!hasAdd) return false;
     } else if (deliveryFeatureFilter === 'linked') {
@@ -703,9 +732,16 @@ export default function RiderDashboard() {
     if (earningsPaidFilter === 'unpaid' && d.paid) return false;
     if (earningsPaidFilter === 'paid' && !d.paid) return false;
 
-    if (earningsFeatureFilter === 'with_additional' && (!d.additionalValue || Number(d.additionalValue) <= 0)) return false;
-    if (earningsFeatureFilter === 'linked' && (d.deliveryType !== 'same_address' && !d.linkedOrderNumber)) return false;
-    if (earningsFeatureFilter === 'standard' && (d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber) || (d.additionalValue && Number(d.additionalValue) > 0))) return false;
+    if (earningsFeatureFilter === 'same_order_number') {
+      const repeats = getOrderRepeatCount(d);
+      if (repeats <= 1) return false;
+    } else if (earningsFeatureFilter === 'with_additional' && (!d.additionalValue || Number(d.additionalValue) <= 0)) {
+      return false;
+    } else if (earningsFeatureFilter === 'linked' && (d.deliveryType !== 'same_address' && !d.linkedOrderNumber)) {
+      return false;
+    } else if (earningsFeatureFilter === 'standard' && (d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber) || (d.additionalValue && Number(d.additionalValue) > 0))) {
+      return false;
+    }
 
     return true;
   });
@@ -1024,6 +1060,7 @@ export default function RiderDashboard() {
                     className="px-2.5 py-1.5 border border-purple-300 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 bg-purple-50/70 font-bold text-purple-900"
                   >
                     <option value="all">Todos os Tipos</option>
+                    <option value="same_order_number">👯‍♂️ Pedidos com Mesmo Nº (Repetidos)</option>
                     <option value="with_additional">✨ Com Adicional</option>
                     <option value="linked">🔗 Vinculadas (Mesmo Local)</option>
                     <option value="standard">Padrão</option>
@@ -1055,9 +1092,10 @@ export default function RiderDashboard() {
                     const notesCount = delivery.notes ? delivery.notes.split('\n').filter(l => l.trim()).length : 0;
                     const isSame = delivery.deliveryType === 'same_address';
                     const hasAdditional = Number(delivery.additionalValue || 0) > 0;
+                    const repeatCount = getOrderRepeatCount(delivery);
 
                     return (
-                      <div key={delivery.id} className={`py-3.5 space-y-2 ${isSame ? 'bg-purple-50/40 p-3 rounded-xl border border-purple-100' : ''}`}>
+                      <div key={delivery.id} className={`py-3.5 space-y-2 ${repeatCount > 1 ? 'bg-amber-50/30 p-3 rounded-xl border border-amber-200' : ''} ${isSame ? 'bg-purple-50/40 p-3 rounded-xl border border-purple-100' : ''}`}>
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                           <div className="min-w-0 space-y-1.5 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
@@ -1067,6 +1105,14 @@ export default function RiderDashboard() {
                                 </span>
                               )}
                               <p className="font-bold text-slate-800 text-sm">{est?.name || 'Estabelecimento'}</p>
+
+                              {/* Badge de Repetição do mesmo número de pedido */}
+                              {repeatCount > 1 && (
+                                <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-0.5 shadow-xs border border-amber-600 animate-pulse">
+                                  <Copy className="h-2.5 w-2.5" />
+                                  <span>Nº Repetido ({repeatCount}x)</span>
+                                </span>
+                              )}
 
                               {/* Badge Mesmo Endereço com Vinculação */}
                               {isSame && (
@@ -1430,6 +1476,7 @@ export default function RiderDashboard() {
                           className="w-full px-3 py-2 border border-purple-300 bg-purple-50/50 rounded-xl text-xs font-bold text-purple-900 focus:outline-none focus:ring-1 focus:ring-purple-500"
                         >
                           <option value="all">Todos os Tipos</option>
+                          <option value="same_order_number">👯‍♂️ Pedidos com Mesmo Nº (Repetidos)</option>
                           <option value="with_additional">✨ Com Adicional</option>
                           <option value="linked">🔗 Vinculadas (Mesmo Endereço)</option>
                           <option value="standard">Padrão</option>
@@ -1494,9 +1541,10 @@ export default function RiderDashboard() {
                         const notesCount = del.notes ? del.notes.split('\n').filter(l => l.trim()).length : 0;
                         const isSame = del.deliveryType === 'same_address';
                         const hasAdditional = Number(del.additionalValue || 0) > 0;
+                        const repeatCount = getOrderRepeatCount(del);
 
                         return (
-                          <div key={del.id} className={`py-3.5 space-y-2 ${isSame ? 'bg-purple-50/30 p-3 rounded-xl' : ''}`}>
+                          <div key={del.id} className={`py-3.5 space-y-2 ${repeatCount > 1 ? 'bg-amber-50/30 p-3 rounded-xl border border-amber-200' : ''} ${isSame ? 'bg-purple-50/30 p-3 rounded-xl' : ''}`}>
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/50 px-2 rounded-lg">
                               <div className="space-y-1.5 flex-1">
                                 <div className="flex items-center gap-2 flex-wrap">
@@ -1506,6 +1554,14 @@ export default function RiderDashboard() {
                                     </span>
                                   )}
                                   <p className="font-bold text-slate-800 text-sm">{est?.name || 'Estabelecimento'}</p>
+
+                                  {/* Badge de Repetição do mesmo número de pedido */}
+                                  {repeatCount > 1 && (
+                                    <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-0.5 shadow-xs border border-amber-600 animate-pulse">
+                                      <Copy className="h-2.5 w-2.5" />
+                                      <span>Nº Repetido ({repeatCount}x)</span>
+                                    </span>
+                                  )}
 
                                   {isSame && (
                                     <span className="bg-purple-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
@@ -1644,6 +1700,7 @@ export default function RiderDashboard() {
                     className="px-3 py-1.5 border border-purple-300 rounded-xl text-xs font-bold text-purple-900 bg-purple-50 focus:outline-none focus:ring-1 focus:ring-purple-500"
                   >
                     <option value="all">Todos os Tipos</option>
+                    <option value="same_order_number">👯‍♂️ Pedidos com Mesmo Nº (Repetidos)</option>
                     <option value="with_additional">✨ Com Adicional</option>
                     <option value="linked">🔗 Vinculadas</option>
                     <option value="standard">Padrão</option>
@@ -1802,9 +1859,10 @@ export default function RiderDashboard() {
                       const isSame = del.deliveryType === 'same_address';
                       const hasAdd = Number(del.additionalValue || 0) > 0;
                       const riderNetVal = getRiderNetForDelivery(del);
+                      const repeatCount = getOrderRepeatCount(del);
 
                       return (
-                        <div key={del.id} className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-slate-50 transition-colors">
+                        <div key={del.id} className={`p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-slate-50 transition-colors ${repeatCount > 1 ? 'border-l-4 border-l-amber-500 bg-amber-50/20' : ''}`}>
                           <div className="space-y-1">
                             <div className="flex items-center gap-2 flex-wrap">
                               {del.orderNumber && (
@@ -1813,6 +1871,13 @@ export default function RiderDashboard() {
                                 </span>
                               )}
                               <p className="font-extrabold text-slate-800 text-xs">{est?.name || 'Estabelecimento'}</p>
+
+                              {repeatCount > 1 && (
+                                <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-0.5 shadow-xs border border-amber-600 animate-pulse">
+                                  <Copy className="h-2.5 w-2.5" />
+                                  <span>Nº Repetido ({repeatCount}x)</span>
+                                </span>
+                              )}
 
                               {isSame && (
                                 <span className="bg-purple-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-0.5">
@@ -2384,7 +2449,7 @@ export default function RiderDashboard() {
                 <button 
                   type="submit" 
                   disabled={isSubmittingDelivery}
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white rounded-xl text-xs font-extrabold transition-all shadow-md flex items-center gap-1.5"
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-extrabold transition-all shadow-md flex items-center gap-1.5"
                 >
                   {isSubmittingDelivery ? (
                     <>
