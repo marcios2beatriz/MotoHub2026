@@ -152,7 +152,26 @@ export function getDeliveryOperationalDate(dateStr: string, timeStr: string = '1
 }
 
 const SESSION_USER_KEY = 'motohub_session_user';
-const DELIVERIES_STORAGE_MASTER_KEY = 'motohub_deliveries_master_v7';
+const DELIVERIES_STORAGE_MASTER_KEY = 'motohub_deliveries_master_v8';
+const DELETED_DELIVERIES_KEY = 'motohub_deleted_deliveries_ids_v1';
+
+// Gerenciamento de lista negra de IDs excluídos para evitar que reapareçam em cache
+function getDeletedDeliveryIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DELETED_DELIVERIES_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function registerDeletedDeliveryId(id: string) {
+  try {
+    const set = getDeletedDeliveryIds();
+    set.add(id);
+    localStorage.setItem(DELETED_DELIVERIES_KEY, JSON.stringify(Array.from(set).slice(-5000)));
+  } catch {}
+}
 
 function extractOrderNumberSafe(raw?: string): string | undefined {
   if (!raw) return undefined;
@@ -172,7 +191,10 @@ function extractOrderNumberSafe(raw?: string): string | undefined {
 
 function loadMasterDeliveriesBackup(): Delivery[] {
   const merged = new Map<string, Delivery>();
+  const deletedIds = getDeletedDeliveryIds();
+
   const keysToScan = [
+    'motohub_deliveries_master_v8',
     'motohub_deliveries_master_v7',
     'motohub_deliveries_master_v6',
     'motohub_deliveries_master_v5',
@@ -189,7 +211,7 @@ function loadMasterDeliveriesBackup(): Delivery[] {
         const arr = JSON.parse(raw);
         if (Array.isArray(arr)) {
           arr.forEach((d: any) => {
-            if (d && d.id && !merged.has(d.id)) {
+            if (d && d.id && !deletedIds.has(d.id) && !merged.has(d.id)) {
               merged.set(d.id, d);
             }
           });
@@ -203,14 +225,19 @@ function loadMasterDeliveriesBackup(): Delivery[] {
 
 function saveMasterDeliveriesBackup(dels: Delivery[]) {
   try {
-    localStorage.setItem(DELIVERIES_STORAGE_MASTER_KEY, JSON.stringify(dels));
+    const deletedIds = getDeletedDeliveryIds();
+    const cleanList = dels.filter(d => d && d.id && !deletedIds.has(d.id));
+    localStorage.setItem(DELIVERIES_STORAGE_MASTER_KEY, JSON.stringify(cleanList));
   } catch {}
 }
 
 function formatDeliveryPayload(d: Delivery) {
   const cleanOrderNum = d.orderNumber ? String(d.orderNumber).replace('#', '').trim() : '';
 
-  const hasExtra = d.notes || d.customerChat || d.deliveryType === 'same_address' || d.additionalValue || d.additionalReason || d.linkedOrderNumber || (d.paymentMethod && d.paymentMethod !== 'already_paid') || d.orderCollectionAmount || d.changeFor || d.paid;
+  const isSame = d.deliveryType === 'same_address' || Number(d.value) === 4 || Boolean(d.linkedOrderNumber);
+  const pMethod = d.paymentMethod || 'already_paid';
+
+  const hasExtra = d.notes || d.customerChat || isSame || d.additionalValue || d.additionalReason || d.linkedOrderNumber || (pMethod !== 'already_paid') || d.orderCollectionAmount || d.changeFor || d.paid;
 
   let serializedOrderNum: string | null = cleanOrderNum || null;
 
@@ -219,11 +246,11 @@ function formatDeliveryPayload(d: Delivery) {
     if (cleanOrderNum) meta.o = cleanOrderNum;
     if (d.notes) meta.n = d.notes;
     if (d.customerChat) meta.c = d.customerChat;
-    if (d.deliveryType === 'same_address') meta.t = 'm';
+    if (isSame) meta.t = 'm';
     if (d.additionalValue) meta.a = d.additionalValue;
     if (d.additionalReason) meta.r = d.additionalReason;
     if (d.linkedOrderNumber) meta.l = d.linkedOrderNumber;
-    if (d.paymentMethod && d.paymentMethod !== 'already_paid') meta.pm = d.paymentMethod;
+    if (pMethod && pMethod !== 'already_paid') meta.pm = pMethod;
     if (d.orderCollectionAmount) meta.ca = d.orderCollectionAmount;
     if (d.changeFor) meta.cf = d.changeFor;
     if (d.paid) meta.p = 1;
@@ -300,7 +327,7 @@ export const db = {
 
     const duplicate = memoryDeliveries.find(d => {
       if (excludeDeliveryId && d.id === excludeDeliveryId) return false;
-      if (d.status === 'cancelled') return false;
+      if (d.status === 'cancelled' || d.status === 'rejected') return false;
 
       const dNumber = (d.orderNumber || '').trim().replace('#', '');
       if (!dNumber || dNumber !== cleanNumber) return false;
@@ -520,17 +547,25 @@ export const db = {
   },
 
   getDeliveries(): Delivery[] {
-    return memoryDeliveries;
+    const deletedIds = getDeletedDeliveryIds();
+    return memoryDeliveries.filter(d => d && d.id && !deletedIds.has(d.id));
   },
 
   async setDeliveries(deliveries: Delivery[]) {
-    const normalized = deliveries.map(d => {
+    const deletedIds = getDeletedDeliveryIds();
+    const cleanDeliveries = deliveries.filter(d => d && d.id && !deletedIds.has(d.id));
+
+    const normalized = cleanDeliveries.map(d => {
       const canonicalRider = this.resolveUser(d.riderId);
       const canonicalEst = this.resolveEstablishment(d.establishmentId);
+      const isSame = d.deliveryType === 'same_address' || Number(d.value) === 4 || Boolean(d.linkedOrderNumber);
+
       return {
         ...d,
         riderId: canonicalRider?.id || d.riderId,
-        establishmentId: canonicalEst?.id || d.establishmentId
+        establishmentId: canonicalEst?.id || d.establishmentId,
+        deliveryType: isSame ? ('same_address' as const) : ('standard' as const),
+        paymentMethod: d.paymentMethod || 'already_paid'
       };
     });
 
@@ -561,22 +596,32 @@ export const db = {
   },
 
   async deleteDelivery(id: string) {
+    registerDeletedDeliveryId(id);
     locallyCreatedDeliveries.delete(id);
     memoryDeliveries = memoryDeliveries.filter(d => d.id !== id);
     saveMasterDeliveriesBackup(memoryDeliveries);
+
     try {
       await supabase.from('deliveries').delete().eq('id', id);
-    } catch (e) {}
+    } catch (e) {
+      console.warn('Erro ao deletar entrega no Supabase:', e);
+    }
+
     window.dispatchEvent(new Event('db-sync-complete'));
   },
 
   async clearAllDeliveries() {
+    memoryDeliveries.forEach(d => {
+      if (d && d.id) registerDeletedDeliveryId(d.id);
+    });
     locallyCreatedDeliveries.clear();
     memoryDeliveries = [];
     saveMasterDeliveriesBackup([]);
+
     try {
       await supabase.from('deliveries').delete().neq('id', '');
     } catch (e) {}
+
     window.dispatchEvent(new Event('db-sync-complete'));
   },
 
@@ -768,7 +813,6 @@ export const db = {
     return `000.000.000-${rand()}${rand()}`;
   },
 
-  // ── FUNÇÃO DE SINCRONIZAÇÃO FORÇADA LOCAL -> SUPABASE ──
   async syncLocalToSupabase(): Promise<{ deliveriesCount: number }> {
     const allLocalDeliveries = loadMasterDeliveriesBackup();
     
@@ -798,9 +842,10 @@ export const db = {
     return { deliveriesCount: allLocalDeliveries.length };
   },
 
-  // ── PAGINAÇÃO COMPLETA PARA CARREGAR 100% DAS CORRIDAS DO SUPABASE SEM PERDAS ──
   async pullFromSupabase() {
     try {
+      const deletedIds = getDeletedDeliveryIds();
+
       const { data: usersData } = await supabase.from('users').select('*').limit(10000);
       if (usersData) {
         memoryUsers = usersData.map(u => ({
@@ -904,10 +949,12 @@ export const db = {
         const remoteDeliveriesMap = new Map<string, Delivery>();
 
         allDelData.forEach(d => {
+          if (deletedIds.has(d.id)) return;
+
           let orderNumber: string | undefined = extractOrderNumberSafe(d.order_number);
           let notes: string | undefined = undefined;
           let customerChat: string | undefined = undefined;
-          let deliveryType: 'standard' | 'same_address' = 'standard';
+          let deliveryType: 'standard' | 'same_address' = Number(d.value) === 4 ? 'same_address' : 'standard';
           let additionalValue: number = 0;
           let additionalReason: string | undefined = undefined;
           let linkedOrderNumber: string | undefined = undefined;
@@ -931,6 +978,10 @@ export const db = {
               if (parsed.cf !== undefined) changeFor = Number(parsed.cf);
               if (parsed.p === 1 || parsed.p === true) paid = true;
             } catch (e) {}
+          }
+
+          if (Number(d.value) === 4 || linkedOrderNumber) {
+            deliveryType = 'same_address';
           }
 
           const cRider = this.resolveUser(d.rider_id);
@@ -967,6 +1018,8 @@ export const db = {
         const processedIds = new Set<string>();
 
         remoteDeliveriesMap.forEach((remoteDel, id) => {
+          if (deletedIds.has(id)) return;
+
           const localDel = locallyCreatedDeliveries.get(id);
           if (localDel) {
             mergedDeliveries.push({
@@ -992,14 +1045,14 @@ export const db = {
         });
 
         locallyCreatedDeliveries.forEach((localDel, id) => {
-          if (!processedIds.has(id)) {
+          if (!processedIds.has(id) && !deletedIds.has(id)) {
             mergedDeliveries.push(localDel);
             missingFromRemote.push(localDel);
             processedIds.add(id);
           }
         });
 
-        memoryDeliveries = mergedDeliveries;
+        memoryDeliveries = mergedDeliveries.filter(d => !deletedIds.has(d.id));
         saveMasterDeliveriesBackup(memoryDeliveries);
 
         if (missingFromRemote.length > 0) {

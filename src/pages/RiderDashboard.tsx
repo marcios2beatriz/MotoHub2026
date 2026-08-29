@@ -445,7 +445,7 @@ export default function RiderDashboard() {
     const finalVal = baseVal + addVal;
 
     if (isNaN(finalVal) || finalVal <= 0) {
-      alert('Erro: O valor da corrida deve ser maior que zero.');
+      alert('Erro: O valor da肌 corrida deve ser maior que zero.');
       return;
     }
 
@@ -487,6 +487,8 @@ export default function RiderDashboard() {
       const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && isSameDayString(s.date, operationalTodayStr));
       const nowStr = new Date().toISOString();
 
+      const isSame = launchForm.deliveryType === 'same_address' || Number(finalVal) === 4 || Boolean(launchForm.linkedOrderNumber);
+
       if (editingDelivery) {
         const updated = allDeliveries.map(d => d.id === editingDelivery.id ? {
           ...d,
@@ -494,11 +496,11 @@ export default function RiderDashboard() {
           value: finalVal,
           orderNumber: cleanOrderNumber,
           notes: launchForm.notes.trim() || undefined,
-          deliveryType: launchForm.deliveryType,
+          deliveryType: isSame ? ('same_address' as const) : ('standard' as const),
           additionalValue: addVal > 0 ? addVal : undefined,
           additionalReason: launchForm.additionalReason?.trim() || undefined,
-          linkedOrderNumber: launchForm.deliveryType === 'same_address' ? (launchForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
-          paymentMethod: launchForm.paymentMethod,
+          linkedOrderNumber: isSame ? (launchForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+          paymentMethod: launchForm.paymentMethod || 'already_paid',
           orderCollectionAmount: collectionAmount,
           changeFor: changeForValue,
           scheduleId: activeSchedule?.id || d.scheduleId,
@@ -519,11 +521,11 @@ export default function RiderDashboard() {
           scheduleId: activeSchedule?.id,
           orderNumber: cleanOrderNumber,
           notes: launchForm.notes.trim() || undefined,
-          deliveryType: launchForm.deliveryType,
+          deliveryType: isSame ? ('same_address' as const) : ('standard' as const),
           additionalValue: addVal > 0 ? addVal : undefined,
           additionalReason: launchForm.additionalReason?.trim() || undefined,
-          linkedOrderNumber: launchForm.deliveryType === 'same_address' ? (launchForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
-          paymentMethod: launchForm.paymentMethod,
+          linkedOrderNumber: isSame ? (launchForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+          paymentMethod: launchForm.paymentMethod || 'already_paid',
           orderCollectionAmount: collectionAmount,
           changeFor: changeForValue,
           updatedAt: nowStr
@@ -610,6 +612,8 @@ export default function RiderDashboard() {
   const filteredTodayDeliveries = todayDeliveries.filter(d => {
     if (deliveryStatusFilter !== 'all' && d.status !== deliveryStatusFilter) return false;
 
+    const isSame = d.deliveryType === 'same_address' || Number(d.value) === 4 || Boolean(d.linkedOrderNumber);
+
     if (deliveryFeatureFilter === 'same_order_number') {
       const repeats = getOrderRepeatCount(d);
       if (repeats <= 1) return false;
@@ -617,11 +621,9 @@ export default function RiderDashboard() {
       const hasAdd = Number(d.additionalValue || 0) > 0;
       if (!hasAdd) return false;
     } else if (deliveryFeatureFilter === 'linked') {
-      const isLinked = d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber);
-      if (!isLinked) return false;
+      if (!isSame) return false;
     } else if (deliveryFeatureFilter === 'standard') {
-      const isStandard = d.deliveryType !== 'same_address' && !d.linkedOrderNumber && (!d.additionalValue || Number(d.additionalValue) <= 0);
-      if (!isStandard) return false;
+      if (isSame || (d.additionalValue && Number(d.additionalValue) > 0)) return false;
     }
 
     return true;
@@ -642,6 +644,8 @@ export default function RiderDashboard() {
         if (!dNum.includes(cleanNum)) return false;
       }
 
+      const isSame = d.deliveryType === 'same_address' || Number(d.value) === 4 || Boolean(d.linkedOrderNumber);
+
       if (deliveryFeatureFilter === 'same_order_number') {
         const repeats = getOrderRepeatCount(d);
         if (repeats <= 1) return false;
@@ -649,11 +653,9 @@ export default function RiderDashboard() {
         const hasAdd = Number(d.additionalValue || 0) > 0;
         if (!hasAdd) return false;
       } else if (deliveryFeatureFilter === 'linked') {
-        const isLinked = d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber);
-        if (!isLinked) return false;
+        if (!isSame) return false;
       } else if (deliveryFeatureFilter === 'standard') {
-        const isStandard = d.deliveryType !== 'same_address' && !d.linkedOrderNumber && (!d.additionalValue || Number(d.additionalValue) <= 0);
-        if (!isStandard) return false;
+        if (isSame || (d.additionalValue && Number(d.additionalValue) > 0)) return false;
       }
 
       if (filterMode === 'smart_shift') {
@@ -740,6 +742,8 @@ export default function RiderDashboard() {
     if (earningsPaidFilter === 'unpaid' && d.paid) return false;
     if (earningsPaidFilter === 'paid' && !d.paid) return false;
 
+    const isSame = d.deliveryType === 'same_address' || Number(d.value) === 4 || Boolean(d.linkedOrderNumber);
+
     if (earningsFeatureFilter === 'same_order_number') {
       const repeats = getOrderRepeatCount(d);
       if (repeats <= 1) return false;
@@ -747,11 +751,9 @@ export default function RiderDashboard() {
       const hasAdd = Number(d.additionalValue || 0) > 0;
       if (!hasAdd) return false;
     } else if (earningsFeatureFilter === 'linked') {
-      const isLinked = d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber);
-      if (!isLinked) return false;
+      if (!isSame) return false;
     } else if (earningsFeatureFilter === 'standard') {
-      const isStandard = d.deliveryType !== 'same_address' && !d.linkedOrderNumber && (!d.additionalValue || Number(d.additionalValue) <= 0);
-      if (!isStandard) return false;
+      if (isSame || (d.additionalValue && Number(d.additionalValue) > 0)) return false;
     }
 
     return true;
@@ -1098,7 +1100,7 @@ export default function RiderDashboard() {
                     const est = resolveEst(delivery.establishmentId);
                     const hasNotes = Boolean(delivery.notes && delivery.notes.trim());
                     const notesCount = delivery.notes ? delivery.notes.split('\n').filter(l => l.trim()).length : 0;
-                    const isSame = delivery.deliveryType === 'same_address';
+                    const isSame = delivery.deliveryType === 'same_address' || Number(delivery.value) === 4 || Boolean(delivery.linkedOrderNumber);
                     const hasAdditional = Number(delivery.additionalValue || 0) > 0;
                     const repeatCount = getOrderRepeatCount(delivery);
 
@@ -1543,7 +1545,7 @@ export default function RiderDashboard() {
                           const est = resolveEst(del.establishmentId);
                           const hasNotes = Boolean(del.notes && del.notes.trim());
                           const notesCount = del.notes ? del.notes.split('\n').filter(l => l.trim()).length : 0;
-                          const isSame = del.deliveryType === 'same_address';
+                          const isSame = del.deliveryType === 'same_address' || Number(del.value) === 4 || Boolean(del.linkedOrderNumber);
                           const hasAdditional = Number(del.additionalValue || 0) > 0;
                           const repeatCount = getOrderRepeatCount(del);
 
@@ -1867,7 +1869,7 @@ export default function RiderDashboard() {
                   <div className="divide-y divide-slate-100 bg-white rounded-2xl border border-slate-200 overflow-hidden">
                     {filteredEarningsDeliveries.map(del => {
                       const est = resolveEst(del.establishmentId);
-                      const isSame = del.deliveryType === 'same_address';
+                      const isSame = del.deliveryType === 'same_address' || Number(del.value) === 4 || Boolean(del.linkedOrderNumber);
                       const hasAdd = Number(del.additionalValue || 0) > 0;
                       const riderNetVal = getRiderNetForDelivery(del);
                       const repeatCount = getOrderRepeatCount(del);
@@ -1893,7 +1895,7 @@ export default function RiderDashboard() {
                               {isSame && (
                                 <span className="bg-purple-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
                                   <Link2 className="h-3 w-3" />
-                                  <span>Mesmo Endereço (R$ 4)</span>
+                                  <span>Mesmo Endereço {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : '(R$ 4)'}</span>
                                 </span>
                               )}
 

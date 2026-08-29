@@ -517,15 +517,17 @@ export default function EstablishmentDashboard() {
   const handleEditDelivery = (del: Delivery) => {
     if (!currentEst) return;
     setEditingDelivery(del);
+    const isSame = del.deliveryType === 'same_address' || Number(del.value) === 4 || Boolean(del.linkedOrderNumber);
+
     setDeliveryForm({
       riderId: del.riderId,
       establishmentId: del.establishmentId,
       date: del.date,
       time: del.time,
-      value: (del.deliveryType === 'same_address' ? '4.00' : '8.00'),
+      value: isSame ? '4.00' : '8.00',
       orderNumber: del.orderNumber || '',
       notes: del.notes || '',
-      deliveryType: del.deliveryType || 'standard',
+      deliveryType: isSame ? 'same_address' : 'standard',
       additionalValue: del.additionalValue ? del.additionalValue.toString() : '',
       additionalReason: del.additionalReason || '',
       linkedOrderNumber: del.linkedOrderNumber || '',
@@ -572,6 +574,8 @@ export default function EstablishmentDashboard() {
       const collectionAmount = deliveryForm.orderCollectionAmount ? parseFloat(deliveryForm.orderCollectionAmount.replace(',', '.')) : undefined;
       const changeForValue = deliveryForm.changeFor ? parseFloat(deliveryForm.changeFor.replace(',', '.')) : undefined;
 
+      const isSame = deliveryForm.deliveryType === 'same_address' || Number(finalVal) === 4 || Boolean(deliveryForm.linkedOrderNumber);
+
       if (editingDelivery) {
         const updated = allDeliveries.map(d => d.id === editingDelivery.id ? {
           ...d,
@@ -581,11 +585,11 @@ export default function EstablishmentDashboard() {
           value: finalVal,
           orderNumber: cleanOrderNumber || undefined,
           notes: deliveryForm.notes.trim() || undefined,
-          deliveryType: deliveryForm.deliveryType,
+          deliveryType: isSame ? ('same_address' as const) : ('standard' as const),
           additionalValue: addVal > 0 ? addVal : undefined,
           additionalReason: deliveryForm.additionalReason?.trim() || undefined,
-          linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
-          paymentMethod: deliveryForm.paymentMethod,
+          linkedOrderNumber: isSame ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+          paymentMethod: deliveryForm.paymentMethod || 'already_paid',
           orderCollectionAmount: collectionAmount,
           changeFor: changeForValue,
           updatedAt: nowStr
@@ -602,11 +606,674 @@ export default function EstablishmentDashboard() {
           status: 'active',
           orderNumber: cleanOrderNumber || undefined,
           notes: deliveryForm.notes.trim() || undefined,
-          deliveryType: deliveryForm.deliveryType,
+          deliveryType: isSame ? ('same_address' as const) : ('standard' as const),
           additionalValue: addVal > 0 ? addVal : undefined,
           additionalReason: deliveryForm.additionalReason?.trim() || undefined,
-          linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
-          paymentMethod: deliveryForm.paymentMethod,
+          linkedOrderNumber: isSame ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+          paymentMethod: deliveryForm.paymentMethod || 'already_paid',
+          orderCollectionAmount: collectionAmount,
+          changeFor: changeForValue,
+          updatedAt: nowStr,
+          paid: false
+        };
+        await db.setDeliveries([...allDeliveries, newDelivery]);
+      }
+
+      setShowDeliveryModal(false);
+      setEditingDelivery(null);
+      loadData();
+    } catch (err) {
+      console.error('Erro ao gravar corrida:', err);
+      alert('Erro ao salvar corrida. Tente novamente.');
+    } finally {
+      setIsSubmittingDelivery(false);
+    }
+  };
+
+  const handleSaveNotes = async (deliveryId: string, updatedNotes: string) => {
+    const allDeliveries = db.getDeliveries();
+    const updated = allDeliveries.map(d => d.id === deliveryId ? {
+      ...d,
+      notes: updatedNotes,
+      updatedAt: new Date().toISOString()
+    } : d);
+    await db.setDeliveries(updated);
+    loadData();
+  };
+
+  const handleSaveScheduleChat = async (scheduleId: string, updatedChat: string) => {
+    const allSchedules = db.getSchedules();
+    const updated = allSchedules.map(s => s.id === scheduleId ? {
+      ...s,
+      chat: updatedChat,
+      updatedAt: new Date().toISOString()
+    } : s);
+    await db.setSchedules(updated);
+    loadData();
+  };
+
+  const setEstSmartDateToToday = () => {
+    setSmartDate(db.getOperationalDateString());
+  };
+
+  const setEstSmartDateToYesterday = () => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    setSmartDate(db.getOperationalDateString(d));
+<dyad-write path="src/pages/EstablishmentDashboard.tsx" description="Finalizar e atualizar renderização de badges de pagamento e vinculação de corridas no painel do estabelecimento">
+"use client";
+
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { db, Delivery, User, Schedule, RiderLocation, Establishment, getDeliveryOperationalDate, isSameDayString } from '../utils/db';
+import { 
+  LogOut, 
+  Check, 
+  CheckCheck,
+  Plus, 
+  Bike, 
+  Users,
+  DollarSign,
+  Map as MapIcon,
+  Maximize2,
+  Minimize2,
+  MessageSquare,
+  Share2,
+  Edit2,
+  Trash2,
+  LocateFixed,
+  AlertTriangle,
+  RotateCw,
+  Ban,
+  Calendar,
+  Filter,
+  Layers,
+  Sparkles,
+  Hash,
+  FileText,
+  Link2,
+  Banknote,
+  CreditCard,
+  QrCode,
+  Wallet,
+  Receipt,
+  Coins,
+  Search,
+  CheckCircle2,
+  Clock,
+  TrendingUp,
+  X,
+  Phone,
+  ArrowUpDown,
+  Copy
+} from 'lucide-react';
+import L from 'leaflet';
+import DeliveryNotesModal from '../components/DeliveryNotesModal';
+import ScheduleChatModal from '../components/ScheduleChatModal';
+import DeliveryModal from '../components/DeliveryModal';
+import BatchDeliveryModal from '../components/BatchDeliveryModal';
+import RiderFinancialMetricsCard from '../components/RiderFinancialMetricsCard';
+import { realtimeGps } from '../utils/realtimeGps';
+
+const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
+
+const getThisMonday = (): string => {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
+
+  const year = monday.getFullYear();
+  const month = String(monday.getMonth() + 1).padStart(2, '0');
+  const dateNum = String(monday.getDate()).padStart(2, '0');
+  return `${year}-${month}-${dateNum}`;
+};
+
+export function getShiftLabel(shift: string): string {
+  switch(shift) {
+    case 'morning': return 'Manhã';
+    case 'afternoon': return 'Tarde';
+    case 'night': return 'Noite';
+    default: return shift || '';
+  }
+}
+
+export default function EstablishmentDashboard() {
+  const navigate = useNavigate();
+  const [user] = useState(db.getCurrentUser());
+
+  // Aba ativa: Operação diária, Repasses individuais, Histórico de Corridas
+  const [activeTab, setActiveTab] = useState<'operation' | 'settlements' | 'deliveries_history'>('operation');
+
+  const [deliveries, setDeliveries] = useState<Delivery[]>([]);
+  const [allRiders, setAllRiders] = useState<User[]>([]);
+  const [establishmentSchedules, setEstablishmentSchedules] = useState<Schedule[]>([]);
+  const [riderLocations, setRiderLocations] = useState<RiderLocation[]>([]);
+  const [currentEst, setCurrentEst] = useState<Establishment | null>(null);
+
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // --- FILTROS DA ABA DE REPASSES INDIVIDUAIS DOS MOTOBOYS ---
+  const [settlePeriodMode, setSettlePeriodMode] = useState<'this_week' | 'last_week' | 'today' | 'this_month' | 'custom'>('this_week');
+  const [settleCustomFrom, setSettleCustomFrom] = useState<string>('');
+  const [settleCustomTo, setSettleCustomTo] = useState<string>('');
+  const [settleRiderSearch, setSettleRiderSearch] = useState<string>('');
+  const [settlePaidFilter, setSettlePaidFilter] = useState<'unpaid' | 'paid' | 'all'>('all');
+  const [settleFeatureFilter, setSettleFeatureFilter] = useState<'all' | 'same_order_number' | 'with_additional' | 'linked' | 'standard'>('all');
+  const [settlePaymentFilter, setSettlePaymentFilter] = useState<'all' | 'to_collect' | 'money' | 'card' | 'pix' | 'already_paid'>('all');
+  const [selectedRiderDetailsId, setSelectedRiderDetailsId] = useState<string | null>(null);
+
+  // --- FILTROS DE HISTÓRICO DE CORRIDAS ---
+  const [filterMode, setFilterMode] = useState<'smart_shift' | 'date_range' | 'all'>('smart_shift');
+  const [smartDate, setSmartDate] = useState<string>(db.getOperationalDateString());
+  const [smartPeriod, setSmartPeriod] = useState<'all_shifts' | 'night_shift' | 'morning_shift' | 'afternoon_shift'>('all_shifts');
+
+  const [riderFilter, setRiderFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [featureFilter, setFeatureFilter] = useState<'all' | 'same_order_number' | 'with_additional' | 'linked' | 'standard'>('all');
+  const [paymentFilter, setPaymentFilter] = useState<'all' | 'to_collect' | 'money' | 'card' | 'pix' | 'already_paid'>('all');
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
+  const [orderNumberFilter, setOrderNumberFilter] = useState<string>('');
+  const [notesFilter, setNotesFilter] = useState<'all' | 'with_notes' | 'without_notes'>('all');
+  const [sortOrder, setSortOrder] = useState<'recent' | 'oldest' | 'order_number_grouped' | 'highest_value'>('recent');
+
+  const [showDeliveryModal, setShowDeliveryModal] = useState(false);
+  const [isSubmittingDelivery, setIsSubmittingDelivery] = useState(false);
+  const [showBatchModal, setShowBatchModal] = useState(false);
+  const [editingDelivery, setEditingDelivery] = useState<Delivery | null>(null);
+  const [deliveryForm, setDeliveryForm] = useState({
+    riderId: '',
+    establishmentId: '',
+    date: db.getOperationalDateString(),
+    time: new Date().toTimeString().slice(0, 5),
+    value: '8.00',
+    orderNumber: '',
+    notes: '',
+    deliveryType: 'standard' as 'standard' | 'same_address',
+    additionalValue: '',
+    additionalReason: '',
+    linkedOrderNumber: '',
+    paymentMethod: 'already_paid' as 'already_paid' | 'money' | 'card_debit' | 'card_credit' | 'pix_delivery',
+    orderCollectionAmount: '',
+    changeFor: ''
+  });
+
+  const [notesDeliveryId, setNotesDeliveryId] = useState<string | null>(null);
+  const [activeScheduleChatId, setActiveScheduleChatId] = useState<string | null>(null);
+
+  // Mapa GPS
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const markersRef = useRef<{ [key: string]: L.Marker }>({});
+  const [isMapExpanded, setIsMapExpanded] = useState(false);
+  const hasSetInitialMapBoundsRef = useRef(false);
+
+  const todayStr = db.getOperationalDateString();
+
+  const loadData = () => {
+    if (!user) return;
+
+    let estFound: Establishment | undefined;
+    if (user.establishmentId) {
+      estFound = db.getEstablishments().find(e => e.id === user.establishmentId);
+    }
+    
+    if (!estFound && user.email) {
+      estFound = db.getEstablishments().find(e => e.email?.toLowerCase() === user.email.toLowerCase());
+    }
+
+    if (!estFound) {
+      setCurrentEst(null);
+      return;
+    }
+
+    setCurrentEst(estFound);
+
+    const estDeliveries = db.getDeliveries().filter(d => 
+      db.isSameEstablishment(d.establishmentId, estFound!.id)
+    );
+
+    const riders = db.getUsers().filter(u => u.role === 'rider' && u.active);
+    const schedules = db.getSchedules().filter(s => 
+      db.isSameEstablishment(s.establishmentId, estFound!.id)
+    );
+    const locations = db.getRiderLocations();
+
+    setDeliveries([...estDeliveries].sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time)));
+    setAllRiders(riders);
+    setEstablishmentSchedules([...schedules].sort((a, b) => b.date.localeCompare(a.date)));
+    setRiderLocations(locations);
+  };
+
+  useEffect(() => {
+    if (!user) {
+      navigate('/login');
+      return;
+    }
+
+    loadData();
+    const interval = setInterval(() => {
+      db.pullFromSupabase().then(() => loadData());
+    }, 2000);
+
+    const handleDataUpdate = () => loadData();
+    window.addEventListener('db-sync-complete', handleDataUpdate);
+
+    const unsubscribeLocation = realtimeGps.subscribeToLocations(() => {
+      loadData();
+    });
+
+    const unsubscribeOffline = realtimeGps.subscribeToOffline((payload) => {
+      if (mapRef.current && markersRef.current[payload.riderId]) {
+        mapRef.current.removeLayer(markersRef.current[payload.riderId]);
+        delete markersRef.current[payload.riderId];
+      }
+      loadData();
+    });
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('db-sync-complete', handleDataUpdate);
+      unsubscribeLocation();
+      unsubscribeOffline();
+    };
+  }, [user, navigate]);
+
+  // Mapa de contagem de repetições por data e número de pedido
+  const orderNumberCountMap = React.useMemo(() => {
+    const map = new Map<string, number>();
+    deliveries.forEach(d => {
+      if (d.status === 'cancelled') return;
+      const num = (d.orderNumber || '').trim().replace('#', '');
+      if (num) {
+        const opDate = getDeliveryOperationalDate(d.date, d.time);
+        const key = `${opDate}_${num}`;
+        map.set(key, (map.get(key) || 0) + 1);
+      }
+    });
+    return map;
+  }, [deliveries]);
+
+  const getOrderRepeatCount = (d: Delivery): number => {
+    const num = (d.orderNumber || '').trim().replace('#', '');
+    if (!num) return 0;
+    const opDate = getDeliveryOperationalDate(d.date, d.time);
+    return orderNumberCountMap.get(`${opDate}_${num}`) || 0;
+  };
+
+  const todaySchedulesRaw = establishmentSchedules.filter(s => isSameDayString(s.date, todayStr));
+  
+  const todaySchedules: Schedule[] = [];
+  const seenRiders = new Set<string>();
+  todaySchedulesRaw.forEach(s => {
+    if (!seenRiders.has(s.riderId)) {
+      seenRiders.add(s.riderId);
+      todaySchedules.push(s);
+    }
+  });
+
+  const scheduledRiderIds = new Set(todaySchedules.map(s => {
+    const r = db.resolveUser(s.riderId);
+    return r ? r.id : s.riderId;
+  }));
+
+  const onlineScheduledRiderLocations = riderLocations.filter(loc => {
+    if (!loc.lat || !loc.lng || isNaN(loc.lat) || isNaN(loc.lng)) return false;
+    
+    const isScheduled = scheduledRiderIds.has(loc.riderId) || 
+      todaySchedules.some(s => db.isSameUser(s.riderId, loc.riderId));
+    if (!isScheduled) return false;
+
+    const timeDiff = loc.updatedAt ? Date.now() - new Date(loc.updatedAt).getTime() : Infinity;
+    return timeDiff <= ONLINE_THRESHOLD_MS;
+  });
+
+  const handleRecenterMap = () => {
+    const currentMap = mapRef.current;
+    if (!currentMap) return;
+    const points: L.LatLngExpression[] = [];
+
+    onlineScheduledRiderLocations.forEach(loc => {
+      points.push([loc.lat, loc.lng]);
+    });
+
+    if (points.length >= 2) {
+      const bounds = L.latLngBounds(points);
+      currentMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+    } else if (points.length === 1) {
+      currentMap.setView(points[0], 16);
+    }
+  };
+
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+
+    if (!document.getElementById('leaflet-css')) {
+      const link = document.createElement('link');
+      link.id = 'leaflet-css';
+      link.rel = 'stylesheet';
+      link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+      document.head.appendChild(link);
+    }
+
+    if (!mapRef.current) {
+      const mapInstance = L.map(mapContainerRef.current, {
+        zoomControl: true,
+        attributionControl: false
+      }).setView([-7.2247, -35.8878], 14);
+
+      L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+        maxZoom: 20
+      }).addTo(mapInstance);
+
+      mapRef.current = mapInstance;
+    }
+
+    const currentMap = mapRef.current;
+    const points: L.LatLngExpression[] = [];
+
+    const allowedIds = new Set(onlineScheduledRiderLocations.map(r => r.riderId));
+
+    Object.keys(markersRef.current).forEach(markerId => {
+      if (!allowedIds.has(markerId)) {
+        currentMap.removeLayer(markersRef.current[markerId]);
+        delete markersRef.current[markerId];
+      }
+    });
+
+    onlineScheduledRiderLocations.forEach(loc => {
+      points.push([loc.lat, loc.lng]);
+      const riderName = loc.riderName || 'Entregador';
+      const existingMarker = markersRef.current[loc.riderId];
+
+      const htmlIcon = `
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center;">
+          <div style="background: #0f172a; color: white; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px; white-space: nowrap; margin-bottom: 2px; border: 1px solid #10b981; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
+            ${riderName} 🟢
+          </div>
+          <div style="background-color: #10b981; color: white; width: 38px; height: 38px; border-radius: 50%; border: 3px solid white; box-shadow: 0 6px 14px rgba(16,185,129,0.5); display: flex; align-items: center; justify-content: center; animation: pulse 2s infinite;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="3" /><circle cx="18" cy="18" r="3" /><path d="M18 18v-3l-3-4H9l-3 4v3" /><rect x="8" y="6" width="5" height="5" rx="1" /><path d="M15 11l1.5-4.5H19" /></svg>
+          </div>
+        </div>
+      `;
+
+      const riderIcon = L.divIcon({
+        html: htmlIcon,
+        className: 'custom-est-rider-icon',
+        iconSize: [90, 60],
+        iconAnchor: [45, 50]
+      });
+
+      if (existingMarker) {
+        existingMarker.setLatLng([loc.lat, loc.lng]);
+        existingMarker.setIcon(riderIcon);
+      } else {
+        const marker = L.marker([loc.lat, loc.lng], { icon: riderIcon })
+          .addTo(currentMap)
+          .bindPopup(`<b>${riderName}</b><br/>🟢 Sinal GPS Ativo em tempo real`);
+        markersRef.current[loc.riderId] = marker;
+      }
+    });
+
+    if (!hasSetInitialMapBoundsRef.current && points.length > 0) {
+      if (points.length >= 2) {
+        currentMap.fitBounds(L.latLngBounds(points), { padding: [50, 50], maxZoom: 16 });
+      } else if (points.length === 1) {
+        currentMap.setView(points[0], 16);
+      }
+      hasSetInitialMapBoundsRef.current = true;
+    }
+  }, [onlineScheduledRiderLocations, activeTab]);
+
+  useEffect(() => {
+    if (mapRef.current) {
+      setTimeout(() => {
+        mapRef.current?.invalidateSize();
+      }, 100);
+    }
+  }, [isMapExpanded, activeTab]);
+
+  const handleLogout = () => {
+    db.setCurrentUser(null);
+    navigate('/login');
+  };
+
+  const handleShareTracking = (deliveryId: string) => {
+    const origin = window.location.origin || `${window.location.protocol}//${window.location.host}`;
+    const link = `${origin}/#/track/${deliveryId}`;
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link).then(() => {
+        setCopiedId(deliveryId);
+        setTimeout(() => setCopiedId(null), 2500);
+      }).catch(() => {
+        prompt('Copie o link de rastreio para o cliente:', link);
+      });
+    } else {
+      prompt('Copie o link de rastreio para o cliente:', link);
+    }
+  };
+
+  const handleApproveDelivery = async (id: string) => {
+    const allDeliveries = db.getDeliveries();
+    const deliveryToApprove = allDeliveries.find(d => d.id === id);
+
+    if (deliveryToApprove) {
+      const pm = deliveryToApprove.paymentMethod || 'already_paid';
+      const rider = db.resolveUser(deliveryToApprove.riderId);
+      const riderName = rider?.name || 'o motoboy';
+      const orderNum = deliveryToApprove.orderNumber ? `#${deliveryToApprove.orderNumber}` : '';
+      const amountStr = deliveryToApprove.orderCollectionAmount ? `R$ ${Number(deliveryToApprove.orderCollectionAmount).toFixed(2)}` : 'o valor do pedido';
+
+      if (pm === 'money') {
+        const changeMsg = deliveryToApprove.changeFor ? ` (levou troco para R$ ${Number(deliveryToApprove.changeFor).toFixed(2)})` : '';
+        const confirmed = confirm(
+          `💰 CONFERÊNCIA DE COBRANÇA EM DINHEIRO:\n\n` +
+          `Pedido: ${orderNum}\n` +
+          `Entregador: ${riderName}\n` +
+          `Valor a receber do cliente: ${amountStr}${changeMsg}\n\n` +
+          `👉 O entregador ${riderName} já repassou este dinheiro para o caixa do estabelecimento?\n\n` +
+          `Clique em "OK" apenas se já recebeu o dinheiro para aprovar a corrida.`
+        );
+        if (!confirmed) return;
+      } else if (pm === 'card_debit' || pm === 'card_credit') {
+        const tipoCartao = pm === 'card_debit' ? 'DÉBITO' : 'CRÉDITO';
+        const confirmed = confirm(
+          `💳 CONFERÊNCIA DE MAQUINETA E PAGAMENTO NO CARTÃO (${tipoCartao}):\n\n` +
+          `Pedido: ${orderNum}\n` +
+          `Entregador: ${riderName}\n` +
+          `Valor cobrado: ${amountStr}\n\n` +
+          `👉 O entregador ${riderName} já devolveu a maquineta de cartão e comprovante do pedido para o estabelecimento?\n\n` +
+          `Clique em "OK" para confirmar a devolução da maquineta e aprovar a corrida.`
+        );
+        if (!confirmed) return;
+      } else if (pm === 'pix_delivery') {
+        const confirmed = confirm(
+          `📱 CONFERÊNCIA DE PAGAMENTO VIA PIX NA ENTREGA:\n\n` +
+          `Pedido: ${orderNum}\n` +
+          `Valor do PIX: ${amountStr}\n\n` +
+          `👉 O comprovante de PIX do cliente já foi conferido na conta do estabelecimento?\n\n` +
+          `Clique em "OK" para confirmar o recebimento e aprovar a corrida.`
+        );
+        if (!confirmed) return;
+      }
+    }
+
+    const updated = allDeliveries.map(d => d.id === id ? { ...d, status: 'active' as const, updatedAt: new Date().toISOString() } : d);
+    await db.setDeliveries(updated);
+    loadData();
+  };
+
+  const handleApproveAllPendingDeliveries = async () => {
+    const pendingDels = deliveries.filter(d => d.status === 'pending');
+    if (pendingDels.length === 0) {
+      alert('Não há corridas pendentes para aprovar no momento.');
+      return;
+    }
+
+    const cobrarCount = pendingDels.filter(d => d.paymentMethod && d.paymentMethod !== 'already_paid').length;
+    let confirmMsg = `Deseja aprovar todas as ${pendingDels.length} corridas pendentes deste estabelecimento de uma vez?`;
+    if (cobrarCount > 0) {
+      confirmMsg += `\n\n💰 ATENÇÃO: ${cobrarCount} corrida(s) possuem cobrança ao cliente (dinheiro, maquininha ou PIX).\n\nAo clicar em "OK", todas as corridas serão aprovadas normalmente. Certifique-se de que os valores e maquinetas foram devidamente conferidos.`;
+    }
+
+    if (confirm(confirmMsg)) {
+      const allDeliveries = db.getDeliveries();
+      const pendingIds = new Set(pendingDels.map(p => p.id));
+      const updated = allDeliveries.map(d => pendingIds.has(d.id) ? {
+        ...d,
+        status: 'active' as const,
+        updatedAt: new Date().toISOString()
+      } : d);
+
+      await db.setDeliveries(updated);
+      loadData();
+      alert(`${pendingDels.length} corrida(s) aprovada(s) com sucesso!`);
+    }
+  };
+
+  const handleRejectDelivery = async (id: string) => {
+    const reason = prompt('Digite o motivo da rejeição:');
+    if (reason !== null) {
+      const allDeliveries = db.getDeliveries();
+      const updated = allDeliveries.map(d => d.id === id ? {
+        ...d,
+        status: 'rejected' as const,
+        notes: d.notes ? `${d.notes}\nRejeitado: ${reason}` : `Rejeitado: ${reason}`,
+        updatedAt: new Date().toISOString()
+      } : d);
+      await db.setDeliveries(updated);
+      loadData();
+    }
+  };
+
+  const handleDeleteDelivery = async (id: string) => {
+    if (confirm('Tem certeza que deseja excluir esta corrida definitivamente? Esta ação não pode ser desfeita.')) {
+      await db.deleteDelivery(id);
+      loadData();
+    }
+  };
+
+  const handleOpenLaunchModal = (riderIdToPreselect?: string) => {
+    if (!currentEst) return;
+    setEditingDelivery(null);
+    setDeliveryForm({
+      riderId: riderIdToPreselect || (allRiders.length > 0 ? allRiders[0].id : ''),
+      establishmentId: currentEst.id,
+      date: todayStr,
+      time: new Date().toTimeString().slice(0, 5),
+      value: '8.00',
+      orderNumber: '',
+      notes: '',
+      deliveryType: 'standard',
+      additionalValue: '',
+      additionalReason: '',
+      linkedOrderNumber: '',
+      paymentMethod: 'already_paid',
+      orderCollectionAmount: '',
+      changeFor: ''
+    });
+    setShowDeliveryModal(true);
+  };
+
+  const handleEditDelivery = (del: Delivery) => {
+    if (!currentEst) return;
+    setEditingDelivery(del);
+    const isSame = del.deliveryType === 'same_address' || Number(del.value) === 4 || Boolean(del.linkedOrderNumber);
+
+    setDeliveryForm({
+      riderId: del.riderId,
+      establishmentId: del.establishmentId,
+      date: del.date,
+      time: del.time,
+      value: isSame ? '4.00' : '8.00',
+      orderNumber: del.orderNumber || '',
+      notes: del.notes || '',
+      deliveryType: isSame ? 'same_address' : 'standard',
+      additionalValue: del.additionalValue ? del.additionalValue.toString() : '',
+      additionalReason: del.additionalReason || '',
+      linkedOrderNumber: del.linkedOrderNumber || '',
+      paymentMethod: del.paymentMethod || 'already_paid',
+      orderCollectionAmount: del.orderCollectionAmount ? del.orderCollectionAmount.toString() : '',
+      changeFor: del.changeFor ? del.changeFor.toString() : ''
+    });
+    setShowDeliveryModal(true);
+  };
+
+  const handleSaveDelivery = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentEst || isSubmittingDelivery) return;
+
+    const baseVal = parseFloat(deliveryForm.value);
+    const addVal = parseFloat(deliveryForm.additionalValue || '0') || 0;
+    const finalVal = baseVal + addVal;
+
+    if (isNaN(finalVal) || finalVal <= 0) {
+      alert('Erro: O valor da corrida deve ser maior que zero.');
+      return;
+    }
+
+    const cleanOrderNumber = deliveryForm.orderNumber.trim().replace('#', '');
+    if (cleanOrderNumber) {
+      const dupCheck = db.checkDuplicateOrderNumber(cleanOrderNumber, deliveryForm.date, deliveryForm.time, editingDelivery?.id);
+      if (dupCheck.isDuplicate) {
+        const confirmDuplicate = confirm(
+          `⚠️ Aviso: O pedido #${cleanOrderNumber} já consta lançado hoje para "${dupCheck.riderName}".\n\n` +
+          `Deseja confirmar o lançamento desta corrida dividida/adicional mesmo assim?`
+        );
+        if (!confirmDuplicate) {
+          return;
+        }
+      }
+    }
+
+    setIsSubmittingDelivery(true);
+
+    try {
+      const allDeliveries = db.getDeliveries();
+      const nowStr = new Date().toISOString();
+
+      const collectionAmount = deliveryForm.orderCollectionAmount ? parseFloat(deliveryForm.orderCollectionAmount.replace(',', '.')) : undefined;
+      const changeForValue = deliveryForm.changeFor ? parseFloat(deliveryForm.changeFor.replace(',', '.')) : undefined;
+
+      const isSame = deliveryForm.deliveryType === 'same_address' || Number(finalVal) === 4 || Boolean(deliveryForm.linkedOrderNumber);
+
+      if (editingDelivery) {
+        const updated = allDeliveries.map(d => d.id === editingDelivery.id ? {
+          ...d,
+          riderId: deliveryForm.riderId,
+          date: deliveryForm.date,
+          time: deliveryForm.time,
+          value: finalVal,
+          orderNumber: cleanOrderNumber || undefined,
+          notes: deliveryForm.notes.trim() || undefined,
+          deliveryType: isSame ? ('same_address' as const) : ('standard' as const),
+          additionalValue: addVal > 0 ? addVal : undefined,
+          additionalReason: deliveryForm.additionalReason?.trim() || undefined,
+          linkedOrderNumber: isSame ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+          paymentMethod: deliveryForm.paymentMethod || 'already_paid',
+          orderCollectionAmount: collectionAmount,
+          changeFor: changeForValue,
+          updatedAt: nowStr
+        } : d);
+        await db.setDeliveries(updated);
+      } else {
+        const newDelivery: Delivery = {
+          id: 'd_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+          riderId: deliveryForm.riderId,
+          establishmentId: currentEst.id,
+          date: deliveryForm.date,
+          time: deliveryForm.time,
+          value: finalVal,
+          status: 'active',
+          orderNumber: cleanOrderNumber || undefined,
+          notes: deliveryForm.notes.trim() || undefined,
+          deliveryType: isSame ? ('same_address' as const) : ('standard' as const),
+          additionalValue: addVal > 0 ? addVal : undefined,
+          additionalReason: deliveryForm.additionalReason?.trim() || undefined,
+          linkedOrderNumber: isSame ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+          paymentMethod: deliveryForm.paymentMethod || 'already_paid',
           orderCollectionAmount: collectionAmount,
           changeFor: changeForValue,
           updatedAt: nowStr,
@@ -743,9 +1410,9 @@ export default function EstablishmentDashboard() {
       if (repeats <= 1) return false;
     } else if (settleFeatureFilter === 'with_additional' && (!d.additionalValue || Number(d.additionalValue) <= 0)) {
       return false;
-    } else if (settleFeatureFilter === 'linked' && (d.deliveryType !== 'same_address' && !d.linkedOrderNumber)) {
+    } else if (settleFeatureFilter === 'linked' && (d.deliveryType !== 'same_address' && !d.linkedOrderNumber && Number(d.value) !== 4)) {
       return false;
-    } else if (settleFeatureFilter === 'standard' && (d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber) || (d.additionalValue && Number(d.additionalValue) > 0))) {
+    } else if (settleFeatureFilter === 'standard' && (d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber) || Number(d.value) === 4 || (d.additionalValue && Number(d.additionalValue) > 0))) {
       return false;
     }
 
@@ -839,6 +1506,8 @@ export default function EstablishmentDashboard() {
       if (notesFilter === 'with_notes' && !hasNotes) return false;
       if (notesFilter === 'without_notes' && hasNotes) return false;
 
+      const isSame = d.deliveryType === 'same_address' || Number(d.value) === 4 || Boolean(d.linkedOrderNumber);
+
       if (featureFilter === 'same_order_number') {
         const repeats = getOrderRepeatCount(d);
         if (repeats <= 1) return false;
@@ -846,11 +1515,9 @@ export default function EstablishmentDashboard() {
         const hasAdd = Number(d.additionalValue || 0) > 0;
         if (!hasAdd) return false;
       } else if (featureFilter === 'linked') {
-        const isLinked = d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber);
-        if (!isLinked) return false;
+        if (!isSame) return false;
       } else if (featureFilter === 'standard') {
-        const isStandard = d.deliveryType !== 'same_address' && !d.linkedOrderNumber && (!d.additionalValue || Number(d.additionalValue) <= 0);
-        if (!isStandard) return false;
+        if (isSame || (d.additionalValue && Number(d.additionalValue) > 0)) return false;
       }
 
       if (paymentFilter === 'to_collect') {
@@ -1179,7 +1846,7 @@ export default function EstablishmentDashboard() {
                   <div className="divide-y divide-slate-100">
                     {todayDeliveries.map(del => {
                       const rider = db.resolveUser(del.riderId);
-                      const isSame = del.deliveryType === 'same_address';
+                      const isSame = del.deliveryType === 'same_address' || Number(del.value) === 4 || Boolean(del.linkedOrderNumber);
                       const hasAdd = Number(del.additionalValue || 0) > 0;
                       const repeatCount = getOrderRepeatCount(del);
 
@@ -1205,7 +1872,7 @@ export default function EstablishmentDashboard() {
                                 {isSame && (
                                   <span className="bg-purple-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-0.5">
                                     <Link2 className="h-2.5 w-2.5" />
-                                    <span>Mesmo (R$4)</span>
+                                    <span>Mesmo {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : '(R$4)'}</span>
                                   </span>
                                 )}
 
@@ -1537,8 +2204,8 @@ export default function EstablishmentDashboard() {
                                     <span className="font-mono text-[11px] text-slate-600">{del.time}</span>
                                     <span className="text-[10px] text-slate-400">({new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR')})</span>
                                   </div>
-                                  {del.deliveryType === 'same_address' && (
-                                    <span className="text-[9px] font-bold text-purple-700">Mesmo Endereço (R$ 4)</span>
+                                  {(del.deliveryType === 'same_address' || Number(del.value) === 4 || Boolean(del.linkedOrderNumber)) && (
+                                    <span className="text-[9px] font-bold text-purple-700">Mesmo Endereço {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : '(R$ 4)'}</span>
                                   )}
                                   {Number(del.additionalValue || 0) > 0 && (
                                     <span className="text-[9px] font-bold text-amber-700">+ Adicional R$ {Number(del.additionalValue).toFixed(2)}</span>
@@ -1821,7 +2488,7 @@ export default function EstablishmentDashboard() {
                   const rider = db.resolveUser(del.riderId);
                   const hasNotes = Boolean(del.notes && del.notes.trim());
                   const notesCount = del.notes ? del.notes.split('\n').filter(l => l.trim()).length : 0;
-                  const isSame = del.deliveryType === 'same_address';
+                  const isSame = del.deliveryType === 'same_address' || Number(del.value) === 4 || Boolean(del.linkedOrderNumber);
                   const hasAdditional = Number(del.additionalValue || 0) > 0;
                   const repeatCount = getOrderRepeatCount(del);
 

@@ -836,6 +836,8 @@ export default function AdminDashboard() {
     const collectionAmount = deliveryForm.orderCollectionAmount ? parseFloat(deliveryForm.orderCollectionAmount.replace(',', '.')) : undefined;
     const changeForValue = deliveryForm.changeFor ? parseFloat(deliveryForm.changeFor.replace(',', '.')) : undefined;
 
+    const isSame = deliveryForm.deliveryType === 'same_address' || Number(finalVal) === 4 || Boolean(deliveryForm.linkedOrderNumber);
+
     if (editingDelivery) {
       const updated = deliveries.map(d => d.id === editingDelivery.id ? {
         ...d,
@@ -847,11 +849,11 @@ export default function AdminDashboard() {
         scheduleId: activeSchedule?.id || d.scheduleId,
         orderNumber: cleanOrderNumber || undefined,
         notes: deliveryForm.notes.trim() || undefined,
-        deliveryType: deliveryForm.deliveryType,
+        deliveryType: isSame ? ('same_address' as const) : ('standard' as const),
         additionalValue: addVal > 0 ? addVal : undefined,
         additionalReason: deliveryForm.additionalReason?.trim() || undefined,
-        linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
-        paymentMethod: deliveryForm.paymentMethod,
+        linkedOrderNumber: isSame ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+        paymentMethod: deliveryForm.paymentMethod || 'already_paid',
         orderCollectionAmount: collectionAmount,
         changeFor: changeForValue,
         updatedAt: nowStr
@@ -869,11 +871,11 @@ export default function AdminDashboard() {
         scheduleId: activeSchedule?.id,
         orderNumber: cleanOrderNumber || undefined,
         notes: deliveryForm.notes.trim() || undefined,
-        deliveryType: deliveryForm.deliveryType,
+        deliveryType: isSame ? ('same_address' as const) : ('standard' as const),
         additionalValue: addVal > 0 ? addVal : undefined,
         additionalReason: deliveryForm.additionalReason?.trim() || undefined,
-        linkedOrderNumber: deliveryForm.deliveryType === 'same_address' ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
-        paymentMethod: deliveryForm.paymentMethod,
+        linkedOrderNumber: isSame ? (deliveryForm.linkedOrderNumber?.trim().replace('#', '') || undefined) : undefined,
+        paymentMethod: deliveryForm.paymentMethod || 'already_paid',
         orderCollectionAmount: collectionAmount,
         changeFor: changeForValue,
         updatedAt: nowStr,
@@ -1150,9 +1152,9 @@ export default function AdminDashboard() {
       if (repeats <= 1) return false;
     } else if (financeFeatureFilter === 'with_additional' && (!d.additionalValue || Number(d.additionalValue) <= 0)) {
       return false;
-    } else if (financeFeatureFilter === 'linked' && (d.deliveryType !== 'same_address' && !d.linkedOrderNumber)) {
+    } else if (financeFeatureFilter === 'linked' && (d.deliveryType !== 'same_address' && !d.linkedOrderNumber && Number(d.value) !== 4)) {
       return false;
-    } else if (financeFeatureFilter === 'standard' && (d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber) || (d.additionalValue && Number(d.additionalValue) > 0))) {
+    } else if (financeFeatureFilter === 'standard' && (d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber) || Number(d.value) === 4 || (d.additionalValue && Number(d.additionalValue) > 0))) {
       return false;
     }
 
@@ -1354,6 +1356,8 @@ export default function AdminDashboard() {
       if (delNotesFilter === 'with_notes' && !hasNotes) return false;
       if (delNotesFilter === 'without_notes' && hasNotes) return false;
 
+      const isSame = d.deliveryType === 'same_address' || Number(d.value) === 4 || Boolean(d.linkedOrderNumber);
+
       if (delFeatureFilter === 'same_order_number') {
         const repeats = getOrderRepeatCount(d);
         if (repeats <= 1) return false;
@@ -1361,11 +1365,9 @@ export default function AdminDashboard() {
         const hasAdd = Number(d.additionalValue || 0) > 0;
         if (!hasAdd) return false;
       } else if (delFeatureFilter === 'linked') {
-        const isLinked = d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber);
-        if (!isLinked) return false;
+        if (!isSame) return false;
       } else if (delFeatureFilter === 'standard') {
-        const isStandard = d.deliveryType !== 'same_address' && !d.linkedOrderNumber && (!d.additionalValue || Number(d.additionalValue) <= 0);
-        if (!isStandard) return false;
+        if (isSame || (d.additionalValue && Number(d.additionalValue) > 0)) return false;
       }
 
       if (delPaymentFilter === 'to_collect') {
@@ -2626,7 +2628,7 @@ export default function AdminDashboard() {
                     const isPending = del.status === 'pending';
                     const hasNotes = Boolean(del.notes && del.notes.trim());
                     const notesCount = del.notes ? del.notes.split('\n').filter(l => l.trim()).length : 0;
-                    const isSame = del.deliveryType === 'same_address';
+                    const isSame = del.deliveryType === 'same_address' || Number(del.value) === 4 || Boolean(del.linkedOrderNumber);
                     const hasAdditional = Number(del.additionalValue || 0) > 0;
                     const repeatCount = getOrderRepeatCount(del);
 
@@ -2646,7 +2648,7 @@ export default function AdminDashboard() {
                               {/* Badge de Repetição do mesmo número de pedido */}
                               {repeatCount > 1 && (
                                 <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs border border-amber-600 animate-pulse">
-                                  <Copy className="h-3 w-3" />
+                                  <Copy className="h-2.5 w-2.5" />
                                   <span>Nº Repetido ({repeatCount}x)</span>
                                 </span>
                               )}
@@ -2743,7 +2745,7 @@ export default function AdminDashboard() {
                                   value: del.value.toString(),
                                   orderNumber: del.orderNumber || '',
                                   notes: del.notes || '',
-                                  deliveryType: del.deliveryType || 'standard',
+                                  deliveryType: isSame ? 'same_address' : 'standard',
                                   additionalValue: del.additionalValue ? del.additionalValue.toString() : '',
                                   additionalReason: del.additionalReason || '',
                                   linkedOrderNumber: del.linkedOrderNumber || '',
