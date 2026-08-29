@@ -152,7 +152,7 @@ export function getDeliveryOperationalDate(dateStr: string, timeStr: string = '1
 }
 
 const SESSION_USER_KEY = 'motohub_session_user';
-const DELIVERIES_STORAGE_MASTER_KEY = 'motohub_deliveries_master_v4';
+const DELIVERIES_STORAGE_MASTER_KEY = 'motohub_deliveries_master_v5';
 
 function extractOrderNumberSafe(raw?: string): string | undefined {
   if (!raw) return undefined;
@@ -491,7 +491,6 @@ export const db = {
     return memoryDeliveries;
   },
 
-  // Gravação pontual ou em lote com salvamento imediato e garantia anti-perda
   async setDeliveries(deliveries: Delivery[]) {
     memoryDeliveries = deliveries;
     saveMasterDeliveriesBackup(deliveries);
@@ -502,7 +501,6 @@ export const db = {
       }
     });
 
-    // Envia todas as entregas em chunks eficientes
     const payload = deliveries.map(formatDeliveryPayload);
 
     if (payload.length > 0) {
@@ -714,7 +712,7 @@ export const db = {
     return `000.000.000-${rand()}${rand()}`;
   },
 
-  // ── SINCRONIZAÇÃO BIDIRECIONAL COM AUTO-PUSH DAS ENTREGAS FALTANTES ──
+  // ── PAGINAÇÃO COMPLETA PARA CARREGAR TODAS AS CORRIDAS (> 1000) DO SUPABASE ──
   async pullFromSupabase() {
     try {
       const { data: usersData } = await supabase.from('users').select('*').limit(10000);
@@ -788,11 +786,35 @@ export const db = {
         });
       }
 
-      const { data: delData, error: delError } = await supabase.from('deliveries').select('*').limit(20000);
-      if (!delError && delData) {
+      // Busca paginada contínua para puxar 100% das entregas sem o limite de 1000 linhas
+      const allDelData: any[] = [];
+      let delFrom = 0;
+      const delBatchSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('deliveries')
+          .select('*')
+          .range(delFrom, delFrom + delBatchSize - 1);
+
+        if (error || !data || data.length === 0) {
+          hasMore = false;
+          break;
+        }
+
+        allDelData.push(...data);
+        if (data.length < delBatchSize) {
+          hasMore = false;
+        } else {
+          delFrom += delBatchSize;
+        }
+      }
+
+      if (allDelData.length > 0) {
         const remoteDeliveriesMap = new Map<string, Delivery>();
 
-        delData.forEach(d => {
+        allDelData.forEach(d => {
           let orderNumber: string | undefined = extractOrderNumberSafe(d.order_number);
           let notes: string | undefined = undefined;
           let customerChat: string | undefined = undefined;
@@ -852,7 +874,6 @@ export const db = {
         const missingFromRemote: Delivery[] = [];
         const processedIds = new Set<string>();
 
-        // 1. Adiciona dados remotos
         remoteDeliveriesMap.forEach((remoteDel, id) => {
           const localDel = locallyCreatedDeliveries.get(id);
           if (localDel) {
@@ -876,7 +897,6 @@ export const db = {
           processedIds.add(id);
         });
 
-        // 2. Identifica dados locais que não chegaram no Supabase e empurra automaticamente
         locallyCreatedDeliveries.forEach((localDel, id) => {
           if (!processedIds.has(id)) {
             mergedDeliveries.push(localDel);
@@ -888,14 +908,9 @@ export const db = {
         memoryDeliveries = mergedDeliveries;
         saveMasterDeliveriesBackup(memoryDeliveries);
 
-        // Se houver entregas locais que faltam no Supabase, sobe elas agora em segundo plano
         if (missingFromRemote.length > 0) {
           const missingPayload = missingFromRemote.map(formatDeliveryPayload);
-          supabase.from('deliveries').upsert(missingPayload, { onConflict: 'id' }).then(() => {
-            console.log(`[Auto-Sync] ${missingFromRemote.length} corridas sincronizadas com sucesso com o Supabase.`);
-          }).catch(e => {
-            console.warn('[Auto-Sync] Erro ao sincronizar pendências:', e);
-          });
+          supabase.from('deliveries').upsert(missingPayload, { onConflict: 'id' }).catch(() => {});
         }
       }
 
