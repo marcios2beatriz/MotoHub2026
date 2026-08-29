@@ -152,7 +152,7 @@ export function getDeliveryOperationalDate(dateStr: string, timeStr: string = '1
 }
 
 const SESSION_USER_KEY = 'motohub_session_user';
-const DELIVERIES_STORAGE_MASTER_KEY = 'motohub_deliveries_master_v5';
+const DELIVERIES_STORAGE_MASTER_KEY = 'motohub_deliveries_master_v6';
 
 function extractOrderNumberSafe(raw?: string): string | undefined {
   if (!raw) return undefined;
@@ -170,13 +170,35 @@ function extractOrderNumberSafe(raw?: string): string | undefined {
   return trimmed.replace('#', '').trim();
 }
 
+// Recupera de todas as chaves já usadas para não perder nenhuma corrida criada
 function loadMasterDeliveriesBackup(): Delivery[] {
-  try {
-    const data = localStorage.getItem(DELIVERIES_STORAGE_MASTER_KEY);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
-  }
+  const merged = new Map<string, Delivery>();
+  const keysToScan = [
+    'motohub_deliveries_master_v6',
+    'motohub_deliveries_master_v5',
+    'motohub_deliveries_master_v4',
+    'motohub_deliveries_master',
+    'delivery_system_deliveries',
+    'motohub_deliveries'
+  ];
+
+  keysToScan.forEach(key => {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          arr.forEach((d: any) => {
+            if (d && d.id && !merged.has(d.id)) {
+              merged.set(d.id, d);
+            }
+          });
+        }
+      }
+    } catch {}
+  });
+
+  return Array.from(merged.values());
 }
 
 function saveMasterDeliveriesBackup(dels: Delivery[]) {
@@ -186,21 +208,7 @@ function saveMasterDeliveriesBackup(dels: Delivery[]) {
 }
 
 function formatDeliveryPayload(d: Delivery) {
-  const cleanOrderNum = d.orderNumber ? String(d.orderNumber).replace('#', '').trim() : '';
-
-  const compactMeta: any = {
-    o: cleanOrderNum
-  };
-
-  if (d.deliveryType && d.deliveryType !== 'standard') compactMeta.t = 'm';
-  if (d.additionalValue && Number(d.additionalValue) > 0) compactMeta.a = Number(d.additionalValue);
-  if (d.additionalReason) compactMeta.r = d.additionalReason.slice(0, 30);
-  if (d.linkedOrderNumber) compactMeta.l = String(d.linkedOrderNumber).replace('#', '').slice(0, 10);
-  if (d.paid) compactMeta.p = 1;
-  if (d.notes) compactMeta.n = d.notes.slice(0, 80);
-  if (d.paymentMethod && d.paymentMethod !== 'already_paid') compactMeta.pm = d.paymentMethod;
-  if (d.orderCollectionAmount && Number(d.orderCollectionAmount) > 0) compactMeta.ca = Number(d.orderCollectionAmount);
-  if (d.changeFor && Number(d.changeFor) > 0) compactMeta.cf = Number(d.changeFor);
+  const cleanOrderNum = d.orderNumber ? String(d.orderNumber).replace('#', '').trim().slice(0, 30) : '';
 
   return {
     id: d.id,
@@ -208,10 +216,10 @@ function formatDeliveryPayload(d: Delivery) {
     establishment_id: d.establishmentId,
     date: d.date,
     time: d.time,
-    value: d.value,
+    value: Number(d.value),
     status: d.status,
     schedule_id: d.scheduleId || null,
-    order_number: JSON.stringify(compactMeta)
+    order_number: cleanOrderNum || null
   };
 }
 
@@ -712,7 +720,7 @@ export const db = {
     return `000.000.000-${rand()}${rand()}`;
   },
 
-  // ── PAGINAÇÃO COMPLETA PARA CARREGAR TODAS AS CORRIDAS (> 1000) DO SUPABASE ──
+  // ── PAGINAÇÃO COMPLETA PARA CARREGAR 100% DAS CORRIDAS DO SUPABASE SEM PERDAS ──
   async pullFromSupabase() {
     try {
       const { data: usersData } = await supabase.from('users').select('*').limit(10000);
