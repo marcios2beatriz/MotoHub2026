@@ -944,7 +944,9 @@ export const db = {
 
         if (missingFromRemote.length > 0) {
           const missingPayload = missingFromRemote.map(formatDeliveryPayload);
-          supabase.from('deliveries').upsert(missingPayload, { onConflict: 'id' }).catch(() => {});
+          try {
+            await supabase.from('deliveries').upsert(missingPayload, { onConflict: 'id' });
+          } catch {}
         }
       }
 
