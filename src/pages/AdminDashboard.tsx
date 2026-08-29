@@ -16,43 +16,43 @@ import {
   Trash2, 
   Check, 
   Download, 
-  Search,
-  Clock,
-  MessageSquare,
-  Building2,
-  TrendingUp,
-  DollarSign,
-  Phone,
-  MapPin,
-  Ban,
-  Filter,
-  ArrowUpDown,
-  UserCheck2,
-  Map as MapIcon,
-  KeyRound,
-  CheckCheck,
-  Maximize2,
-  Minimize2,
-  Eye,
-  EyeOff,
-  LocateFixed,
-  RotateCcw,
-  RotateCw,
-  Sparkles,
-  Layers,
-  Hash,
-  FileText,
-  Percent,
-  Wallet,
-  Coins,
-  Receipt,
-  Link2,
-  Banknote,
-  CreditCard,
-  QrCode,
-  Copy,
-  CloudUpload,
-  Loader2
+  Search, 
+  Clock, 
+  MessageSquare, 
+  Building2, 
+  TrendingUp, 
+  DollarSign, 
+  Phone, 
+  MapPin, 
+  Ban, 
+  Filter, 
+  ArrowUpDown, 
+  UserCheck2, 
+  Map as MapIcon, 
+  KeyRound, 
+  CheckCheck, 
+  Maximize2, 
+  Minimize2, 
+  Eye, 
+  EyeOff, 
+  LocateFixed, 
+  RotateCcw, 
+  RotateCw, 
+  Sparkles, 
+  Layers, 
+  Hash, 
+  FileText, 
+  Percent, 
+  Wallet, 
+  Coins, 
+  Receipt, 
+  Link2, 
+  Banknote, 
+  CreditCard, 
+  QrCode, 
+  Copy, 
+  UploadCloud, 
+  Loader2 
 } from 'lucide-react';
 
 import L from 'leaflet';
@@ -1489,7 +1489,7 @@ export default function AdminDashboard() {
                 </>
               ) : (
                 <>
-                  <CloudUpload className="h-4 w-4 text-white" />
+                  <UploadCloud className="h-4 w-4 text-white" />
                   <span className="hidden sm:inline">Sincronizar c/ Supabase</span>
                 </>
               )}
@@ -1707,7 +1707,7 @@ export default function AdminDashboard() {
                       </>
                     ) : (
                       <>
-                        <CloudUpload className="h-4 w-4 text-white" />
+                        <UploadCloud className="h-4 w-4 text-white" />
                         <span>SINCRONIZAR CORRIDAS COM SUPABASE</span>
                       </>
                     )}
@@ -1765,7 +1765,7 @@ export default function AdminDashboard() {
                               )}
                               <p className="text-xs font-bold text-slate-800">{rider?.name} — {est?.name}</p>
                               {repeatCount > 1 && (
-                                <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                                <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs border border-amber-600 animate-pulse">
                                   <Copy className="h-2.5 w-2.5" />
                                   <span>Nº Repetido ({repeatCount}x)</span>
                                 </span>
@@ -2678,7 +2678,7 @@ export default function AdminDashboard() {
                                 {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : 'Rejeitada'}
                               </span>
                               {del.paid && (
-                                <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">
+                                <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase">
                                   Pago
                                 </span>
                               )}
