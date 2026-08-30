@@ -559,7 +559,8 @@ export const db = {
     window.dispatchEvent(new Event('db-sync-complete'));
   },
 
-  async deleteDelivery(id: string) {
+  async deleteDelivery(id: string): Promise<boolean> {
+    if (!id) return false;
     registerDeletedDeliveryId(id);
     memoryDeliveries = memoryDeliveries.filter(d => d.id !== id);
     saveMasterDeliveriesBackup(memoryDeliveries);
@@ -567,13 +568,16 @@ export const db = {
     try {
       const { error } = await supabase.from('deliveries').delete().eq('id', id);
       if (error) {
-        console.warn('Erro ao deletar no Supabase:', error);
+        console.error('Erro ao deletar entrega no Supabase:', error);
+        throw error;
       }
-    } catch (e) {
-      console.warn('Erro ao deletar entrega no Supabase:', e);
+    } catch (e: any) {
+      console.error('Erro ao deletar entrega no Supabase:', e);
+      throw e;
     }
 
     window.dispatchEvent(new Event('db-sync-complete'));
+    return true;
   },
 
   async clearAllDeliveries() {
@@ -982,7 +986,6 @@ export const db = {
         memoryDeliveries = fetchedDeliveries.filter(d => !deletedIds.has(d.id));
         saveMasterDeliveriesBackup(memoryDeliveries);
       } else {
-        // Se o Supabase retornou vazio, a memória reflete que não há entregas (ou apenas limpas)
         memoryDeliveries = [];
         saveMasterDeliveriesBackup([]);
       }

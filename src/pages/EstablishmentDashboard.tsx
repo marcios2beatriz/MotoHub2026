@@ -42,7 +42,8 @@ import {
   X,
   Phone,
   ArrowUpDown,
-  Copy
+  Copy,
+  Loader2
 } from 'lucide-react';
 import L from 'leaflet';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
@@ -89,6 +90,7 @@ export default function EstablishmentDashboard() {
   const [currentEst, setCurrentEst] = useState<Establishment | null>(null);
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // --- FILTROS DA ABA DE REPASSES INDIVIDUAIS DOS MOTOBOYS ---
   const [settlePeriodMode, setSettlePeriodMode] = useState<'this_week' | 'last_week' | 'today' | 'this_month' | 'custom'>('this_week');
@@ -192,7 +194,7 @@ export default function EstablishmentDashboard() {
     loadData();
     const interval = setInterval(() => {
       db.pullFromSupabase().then(() => loadData());
-    }, 2000);
+    }, 3000);
 
     const handleDataUpdate = () => loadData();
     window.addEventListener('db-sync-complete', handleDataUpdate);
@@ -486,9 +488,20 @@ export default function EstablishmentDashboard() {
   };
 
   const handleDeleteDelivery = async (id: string) => {
-    if (confirm('Tem certeza que deseja excluir esta corrida definitivamente? Esta ação não pode ser desfeita.')) {
+    if (deletingId) return;
+
+    if (!confirm('Tem certeza que deseja excluir esta corrida definitivamente do banco de dados?')) {
+      return;
+    }
+
+    setDeletingId(id);
+    try {
       await db.deleteDelivery(id);
       loadData();
+    } catch (err: any) {
+      alert('Erro ao excluir corrida no Supabase. Verifique sua conexão com a internet.');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -1192,39 +1205,50 @@ export default function EstablishmentDashboard() {
                       const repeatCount = getOrderRepeatCount(del);
 
                       return (
-                        <div key={del.id} className={`py-3.5 flex flex-col space-y-1.5 text-xs ${repeatCount > 1 ? 'bg-amber-50/30 p-3 rounded-xl border border-amber-200' : ''} ${isSame ? 'bg-purple-50/40 p-3 rounded-xl border border-purple-200' : ''}`}>
-                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div key={del.id} className={`py-3 flex flex-col space-y-1 text-xs ${repeatCount > 1 ? 'bg-amber-50/30 p-2.5 rounded-xl border border-amber-200' : ''}`}>
+                          <div className="flex items-center justify-between gap-2">
                             <div className="min-w-0 space-y-1">
-                              <div className="flex items-center gap-2 flex-wrap">
+                              <div className="flex items-center gap-1.5 flex-wrap">
                                 {del.orderNumber && (
-                                  <span className="bg-indigo-600 text-white font-black text-xs px-2.5 py-1 rounded-lg shadow-sm flex-shrink-0 tracking-wide">
+                                  <span className="bg-indigo-600 text-white font-black text-[10px] px-2 py-0.5 rounded-md">
                                     #{del.orderNumber}
                                   </span>
                                 )}
-                                <p className="font-extrabold text-slate-900 text-sm">{rider?.name || 'Motoboy'}</p>
+                                <p className="font-extrabold text-slate-800 text-xs">{rider?.name || 'Motoboy'}</p>
 
                                 {repeatCount > 1 && (
-                                  <span className="bg-amber-500 text-slate-950 text-[10px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs border border-amber-600 animate-pulse">
-                                    <Copy className="h-3 w-3" />
-                                    <span>Nº Repetido ({repeatCount}x)</span>
-                                  </span>
+                                  <div className="flex items-center gap-1">
+                                    <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-0.5 shadow-xs border border-amber-600 animate-pulse">
+                                      <Copy className="h-2.5 w-2.5" />
+                                      <span>Nº Repetido ({repeatCount}x)</span>
+                                    </span>
+                                    <button
+                                      type="button"
+                                      disabled={deletingId === del.id}
+                                      onClick={() => handleDeleteDelivery(del.id)}
+                                      className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-[9px] font-black px-1.5 py-0.5 rounded-md flex items-center gap-0.5 transition-colors"
+                                      title="Excluir esta corrida duplicada imediatamente"
+                                    >
+                                      <Trash2 className="h-2.5 w-2.5 text-red-600" />
+                                      <span>Apagar Duplicata</span>
+                                    </button>
+                                  </div>
                                 )}
                                 
                                 {isSame && (
-                                  <span className="bg-purple-600 text-white text-[11px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-sm border border-purple-700">
-                                    <Link2 className="h-3.5 w-3.5" />
-                                    <span>Mesmo Endereço {del.linkedOrderNumber ? `(Pedido #${del.linkedOrderNumber})` : '(R$ 4,00)'}</span>
+                                  <span className="bg-purple-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-0.5">
+                                    <Link2 className="h-2.5 w-2.5" />
+                                    <span>Mesmo {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : '(R$4)'}</span>
                                   </span>
                                 )}
 
                                 {hasAdd && (
-                                  <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
-                                    <Sparkles className="h-3 w-3 text-amber-600" />
-                                    <span>+ R$ {Number(del.additionalValue).toFixed(2)}</span>
+                                  <span className="bg-amber-100 text-amber-900 text-[9px] font-bold px-1.5 py-0.5 rounded-full">
+                                    + R$ {Number(del.additionalValue).toFixed(2)}
                                   </span>
                                 )}
 
-                                <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase ${
+                                <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${
                                   del.status === 'active' ? 'bg-emerald-100 text-emerald-800' :
                                   del.status === 'pending' ? 'bg-amber-100 text-amber-800 font-black animate-pulse' :
                                   'bg-red-100 text-red-800'
@@ -1232,32 +1256,39 @@ export default function EstablishmentDashboard() {
                                   {del.status === 'active' ? 'Aprovada' : del.status === 'pending' ? 'Pendente' : 'Rejeitada'}
                                 </span>
                               </div>
-                              <p className="text-[11px] text-slate-500 font-medium">Horário de Saída: {del.time}</p>
+                              <p className="text-[11px] text-slate-400">{del.time}</p>
                             </div>
 
                             <div className="flex items-center gap-1.5 flex-shrink-0">
                               {del.status === 'pending' && (
                                 <button
                                   onClick={() => handleApproveDelivery(del.id)}
-                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-extrabold shadow-sm transition-colors"
+                                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-bold"
                                 >
                                   Aprovar
                                 </button>
                               )}
                               <button
                                 onClick={() => handleShareTracking(del.id)}
-                                className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold flex items-center gap-1 border border-indigo-200"
+                                className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded text-[11px] font-bold flex items-center gap-1"
                               >
-                                <Share2 className="h-3.5 w-3.5" />
+                                <Share2 className="h-3 w-3" />
                                 <span>{copiedId === del.id ? 'Copiado!' : 'Rastreio'}</span>
                               </button>
-                              <span className="font-black text-sm text-emerald-700 ml-1">
+                              <button
+                                disabled={deletingId === del.id}
+                                onClick={() => handleDeleteDelivery(del.id)}
+                                className="p-1 text-red-500 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
+                                title="Excluir Corrida Definitivamente"
+                              >
+                                {deletingId === del.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                              </button>
+                              <span className="font-black text-xs text-emerald-700 ml-1">
                                 R$ {Number(del.value).toFixed(2)}
                               </span>
                             </div>
                           </div>
 
-                          {/* Renderização do Meio de Pagamento com destaque */}
                           {renderPaymentBadge(del)}
                         </div>
                       );
@@ -1535,46 +1566,30 @@ export default function EstablishmentDashboard() {
                             Corridas de {rider.name} ({settleBounds.label})
                           </p>
                           <div className="divide-y divide-slate-200/60 max-h-56 overflow-y-auto">
-                            {riderDeliveries.map(del => {
-                              const isSame = del.deliveryType === 'same_address' || Number(del.value) === 4 || Boolean(del.linkedOrderNumber);
-                              const hasAdd = Number(del.additionalValue || 0) > 0;
-
-                              return (
-                                <div key={del.id} className="py-2.5 flex flex-col space-y-1">
-                                  <div className="flex items-center justify-between">
-                                    <div className="space-y-0.5">
-                                      <div className="flex items-center gap-1.5 flex-wrap">
-                                        {del.orderNumber && (
-                                          <span className="font-black bg-indigo-600 text-white text-[9px] px-1.5 py-0.2 rounded">
-                                            #{del.orderNumber}
-                                          </span>
-                                        )}
-                                        <span className="font-mono text-[11px] text-slate-600">{del.time}</span>
-                                        <span className="text-[10px] text-slate-400">({new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR')})</span>
-
-                                        {isSame && (
-                                          <span className="bg-purple-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded flex items-center gap-0.5">
-                                            <Link2 className="h-2.5 w-2.5" />
-                                            <span>Mesmo End. {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : ''}</span>
-                                          </span>
-                                        )}
-
-                                        {hasAdd && (
-                                          <span className="bg-amber-100 text-amber-900 text-[9px] font-bold px-1.5 py-0.2 rounded">
-                                            + R$ {Number(del.additionalValue).toFixed(2)}
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                    <span className="font-black text-slate-800 text-xs">
-                                      R$ {Number(del.value).toFixed(2)}
-                                    </span>
+                            {riderDeliveries.map(del => (
+                              <div key={del.id} className="py-2 flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                  <div className="flex items-center gap-1.5">
+                                    {del.orderNumber && (
+                                      <span className="font-black bg-indigo-600 text-white text-[9px] px-1.5 py-0.2 rounded">
+                                        #{del.orderNumber}
+                                      </span>
+                                    )}
+                                    <span className="font-mono text-[11px] text-slate-600">{del.time}</span>
+                                    <span className="text-[10px] text-slate-400">({new Date(del.date + 'T00:00:00').toLocaleDateString('pt-BR')})</span>
                                   </div>
-
-                                  {renderPaymentBadge(del)}
+                                  {(del.deliveryType === 'same_address' || Number(del.value) === 4 || Boolean(del.linkedOrderNumber)) && (
+                                    <span className="text-[9px] font-bold text-purple-700">Mesmo Endereço {del.linkedOrderNumber ? `(#${del.linkedOrderNumber})` : '(R$ 4)'}</span>
+                                  )}
+                                  {Number(del.additionalValue || 0) > 0 && (
+                                    <span className="text-[9px] font-bold text-amber-700">+ Adicional R$ {Number(del.additionalValue).toFixed(2)}</span>
+                                  )}
                                 </div>
-                              );
-                            })}
+                                <span className="font-black text-slate-800 text-xs">
+                                  R$ {Number(del.value).toFixed(2)}
+                                </span>
+                              </div>
+                            ))}
                           </div>
                         </div>
                       )}
@@ -1864,10 +1879,22 @@ export default function EstablishmentDashboard() {
                             <p className="font-extrabold text-slate-800 text-sm truncate">{rider?.name || 'Motoboy'}</p>
 
                             {repeatCount > 1 && (
-                              <span className="bg-amber-500 text-slate-950 text-[10px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs border border-amber-600 animate-pulse">
-                                <Copy className="h-3 w-3" />
-                                <span>Nº Repetido ({repeatCount}x)</span>
-                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="bg-amber-500 text-slate-950 text-[10px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs border border-amber-600 animate-pulse">
+                                  <Copy className="h-3 w-3" />
+                                  <span>Nº Repetido ({repeatCount}x)</span>
+                                </span>
+                                <button
+                                  type="button"
+                                  disabled={deletingId === del.id}
+                                  onClick={() => handleDeleteDelivery(del.id)}
+                                  className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-[10px] font-black px-2 py-0.5 rounded-md flex items-center gap-1 transition-colors"
+                                  title="Excluir esta corrida duplicada imediatamente"
+                                >
+                                  <Trash2 className="h-3 w-3 text-red-600" />
+                                  <span>Apagar Duplicata</span>
+                                </button>
+                              </div>
                             )}
 
                             {isSame && (
@@ -1878,8 +1905,8 @@ export default function EstablishmentDashboard() {
                             )}
 
                             {hasAdditional && (
-                              <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
-                                <Sparkles className="h-3 w-3 text-amber-600" />
+                              <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-0.5">
+                                <Sparkles className="h-2.5 w-2.5 text-amber-600" />
                                 <span>
                                   + R$ {Number(del.additionalValue).toFixed(2)}
                                   {del.additionalReason ? ` (${del.additionalReason})` : ''}
@@ -1962,11 +1989,12 @@ export default function EstablishmentDashboard() {
                           </button>
 
                           <button
+                            disabled={deletingId === del.id}
                             onClick={() => handleDeleteDelivery(del.id)}
-                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                            title="Excluir Corrida"
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                            title="Excluir Corrida Definitivamente"
                           >
-                            <Trash2 className="h-4 w-4" />
+                            {deletingId === del.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                           </button>
 
                           <span className={`font-black text-sm ml-1 ${del.status === 'active' ? 'text-emerald-600' : 'text-slate-400 line-through'}`}>
