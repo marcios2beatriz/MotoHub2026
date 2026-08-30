@@ -152,10 +152,9 @@ export function getDeliveryOperationalDate(dateStr: string, timeStr: string = '1
 }
 
 const SESSION_USER_KEY = 'motohub_session_user';
-const DELIVERIES_STORAGE_MASTER_KEY = 'motohub_deliveries_master_v8';
-const DELETED_DELIVERIES_KEY = 'motohub_deleted_deliveries_ids_v1';
+const DELIVERIES_STORAGE_MASTER_KEY = 'motohub_deliveries_master_v9';
+const DELETED_DELIVERIES_KEY = 'motohub_deleted_deliveries_ids_v2';
 
-// Gerenciamento de lista negra de IDs excluídos para evitar que reapareçam em cache
 function getDeletedDeliveryIds(): Set<string> {
   try {
     const raw = localStorage.getItem(DELETED_DELIVERIES_KEY);
@@ -187,40 +186,6 @@ function extractOrderNumberSafe(raw?: string): string | undefined {
   }
 
   return trimmed.replace('#', '').trim();
-}
-
-function loadMasterDeliveriesBackup(): Delivery[] {
-  const merged = new Map<string, Delivery>();
-  const deletedIds = getDeletedDeliveryIds();
-
-  const keysToScan = [
-    'motohub_deliveries_master_v8',
-    'motohub_deliveries_master_v7',
-    'motohub_deliveries_master_v6',
-    'motohub_deliveries_master_v5',
-    'motohub_deliveries_master_v4',
-    'motohub_deliveries_master',
-    'delivery_system_deliveries',
-    'motohub_deliveries'
-  ];
-
-  keysToScan.forEach(key => {
-    try {
-      const raw = localStorage.getItem(key);
-      if (raw) {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) {
-          arr.forEach((d: any) => {
-            if (d && d.id && !deletedIds.has(d.id) && !merged.has(d.id)) {
-              merged.set(d.id, d);
-            }
-          });
-        }
-      }
-    } catch {}
-  });
-
-  return Array.from(merged.values());
 }
 
 function saveMasterDeliveriesBackup(dels: Delivery[]) {
@@ -275,18 +240,23 @@ function formatDeliveryPayload(d: Delivery) {
 let memoryUsers: User[] = [];
 let memoryEstablishments: Establishment[] = [];
 let memorySchedules: Schedule[] = [];
-let memoryDeliveries: Delivery[] = loadMasterDeliveriesBackup();
+let memoryDeliveries: Delivery[] = [];
 let memoryNotifications: Notification[] = [];
 let memoryRequests: PartnerRequest[] = [];
 let memoryLocations: Record<string, RiderLocation> = {};
 let memoryRouteHistory: RouteHistoryItem[] = [];
 
-const locallyCreatedDeliveries = new Map<string, Delivery>();
-memoryDeliveries.forEach(d => {
-  if (d && d.id) {
-    locallyCreatedDeliveries.set(d.id, d);
+// Tentar recuperar último backup limpo do localStorage inicial
+try {
+  const raw = localStorage.getItem(DELIVERIES_STORAGE_MASTER_KEY);
+  if (raw) {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const deleted = getDeletedDeliveryIds();
+      memoryDeliveries = parsed.filter((d: any) => d && d.id && !deleted.has(d.id));
+    }
   }
-});
+} catch {}
 
 const inFlightOrderLocks = new Set<string>();
 
@@ -572,12 +542,6 @@ export const db = {
     memoryDeliveries = normalized;
     saveMasterDeliveriesBackup(normalized);
 
-    normalized.forEach(d => {
-      if (d && d.id) {
-        locallyCreatedDeliveries.set(d.id, d);
-      }
-    });
-
     const payload = normalized.map(formatDeliveryPayload);
 
     if (payload.length > 0) {
@@ -597,12 +561,14 @@ export const db = {
 
   async deleteDelivery(id: string) {
     registerDeletedDeliveryId(id);
-    locallyCreatedDeliveries.delete(id);
     memoryDeliveries = memoryDeliveries.filter(d => d.id !== id);
     saveMasterDeliveriesBackup(memoryDeliveries);
 
     try {
-      await supabase.from('deliveries').delete().eq('id', id);
+      const { error } = await supabase.from('deliveries').delete().eq('id', id);
+      if (error) {
+        console.warn('Erro ao deletar no Supabase:', error);
+      }
     } catch (e) {
       console.warn('Erro ao deletar entrega no Supabase:', e);
     }
@@ -614,7 +580,6 @@ export const db = {
     memoryDeliveries.forEach(d => {
       if (d && d.id) registerDeletedDeliveryId(d.id);
     });
-    locallyCreatedDeliveries.clear();
     memoryDeliveries = [];
     saveMasterDeliveriesBackup([]);
 
@@ -814,10 +779,11 @@ export const db = {
   },
 
   async syncLocalToSupabase(): Promise<{ deliveriesCount: number }> {
-    const allLocalDeliveries = loadMasterDeliveriesBackup();
+    const deletedIds = getDeletedDeliveryIds();
+    const validLocalDeliveries = memoryDeliveries.filter(d => d && d.id && !deletedIds.has(d.id));
     
-    if (allLocalDeliveries.length > 0) {
-      const payload = allLocalDeliveries.map(d => {
+    if (validLocalDeliveries.length > 0) {
+      const payload = validLocalDeliveries.map(d => {
         const canonicalRider = this.resolveUser(d.riderId);
         const canonicalEst = this.resolveEstablishment(d.establishmentId);
         return formatDeliveryPayload({
@@ -833,13 +799,13 @@ export const db = {
         try {
           await supabase.from('deliveries').upsert(chunk, { onConflict: 'id' });
         } catch (err) {
-          console.warn('Erro ao sincronizar chunk local com Supabase:', err);
+          console.warn('Erro ao sincronizar chunk com Supabase:', err);
         }
       }
     }
 
     await this.pullFromSupabase();
-    return { deliveriesCount: allLocalDeliveries.length };
+    return { deliveriesCount: validLocalDeliveries.length };
   },
 
   async pullFromSupabase() {
@@ -920,7 +886,7 @@ export const db = {
         });
       }
 
-      // Busca paginada contínua para puxar 100% das entregas sem o limite de 1000 linhas
+      // Busca paginada contínua para puxar 100% das entregas existentes no Supabase
       const allDelData: any[] = [];
       let delFrom = 0;
       const delBatchSize = 1000;
@@ -946,7 +912,7 @@ export const db = {
       }
 
       if (allDelData.length > 0) {
-        const remoteDeliveriesMap = new Map<string, Delivery>();
+        const fetchedDeliveries: Delivery[] = [];
 
         allDelData.forEach(d => {
           if (deletedIds.has(d.id)) return;
@@ -1010,57 +976,15 @@ export const db = {
             paid
           };
 
-          remoteDeliveriesMap.set(d.id, parsedDelivery);
+          fetchedDeliveries.push(parsedDelivery);
         });
 
-        const mergedDeliveries: Delivery[] = [];
-        const missingFromRemote: Delivery[] = [];
-        const processedIds = new Set<string>();
-
-        remoteDeliveriesMap.forEach((remoteDel, id) => {
-          if (deletedIds.has(id)) return;
-
-          const localDel = locallyCreatedDeliveries.get(id);
-          if (localDel) {
-            mergedDeliveries.push({
-              ...remoteDel,
-              riderId: remoteDel.riderId || localDel.riderId,
-              establishmentId: remoteDel.establishmentId || localDel.establishmentId,
-              orderNumber: localDel.orderNumber || remoteDel.orderNumber,
-              notes: localDel.notes || remoteDel.notes,
-              customerChat: localDel.customerChat || remoteDel.customerChat,
-              deliveryType: localDel.deliveryType || remoteDel.deliveryType,
-              additionalValue: localDel.additionalValue ?? remoteDel.additionalValue,
-              additionalReason: localDel.additionalReason || remoteDel.additionalReason,
-              linkedOrderNumber: localDel.linkedOrderNumber || remoteDel.linkedOrderNumber,
-              paymentMethod: localDel.paymentMethod || remoteDel.paymentMethod,
-              orderCollectionAmount: localDel.orderCollectionAmount ?? remoteDel.orderCollectionAmount,
-              changeFor: localDel.changeFor ?? remoteDel.changeFor,
-              paid: localDel.paid ?? remoteDel.paid
-            });
-          } else {
-            mergedDeliveries.push(remoteDel);
-          }
-          processedIds.add(id);
-        });
-
-        locallyCreatedDeliveries.forEach((localDel, id) => {
-          if (!processedIds.has(id) && !deletedIds.has(id)) {
-            mergedDeliveries.push(localDel);
-            missingFromRemote.push(localDel);
-            processedIds.add(id);
-          }
-        });
-
-        memoryDeliveries = mergedDeliveries.filter(d => !deletedIds.has(d.id));
+        memoryDeliveries = fetchedDeliveries.filter(d => !deletedIds.has(d.id));
         saveMasterDeliveriesBackup(memoryDeliveries);
-
-        if (missingFromRemote.length > 0) {
-          const missingPayload = missingFromRemote.map(formatDeliveryPayload);
-          try {
-            await supabase.from('deliveries').upsert(missingPayload, { onConflict: 'id' });
-          } catch {}
-        }
+      } else {
+        // Se o Supabase retornou vazio, a memória reflete que não há entregas (ou apenas limpas)
+        memoryDeliveries = [];
+        saveMasterDeliveriesBackup([]);
       }
 
       const { data: reqsData } = await supabase.from('partner_requests').select('*').limit(10000);
