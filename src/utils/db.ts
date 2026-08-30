@@ -153,6 +153,13 @@ export function getDeliveryOperationalDate(dateStr: string, timeStr: string = '1
 
 const SESSION_USER_KEY = 'motohub_session_user';
 
+// Limpa qualquer cache antigo de entregas que possa estar poluindo o navegador
+try {
+  localStorage.removeItem('motohub_deliveries_master_v9');
+  localStorage.removeItem('motohub_deliveries_master_v8');
+  localStorage.removeItem('motohub_deleted_deliveries_ids_v2');
+} catch {}
+
 function extractOrderNumberSafe(raw?: string): string | undefined {
   if (!raw) return undefined;
   const trimmed = String(raw).trim();
@@ -590,6 +597,38 @@ export const db = {
 
     window.dispatchEvent(new Event('db-sync-complete'));
     return true;
+  },
+
+  // Apaga todas as duplicatas com o mesmo número de pedido na mesma data, mantendo apenas 1 registro único
+  async removeDuplicateDeliveries(establishmentId?: string): Promise<number> {
+    const all = memoryDeliveries;
+    const seen = new Set<string>();
+    const idsToDelete: string[] = [];
+
+    all.forEach(d => {
+      if (establishmentId && !this.isSameEstablishment(d.establishmentId, establishmentId)) return;
+      const num = (d.orderNumber || '').trim().replace('#', '');
+      if (!num) return;
+      
+      const opDate = getDeliveryOperationalDate(d.date, d.time);
+      const key = `${opDate}_${num}_${d.riderId}`;
+
+      if (seen.has(key)) {
+        idsToDelete.push(d.id);
+      } else {
+        seen.add(key);
+      }
+    });
+
+    if (idsToDelete.length > 0) {
+      memoryDeliveries = memoryDeliveries.filter(d => !idsToDelete.includes(d.id));
+      for (const id of idsToDelete) {
+        await supabase.from('deliveries').delete().eq('id', id);
+      }
+      window.dispatchEvent(new Event('db-sync-complete'));
+    }
+
+    return idsToDelete.length;
   },
 
   async clearAllDeliveries() {

@@ -9,41 +9,42 @@ import {
   CheckCheck,
   Plus, 
   Bike, 
-  Users,
-  DollarSign,
-  Map as MapIcon,
-  Maximize2,
-  Minimize2,
-  MessageSquare,
-  Share2,
-  Edit2,
-  Trash2,
-  LocateFixed,
-  AlertTriangle,
-  RotateCw,
-  Ban,
-  Calendar,
-  Filter,
-  Layers,
-  Sparkles,
-  Hash,
-  FileText,
-  Link2,
-  Banknote,
-  CreditCard,
-  QrCode,
-  Wallet,
-  Receipt,
-  Coins,
-  Search,
-  CheckCircle2,
-  Clock,
-  TrendingUp,
-  X,
-  Phone,
-  ArrowUpDown,
-  Copy,
-  Loader2
+  Users, 
+  DollarSign, 
+  Map as MapIcon, 
+  Maximize2, 
+  Minimize2, 
+  MessageSquare, 
+  Share2, 
+  Edit2, 
+  Trash2, 
+  LocateFixed, 
+  AlertTriangle, 
+  RotateCw, 
+  Ban, 
+  Calendar, 
+  Filter, 
+  Layers, 
+  Sparkles, 
+  Hash, 
+  FileText, 
+  Link2, 
+  Banknote, 
+  CreditCard, 
+  QrCode, 
+  Wallet, 
+  Receipt, 
+  Coins, 
+  Search, 
+  CheckCircle2, 
+  Clock, 
+  TrendingUp, 
+  X, 
+  Phone, 
+  ArrowUpDown, 
+  Copy, 
+  Loader2,
+  Sparkle
 } from 'lucide-react';
 import L from 'leaflet';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
@@ -91,6 +92,7 @@ export default function EstablishmentDashboard() {
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [isDeduplicating, setIsDeduplicating] = useState(false);
 
   // --- FILTROS DA ABA DE REPASSES INDIVIDUAIS DOS MOTOBOYS ---
   const [settlePeriodMode, setSettlePeriodMode] = useState<'this_week' | 'last_week' | 'today' | 'this_month' | 'custom'>('this_week');
@@ -502,6 +504,25 @@ export default function EstablishmentDashboard() {
       alert('Erro ao excluir corrida no Supabase. Verifique sua conexão com a internet.');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handlePurgeAllDuplicates = async () => {
+    if (isDeduplicating || !currentEst) return;
+
+    if (!confirm('Deseja varrer e apagar automaticamente todas as corridas duplicadas deste estabelecimento mantendo apenas uma cópia de cada pedido?')) {
+      return;
+    }
+
+    setIsDeduplicating(true);
+    try {
+      const countRemoved = await db.removeDuplicateDeliveries(currentEst.id);
+      loadData();
+      alert(`🎉 Concluído! ${countRemoved} corrida(s) duplicada(s) foram apagadas com sucesso do Supabase.`);
+    } catch (err) {
+      alert('Erro ao deduplicar corridas no Supabase.');
+    } finally {
+      setIsDeduplicating(false);
     }
   };
 
@@ -952,6 +973,15 @@ export default function EstablishmentDashboard() {
           </div>
 
           <div className="flex items-center space-x-2">
+            <button
+              onClick={handlePurgeAllDuplicates}
+              disabled={isDeduplicating}
+              className="bg-amber-600 hover:bg-amber-700 disabled:bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 shadow-sm"
+              title="Apagar automaticamente todas as corridas duplicadas de pedidos idênticos"
+            >
+              {isDeduplicating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+              <span className="hidden sm:inline">Limpar Duplicatas</span>
+            </button>
             {pendingDeliveries.length > 0 && (
               <button
                 onClick={handleApproveAllPendingDeliveries}
@@ -1618,6 +1648,15 @@ export default function EstablishmentDashboard() {
               </div>
 
               <div className="flex items-center space-x-2">
+                <button
+                  onClick={handlePurgeAllDuplicates}
+                  disabled={isDeduplicating}
+                  className="bg-amber-600 hover:bg-amber-700 disabled:bg-slate-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1 shadow-sm"
+                  title="Apagar duplicatas em massa"
+                >
+                  {isDeduplicating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                  <span>Limpar Duplicatas</span>
+                </button>
                 <button
                   onClick={() => handleOpenLaunchModal()}
                   className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 shadow-sm"
