@@ -128,6 +128,7 @@ export default function AdminDashboard() {
   const [riderLocations, setRiderLocations] = useState<RiderLocation[]>([]);
   const [activeToast, setActiveToast] = useState<ChatToast | null>(null);
   const [isSyncingSupabase, setIsSyncingSupabase] = useState(false);
+  const [deletingDeliveryId, setDeletingDeliveryId] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
@@ -261,7 +262,7 @@ export default function AdminDashboard() {
     try {
       const res = await db.syncLocalToSupabase();
       loadData();
-      alert(`🎉 Sincronização concluída com sucesso!\n\n${res.deliveriesCount} corridas verificadas e enviadas ao banco de dados do Supabase.`);
+      alert(`🎉 Sincronização concluída com sucesso!\n\n${res.deliveriesCount} corridas sincronizadas em tempo real com o banco de dados Supabase.`);
     } catch (e) {
       alert('Erro ao sincronizar com o Supabase. Verifique sua conexão com a internet.');
     } finally {
@@ -281,6 +282,9 @@ export default function AdminDashboard() {
       db.pullFromSupabase().then(() => loadData());
     }, 2000);
 
+    const handleSyncComplete = () => loadData();
+    window.addEventListener('db-sync-complete', handleSyncComplete);
+
     const unsubscribeLocation = realtimeGps.subscribeToLocations(() => {
       loadData();
     });
@@ -295,6 +299,7 @@ export default function AdminDashboard() {
 
     return () => {
       clearInterval(interval);
+      window.removeEventListener('db-sync-complete', handleSyncComplete);
       unsubscribeLocation();
       unsubscribeOffline();
     };
@@ -890,9 +895,20 @@ export default function AdminDashboard() {
   };
 
   const handleDeleteDelivery = async (id: string) => {
-    if (confirm('Deseja realmente excluir esta corrida definitivamente do banco de dados?')) {
+    if (deletingDeliveryId) return;
+
+    if (!confirm('Deseja realmente excluir esta corrida definitivamente do banco de dados?')) {
+      return;
+    }
+
+    setDeletingDeliveryId(id);
+    try {
       await db.deleteDelivery(id);
       loadData();
+    } catch (e: any) {
+      alert('Erro ao excluir corrida no Supabase. Verifique sua conexão.');
+    } finally {
+      setDeletingDeliveryId(null);
     }
   };
 
@@ -1482,7 +1498,7 @@ export default function AdminDashboard() {
               onClick={handleSyncToSupabase}
               disabled={isSyncingSupabase}
               className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-black flex items-center space-x-1 transition-colors shadow-sm"
-              title="Sincronizar todas as corridas locais para a nuvem Supabase"
+              title="Recarregar e sincronizar em tempo real com o Supabase"
             >
               {isSyncingSupabase ? (
                 <>
@@ -2762,11 +2778,12 @@ export default function AdminDashboard() {
                             </button>
 
                             <button
+                              disabled={deletingDeliveryId === del.id}
                               onClick={() => handleDeleteDelivery(del.id)}
-                              className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"
-                              title="Excluir Corrida"
+                              className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                              title="Excluir Corrida Definitivamente"
                             >
-                              <Trash2 className="h-4 w-4" />
+                              {deletingDeliveryId === del.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                             </button>
                           </div>
                         </div>
