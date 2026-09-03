@@ -13,6 +13,7 @@ interface GeneratePdfGeneralOptions {
   startDate?: string;
   endDate?: string;
   onlyWithDeliveries?: boolean;
+  includeOrderNumbers?: boolean;
 }
 
 interface GeneratePdfIndividualOptions {
@@ -29,7 +30,8 @@ export const generateGeneralRidersEarningsPdf = ({
   deliveries,
   establishments,
   periodLabel,
-  onlyWithDeliveries = true
+  onlyWithDeliveries = true,
+  includeOrderNumbers = true
 }: GeneratePdfGeneralOptions) => {
   const doc = new jsPDF({
     orientation: 'landscape',
@@ -110,10 +112,32 @@ export const generateGeneralRidersEarningsPdf = ({
   doc.setTextColor(5, 150, 105);
   doc.text(`R$ ${totalRidersNet.toFixed(2)}`, 250, 47);
 
-  // Tabela Consolidada com todas as colunas detalhadas
+  // Tabela Consolidada com ou sem coluna de números dos pedidos
+  const headers = [
+    '#',
+    'Entregador (Motoboy)',
+    'Telefone / CPF',
+    'Total',
+    ...(includeOrderNumbers ? ['Nº Pedidos / Corridas'] : []),
+    'Padrão (R$ 8)',
+    'Mesmo End. (R$ 4)',
+    '+ Adicionais',
+    'Bruto Total',
+    'Taxa Adm (R$ 1)',
+    'Líquido Motoboy',
+    'Status'
+  ];
+
   const tableData = targetRiders.map((rider, idx) => {
     const riderDels = activeDeliveries.filter(d => d.riderId === rider.id);
     const count = riderDels.length;
+
+    const orderNumbersList = riderDels
+      .map(d => d.orderNumber ? `#${d.orderNumber}` : null)
+      .filter(Boolean);
+    const orderNumbersFormatted = orderNumbersList.length > 0 
+      ? orderNumbersList.join(', ') 
+      : '-';
 
     const stdDels = riderDels.filter(d => d.deliveryType !== 'same_address' && Number(d.value) > 4.00);
     const stdCount = stdDels.length;
@@ -129,11 +153,12 @@ export const generateGeneralRidersEarningsPdf = ({
     const netTotal = Math.max(0, grossTotal - admCutTotal);
     const isPaid = count > 0 && riderDels.every(d => d.paid);
 
-    return [
+    const row = [
       `${idx + 1}`,
       rider.name,
       rider.phone || rider.cpf || '-',
       `${count}`,
+      ...(includeOrderNumbers ? [orderNumbersFormatted] : []),
       `${stdCount} (R$ ${stdTotal.toFixed(2)})`,
       `${sameAddrCount} (R$ ${sameAddrTotal.toFixed(2)})`,
       `R$ ${addsTotal.toFixed(2)}`,
@@ -142,49 +167,54 @@ export const generateGeneralRidersEarningsPdf = ({
       `R$ ${netTotal.toFixed(2)}`,
       count === 0 ? 'SEM CORRIDAS' : isPaid ? 'PAGO' : 'A REPASSAR'
     ];
+
+    return row;
   });
+
+  const columnStylesConfig: any = includeOrderNumbers ? {
+    0: { halign: 'center', cellWidth: 7 },
+    1: { fontStyle: 'bold', halign: 'left', cellWidth: 36 },
+    2: { halign: 'center', cellWidth: 24 },
+    3: { halign: 'center', fontStyle: 'bold', cellWidth: 12 },
+    4: { halign: 'left', cellWidth: 42, fontStyle: 'normal', textColor: [71, 85, 105] }, // Nº Pedidos
+    5: { halign: 'center', cellWidth: 26 },
+    6: { halign: 'center', textColor: [126, 34, 206], cellWidth: 26 },
+    7: { halign: 'right', textColor: [180, 83, 9], cellWidth: 18 },
+    8: { halign: 'right', fontStyle: 'bold', cellWidth: 22 },
+    9: { halign: 'right', textColor: [185, 28, 28], cellWidth: 18 },
+    10: { halign: 'right', fontStyle: 'bold', textColor: [5, 150, 105], cellWidth: 20 },
+    11: { halign: 'center', fontStyle: 'bold', cellWidth: 18 }
+  } : {
+    0: { halign: 'center', cellWidth: 8 },
+    1: { fontStyle: 'bold', halign: 'left', cellWidth: 46 },
+    2: { halign: 'center', cellWidth: 28 },
+    3: { halign: 'center', fontStyle: 'bold', cellWidth: 14 },
+    4: { halign: 'center', cellWidth: 32 },
+    5: { halign: 'center', textColor: [126, 34, 206], cellWidth: 32 },
+    6: { halign: 'right', textColor: [180, 83, 9], cellWidth: 22 },
+    7: { halign: 'right', fontStyle: 'bold', cellWidth: 24 },
+    8: { halign: 'right', textColor: [185, 28, 28], cellWidth: 22 },
+    9: { halign: 'right', fontStyle: 'bold', textColor: [5, 150, 105], cellWidth: 26 },
+    10: { halign: 'center', fontStyle: 'bold', cellWidth: 21 }
+  };
 
   autoTable(doc, {
     startY: 57,
-    head: [[
-      '#',
-      'Entregador (Motoboy)',
-      'Telefone / CPF',
-      'Total',
-      'Padrão (R$ 8)',
-      'Mesmo End. (R$ 4)',
-      '+ Adicionais',
-      'Bruto Total',
-      'Taxa Adm (R$ 1)',
-      'Líquido Motoboy',
-      'Status'
-    ]],
+    head: [headers],
     body: tableData as any,
     theme: 'grid',
     headStyles: {
       fillColor: [79, 70, 229], // indigo-600
       textColor: [255, 255, 255],
       fontStyle: 'bold',
-      fontSize: 8,
+      fontSize: 7.5,
       halign: 'center'
     },
     bodyStyles: {
-      fontSize: 8,
+      fontSize: 7.5,
       textColor: [30, 41, 59]
     },
-    columnStyles: {
-      0: { halign: 'center', cellWidth: 8 },
-      1: { fontStyle: 'bold', halign: 'left', cellWidth: 46 },
-      2: { halign: 'center', cellWidth: 28 },
-      3: { halign: 'center', fontStyle: 'bold', cellWidth: 14 },
-      4: { halign: 'center', cellWidth: 32 },
-      5: { halign: 'center', textColor: [126, 34, 206], cellWidth: 32 },
-      6: { halign: 'right', textColor: [180, 83, 9], cellWidth: 22 },
-      7: { halign: 'right', fontStyle: 'bold', cellWidth: 24 },
-      8: { halign: 'right', textColor: [185, 28, 28], cellWidth: 22 },
-      9: { halign: 'right', fontStyle: 'bold', textColor: [5, 150, 105], cellWidth: 26 },
-      10: { halign: 'center', fontStyle: 'bold', cellWidth: 21 }
-    },
+    columnStyles: columnStylesConfig,
     alternateRowStyles: {
       fillColor: [248, 250, 252]
     }
@@ -354,7 +384,7 @@ export const generateIndividualRiderEarningsPdf = ({
     head: [[
       '#',
       'Data/Hora',
-      'Pedido',
+      'Pedido / Corrida',
       'Estabelecimento',
       'Tipo de Corrida & Adicional',
       'Pag. Cliente',
@@ -379,9 +409,9 @@ export const generateIndividualRiderEarningsPdf = ({
     columnStyles: {
       0: { halign: 'center', cellWidth: 8 },
       1: { halign: 'center', cellWidth: 26 },
-      2: { halign: 'center', fontStyle: 'bold', cellWidth: 16 },
-      3: { halign: 'left', cellWidth: 36 },
-      4: { halign: 'left', cellWidth: 36 },
+      2: { halign: 'center', fontStyle: 'bold', cellWidth: 18 },
+      3: { halign: 'left', cellWidth: 35 },
+      4: { halign: 'left', cellWidth: 35 },
       5: { halign: 'center', cellWidth: 18 },
       6: { halign: 'right', cellWidth: 15 },
       7: { halign: 'right', textColor: [185, 28, 28], cellWidth: 13 },

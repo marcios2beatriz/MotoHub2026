@@ -177,6 +177,7 @@ export default function AdminDashboard() {
 
   // Filtros Avançados de Exportação de Relatório PDF
   const [pdfOnlyWithDeliveries, setPdfOnlyWithDeliveries] = useState<boolean>(true);
+  const [pdfIncludeOrderNumbers, setPdfIncludeOrderNumbers] = useState<boolean>(true);
   const [pdfSelectedRiderIds, setPdfSelectedRiderIds] = useState<string[]>([]);
   const [showPdfExportModal, setShowPdfExportModal] = useState<boolean>(false);
 
@@ -1184,6 +1185,7 @@ export default function AdminDashboard() {
       return false;
     }
 
+    // Filtro de cobrança no fechamento
     if (financePaymentFilter === 'to_collect' && (!d.paymentMethod || d.paymentMethod === 'already_paid')) return false;
     if (financePaymentFilter === 'money' && d.paymentMethod !== 'money') return false;
     if (financePaymentFilter === 'card' && d.paymentMethod !== 'card_debit' && d.paymentMethod !== 'card_credit') return false;
@@ -1364,6 +1366,7 @@ export default function AdminDashboard() {
     const allRiders = users.filter(u => u.role === 'rider');
     setPdfSelectedRiderIds(allRiders.map(r => r.id));
     setPdfOnlyWithDeliveries(true);
+    setPdfIncludeOrderNumbers(true);
     setShowPdfExportModal(true);
   };
 
@@ -1383,7 +1386,8 @@ export default function AdminDashboard() {
       periodLabel: financeBounds.label,
       startDate: financeBounds.start,
       endDate: financeBounds.end,
-      onlyWithDeliveries: pdfOnlyWithDeliveries
+      onlyWithDeliveries: pdfOnlyWithDeliveries,
+      includeOrderNumbers: pdfIncludeOrderNumbers
     });
 
     setShowPdfExportModal(false);
@@ -3441,18 +3445,33 @@ export default function AdminDashboard() {
                 <span className="font-extrabold text-indigo-900 text-sm">{financeBounds.label}</span>
               </div>
 
-              {/* Opção: Apenas com corridas lançadas */}
-              <label className="flex items-center space-x-2.5 p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={pdfOnlyWithDeliveries}
-                  onChange={(e) => setPdfOnlyWithDeliveries(e.target.checked)}
-                  className="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4"
-                />
-                <span className="font-bold text-slate-800 text-xs select-none">
-                  Gerar apenas para motoboys que possuem corridas ativas no período (ocultar zerados)
-                </span>
-              </label>
+              {/* Opções de Checkbox */}
+              <div className="space-y-2">
+                <label className="flex items-center space-x-2.5 p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={pdfOnlyWithDeliveries}
+                    onChange={(e) => setPdfOnlyWithDeliveries(e.target.checked)}
+                    className="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4"
+                  />
+                  <span className="font-bold text-slate-800 text-xs select-none">
+                    Gerar apenas para motoboys que possuem corridas ativas no período (ocultar zerados)
+                  </span>
+                </label>
+
+                <label className="flex items-center space-x-2.5 p-3 bg-purple-50/50 border border-purple-100 rounded-xl cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={pdfIncludeOrderNumbers}
+                    onChange={(e) => setPdfIncludeOrderNumbers(e.target.checked)}
+                    className="rounded text-purple-600 focus:ring-purple-500 h-4 w-4"
+                  />
+                  <span className="font-bold text-purple-950 text-xs select-none flex items-center gap-1.5">
+                    <Hash className="h-3.5 w-3.5 text-purple-600" />
+                    <span>Incluir coluna com a relação dos números das corridas/pedidos no PDF</span>
+                  </span>
+                </label>
+              </div>
 
               {/* Seleção de Motoboys */}
               <div className="space-y-2">
