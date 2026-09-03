@@ -1831,16 +1831,105 @@ export default function AdminDashboard() {
           </button>
         </div>
 
-        {/* Mobile Navigation bar */}
-        <div className="lg:hidden grid grid-cols-4 sm:grid-cols-8 gap-1 bg-white p-2 rounded-xl border border-slate-200">
-          <button onClick={() => setActiveTab('overview')} className={`p-2 text-xs text-center rounded ${activeTab === 'overview' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Visão</button>
-          <button onClick={() => setActiveTab('map')} className={`p-2 text-xs text-center rounded ${activeTab === 'map' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>GPS</button>
-          <button onClick={() => setActiveTab('users')} className={`p-2 text-xs text-center rounded ${activeTab === 'users' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Usuários</button>
-          <button onClick={() => setActiveTab('establishments')} className={`p-2 text-xs text-center rounded ${activeTab === 'establishments' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Lojas</button>
-          <button onClick={() => setActiveTab('requests')} className={`p-2 text-xs text-center rounded relative ${activeTab === 'requests' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Pedidos</button>
-          <button onClick={() => setActiveTab('schedules')} className={`p-2 text-xs text-center rounded ${activeTab === 'schedules' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Escalas</button>
-          <button onClick={() => setActiveTab('deliveries')} className={`p-2 text-xs text-center rounded ${activeTab === 'deliveries' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Corridas</button>
-          <button onClick={() => setActiveTab('finance')} className={`p-2 text-xs text-center rounded ${activeTab === 'finance' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600'}`}>Fechamento</button>
+        {/* Mobile Navigation bar com rolagem horizontal para acomodar todas as 9 abas perfeitamente */}
+        <div className="lg:hidden flex items-center gap-1.5 bg-white p-2 rounded-xl border border-slate-200 overflow-x-auto shadow-xs">
+          <button 
+            onClick={() => setActiveTab('overview')} 
+            className={`px-3.5 py-2 text-xs font-extrabold whitespace-nowrap rounded-lg flex-shrink-0 transition-all ${
+              activeTab === 'overview' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            Visão Geral
+          </button>
+
+          <button 
+            onClick={() => setActiveTab('map')} 
+            className={`px-3.5 py-2 text-xs font-extrabold whitespace-nowrap rounded-lg flex-shrink-0 transition-all flex items-center gap-1 ${
+              activeTab === 'map' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <MapIcon className="h-3.5 w-3.5 text-emerald-500" />
+            <span>GPS</span>
+          </button>
+
+          <button 
+            onClick={() => setActiveTab('users')} 
+            className={`px-3.5 py-2 text-xs font-extrabold whitespace-nowrap rounded-lg flex-shrink-0 transition-all flex items-center gap-1 ${
+              activeTab === 'users' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <span>Usuários</span>
+            {pendingUsersCount > 0 && (
+              <span className="bg-amber-500 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full">
+                {pendingUsersCount}
+              </span>
+            )}
+          </button>
+
+          <button 
+            onClick={() => setActiveTab('establishments')} 
+            className={`px-3.5 py-2 text-xs font-extrabold whitespace-nowrap rounded-lg flex-shrink-0 transition-all ${
+              activeTab === 'establishments' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            Lojas
+          </button>
+
+          <button 
+            onClick={() => setActiveTab('requests')} 
+            className={`px-3.5 py-2 text-xs font-extrabold whitespace-nowrap rounded-lg flex-shrink-0 transition-all flex items-center gap-1 ${
+              activeTab === 'requests' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <span>Pedidos</span>
+            {pendingRequestsCount > 0 && (
+              <span className="bg-emerald-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full">
+                {pendingRequestsCount}
+              </span>
+            )}
+          </button>
+
+          <button 
+            onClick={() => setActiveTab('schedules')} 
+            className={`px-3.5 py-2 text-xs font-extrabold whitespace-nowrap rounded-lg flex-shrink-0 transition-all ${
+              activeTab === 'schedules' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            Escalas
+          </button>
+
+          <button 
+            onClick={() => setActiveTab('deliveries')} 
+            className={`px-3.5 py-2 text-xs font-extrabold whitespace-nowrap rounded-lg flex-shrink-0 transition-all flex items-center gap-1 ${
+              activeTab === 'deliveries' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <span>Corridas</span>
+            {pendingDeliveries.length > 0 && (
+              <span className="bg-amber-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full">
+                {pendingDeliveries.length}
+              </span>
+            )}
+          </button>
+
+          <button 
+            onClick={() => setActiveTab('finance')} 
+            className={`px-3.5 py-2 text-xs font-extrabold whitespace-nowrap rounded-lg flex-shrink-0 transition-all ${
+              activeTab === 'finance' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            Fechamento
+          </button>
+
+          <button 
+            onClick={() => setActiveTab('reports')} 
+            className={`px-3.5 py-2 text-xs font-extrabold whitespace-nowrap rounded-lg flex-shrink-0 transition-all flex items-center gap-1 ${
+              activeTab === 'reports' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
+            }`}
+          >
+            <BarChart3 className="h-3.5 w-3.5" />
+            <span>Relatórios</span>
+          </button>
         </div>
 
         {/* Content Area */}
