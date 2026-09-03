@@ -52,7 +52,8 @@ import {
   QrCode, 
   Copy, 
   UploadCloud, 
-  Loader2 
+  Loader2,
+  FileSpreadsheet
 } from 'lucide-react';
 
 import L from 'leaflet';
@@ -69,6 +70,7 @@ import ChatToastBanner, { ChatToast } from '../components/ChatToastBanner';
 import RiderFinancialMetricsCard from '../components/RiderFinancialMetricsCard';
 import { sendDeviceNotification, playNotificationSound, requestNotificationPermission } from '../utils/notifications';
 import { realtimeGps } from '../utils/realtimeGps';
+import { generateGeneralRidersEarningsPdf, generateIndividualRiderEarningsPdf } from '../utils/pdfGenerator';
 
 const DAY_KEYS = ['seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom'] as const;
 const DAY_LABELS = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'];
@@ -234,6 +236,7 @@ export default function AdminDashboard() {
   const [reportPeriod, setReportPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'custom'>('weekly');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
+  const [selectedReportRiderId, setSelectedReportRiderId] = useState<string>('all');
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -1258,7 +1261,7 @@ export default function AdminDashboard() {
     const riders = users.filter(u => u.role === 'rider');
     if (reportType === 'earnings') {
       const summary: any = {};
-      riders.forEach(r => { summary[r.id] = { name: r.name, total: 0, count: 0 }; });
+      riders.forEach(r => { summary[r.id] = { id: r.id, name: r.name, total: 0, count: 0 }; });
       deliveries.filter(d => d.status === 'active').forEach(d => {
         const dDate = new Date(d.date + 'T00:00:00');
         if (dDate >= start && dDate <= end && summary[d.riderId]) {
@@ -1269,7 +1272,7 @@ export default function AdminDashboard() {
       return Object.values(summary);
     } else if (reportType === 'deliveries') {
       const summary: any = {};
-      riders.forEach(r => { summary[r.id] = { name: r.name, count: 0, cancelled: 0 }; });
+      riders.forEach(r => { summary[r.id] = { id: r.id, name: r.name, count: 0, cancelled: 0 }; });
       deliveries.forEach(d => {
         const dDate = new Date(d.date + 'T00:00:00');
         if (dDate >= start && dDate <= end && summary[d.riderId]) {
@@ -1280,7 +1283,7 @@ export default function AdminDashboard() {
       return Object.values(summary);
     } else {
       const summary: any = {};
-      establishments.forEach(e => { summary[e.id] = { name: e.name, count: 0 }; });
+      establishments.forEach(e => { summary[e.id] = { id: e.id, name: e.name, count: 0 }; });
       schedules.forEach(s => {
         const sDate = new Date(s.date + 'T00:00:00');
         const dDate = sDate;
@@ -1312,6 +1315,29 @@ export default function AdminDashboard() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const handleExportGeneralPdf = () => {
+    const activeRiders = users.filter(u => u.role === 'rider');
+    generateGeneralRidersEarningsPdf({
+      riders: activeRiders,
+      deliveries: financeFilteredDeliveries,
+      establishments,
+      periodLabel: financeBounds.label,
+      startDate: financeBounds.start,
+      endDate: financeBounds.end
+    });
+  };
+
+  const handleExportIndividualPdf = (rider: User) => {
+    generateIndividualRiderEarningsPdf({
+      rider,
+      deliveries: financeFilteredDeliveries,
+      establishments,
+      periodLabel: financeBounds.label,
+      startDate: financeBounds.start,
+      endDate: financeBounds.end
+    });
   };
 
   const togglePasswordVisibility = (userId: string) => {
@@ -2814,25 +2840,36 @@ export default function AdminDashboard() {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+                <div className="flex items-center gap-2 flex-wrap">
                   <button
-                    onClick={() => setFinanceActiveSection('riders')}
-                    className={`px-3.5 py-2 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                      financeActiveSection === 'riders' ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                    onClick={handleExportGeneralPdf}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-md"
+                    title="Baixar Relatório Geral Consolidado em PDF de Todos os Motoboys"
                   >
-                    <Bike className="h-4 w-4" />
-                    <span>Por Motoboy</span>
+                    <Download className="h-4 w-4" />
+                    <span>Exportar PDF Consolidado</span>
                   </button>
-                  <button
-                    onClick={() => setFinanceActiveSection('establishments')}
-                    className={`px-3.5 py-2 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                      financeActiveSection === 'establishments' ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    <Store className="h-4 w-4" />
-                    <span>Por Estabelecimento</span>
-                  </button>
+
+                  <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+                    <button
+                      onClick={() => setFinanceActiveSection('riders')}
+                      className={`px-3.5 py-2 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+                        financeActiveSection === 'riders' ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Bike className="h-4 w-4" />
+                      <span>Por Motoboy</span>
+                    </button>
+                    <button
+                      onClick={() => setFinanceActiveSection('establishments')}
+                      className={`px-3.5 py-2 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+                        financeActiveSection === 'establishments' ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Store className="h-4 w-4" />
+                      <span>Por Estabelecimento</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -3030,7 +3067,7 @@ export default function AdminDashboard() {
 
               </div>
 
-              {/* SEÇÃO 1: FECHAMENTO POR MOTOBOY COM AS 5 MÉTRICAS */}
+              {/* SEÇÃO 1: FECHAMENTO POR MOTOBOY COM AS 5 MÉTRICAS E DOWNLOAD INDIVIDUAL DE PDF */}
               {financeActiveSection === 'riders' && (
                 <div className="space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -3060,17 +3097,32 @@ export default function AdminDashboard() {
                         const allPaid = count > 0 && riderDeliveries.every(d => d.paid);
 
                         return (
-                          <RiderFinancialMetricsCard
-                            key={rider.id}
-                            riderName={rider.name}
-                            riderPhone={rider.phone}
-                            deliveries={riderDeliveries}
-                            isPaid={allPaid}
-                            showSettleButton={true}
-                            onSettle={() => handleSettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
-                            onUnsettle={() => handleUnsettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
-                            periodLabel={financeBounds.label}
-                          />
+                          <div key={rider.id} className="space-y-2">
+                            <RiderFinancialMetricsCard
+                              riderName={rider.name}
+                              riderPhone={rider.phone}
+                              deliveries={riderDeliveries}
+                              isPaid={allPaid}
+                              showSettleButton={true}
+                              onSettle={() => handleSettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
+                              onUnsettle={() => handleUnsettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
+                              periodLabel={financeBounds.label}
+                            />
+
+                            {count > 0 && (
+                              <div className="flex items-center justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() => handleExportIndividualPdf(rider)}
+                                  className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                                  title="Baixar Extrato Detalhado de Acerto em PDF"
+                                >
+                                  <Download className="h-3.5 w-3.5 text-emerald-400" />
+                                  <span>Baixar Extrato PDF ({rider.name.split(' ')[0]})</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         );
                       })}
                   </div>
@@ -3178,17 +3230,34 @@ export default function AdminDashboard() {
           {activeTab === 'reports' && (
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <h2 className="text-xl font-bold text-slate-800">Relatórios Gerenciais</h2>
-                <button onClick={exportToCSV} className="flex items-center space-x-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-bold">
-                  <Download className="h-4 w-4" />
-                  <span>Exportar CSV</span>
-                </button>
+                <div>
+                  <h2 className="text-xl font-bold text-slate-800">Relatórios Gerenciais</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">Exporte relatórios consolidados em formato PDF ou planilha CSV</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={handleExportGeneralPdf}
+                    className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-black transition-all shadow-md"
+                    title="Baixar Relatório PDF de Repasses"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span>Baixar Relatório PDF</span>
+                  </button>
+
+                  <button 
+                    onClick={exportToCSV} 
+                    className="flex items-center space-x-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm"
+                  >
+                    <FileSpreadsheet className="h-4 w-4" />
+                    <span>Exportar CSV</span>
+                  </button>
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo de Relatório</label>
-                  <select value={reportType} onChange={(e) => setReportType(e.target.value as any)} className="w-full p-2 border border-slate-300 rounded text-xs">
+                  <select value={reportType} onChange={(e) => setReportType(e.target.value as any)} className="w-full p-2 border border-slate-300 rounded-lg text-xs font-semibold">
                     <option value="earnings">Faturamento por Motoboy</option>
                     <option value="deliveries">Quantidade de Corridas por Motoboy</option>
                     <option value="schedules">Escalas por Estabelecimento</option>
@@ -3196,39 +3265,79 @@ export default function AdminDashboard() {
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Período</label>
-                  <select value={reportPeriod} onChange={(e) => setReportPeriod(e.target.value as any)} className="w-full p-2 border border-slate-300 rounded text-xs">
+                  <select value={reportPeriod} onChange={(e) => setReportPeriod(e.target.value as any)} className="w-full p-2 border border-slate-300 rounded-lg text-xs font-semibold">
                     <option value="daily">Diário (Hoje)</option>
                     <option value="weekly">Semanal (Esta Semana)</option>
                     <option value="monthly">Mensal (Este Mês)</option>
                     <option value="custom">Personalizado</option>
                   </select>
                 </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Filtrar por Entregador</label>
+                  <select 
+                    value={selectedReportRiderId} 
+                    onChange={(e) => setSelectedReportRiderId(e.target.value)} 
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-semibold"
+                  >
+                    <option value="all">Todos os Motoboys</option>
+                    {users.filter(u => u.role === 'rider').map(r => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               {reportPeriod === 'custom' && (
                 <div className="grid grid-cols-2 gap-2">
-                  <input type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} className="p-2 border rounded text-xs" />
-                  <input type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} className="p-2 border rounded text-xs" />
+                  <input type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} className="p-2 border rounded-lg text-xs font-bold" />
+                  <input type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} className="p-2 border rounded-lg text-xs font-bold" />
                 </div>
               )}
 
-              <div className="overflow-x-auto border rounded-xl">
+              <div className="overflow-x-auto border border-slate-200 rounded-xl">
                 <table className="w-full text-left text-xs text-slate-600">
-                  <thead className="bg-slate-50 font-bold uppercase border-b">
+                  <thead className="bg-slate-50 font-bold uppercase border-b border-slate-200">
                     <tr>
                       <th className="p-3">Nome</th>
-                      {reportType === 'earnings' && <th className="p-3">Total (R$)</th>}
-                      <th className="p-3">Quantidade</th>
+                      {reportType === 'earnings' && <th className="p-3 text-right">Total Bruto (R$)</th>}
+                      {reportType === 'earnings' && <th className="p-3 text-right">Taxa Adm (R$ 1)</th>}
+                      {reportType === 'earnings' && <th className="p-3 text-right">Líquido Motoboy (R$)</th>}
+                      <th className="p-3 text-center">Quantidade</th>
+                      <th className="p-3 text-right">Extrato Individual</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y">
-                    {getFilteredReportData().map((row: any, idx: number) => (
-                      <tr key={idx}>
-                        <td className="p-3 font-semibold text-slate-800">{row.name}</td>
-                        {reportType === 'earnings' && <td className="p-3 font-bold text-emerald-600">R$ {row.total.toFixed(2)}</td>}
-                        <td className="p-3">{row.count}</td>
-                      </tr>
-                    ))}
+                  <tbody className="divide-y divide-slate-100">
+                    {getFilteredReportData()
+                      .filter((row: any) => selectedReportRiderId === 'all' || row.id === selectedReportRiderId)
+                      .map((row: any, idx: number) => {
+                        const riderObj = users.find(u => u.id === row.id);
+                        const rowDeliveries = deliveries.filter(d => d.riderId === row.id && d.status === 'active');
+                        const adminFee = rowDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
+                        const netEarnings = Math.max(0, row.total - adminFee);
+
+                        return (
+                          <tr key={idx} className="hover:bg-slate-50/70">
+                            <td className="p-3 font-semibold text-slate-800">{row.name}</td>
+                            {reportType === 'earnings' && <td className="p-3 text-right font-bold text-slate-700">R$ {row.total.toFixed(2)}</td>}
+                            {reportType === 'earnings' && <td className="p-3 text-right font-semibold text-red-600">R$ {adminFee.toFixed(2)}</td>}
+                            {reportType === 'earnings' && <td className="p-3 text-right font-black text-emerald-600">R$ {netEarnings.toFixed(2)}</td>}
+                            <td className="p-3 text-center font-bold">{row.count}</td>
+                            <td className="p-3 text-right">
+                              {riderObj && row.count > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleExportIndividualPdf(riderObj)}
+                                  className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition-all inline-flex items-center gap-1 shadow-xs"
+                                  title="Baixar Extrato Individual em PDF"
+                                >
+                                  <Download className="h-3 w-3 text-emerald-400" />
+                                  <span>PDF Individual</span>
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                   </tbody>
                 </table>
               </div>
