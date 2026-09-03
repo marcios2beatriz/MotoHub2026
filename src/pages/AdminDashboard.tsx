@@ -55,7 +55,8 @@ import {
   Loader2,
   FileSpreadsheet,
   CheckSquare,
-  Square
+  Square,
+  X
 } from 'lucide-react';
 
 import L from 'leaflet';
