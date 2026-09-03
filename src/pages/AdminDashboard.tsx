@@ -177,6 +177,9 @@ export default function AdminDashboard() {
   const [financeActiveSection, setFinanceActiveSection] = useState<'riders' | 'establishments'>('riders');
 
   // Filtros Avançados de Exportação de Relatório PDF
+  const [pdfPeriodMode, setPdfPeriodMode] = useState<'this_week' | 'last_week' | 'today' | 'this_month' | 'custom'>('this_week');
+  const [pdfCustomFrom, setPdfCustomFrom] = useState<string>('');
+  const [pdfCustomTo, setPdfCustomTo] = useState<string>('');
   const [pdfOnlyWithDeliveries, setPdfOnlyWithDeliveries] = useState<boolean>(true);
   const [pdfIncludeOrderNumbers, setPdfIncludeOrderNumbers] = useState<boolean>(true);
   const [pdfSelectedRiderIds, setPdfSelectedRiderIds] = useState<string[]>([]);
@@ -1167,6 +1170,61 @@ export default function AdminDashboard() {
 
   const financeBounds = getFinanceDateBounds();
 
+  // Helper para calcular datas do modal de PDF de forma totalmente independente e interativa
+  const getPdfDateBounds = (): { start: string; end: string; label: string } => {
+    const now = new Date();
+    if (pdfPeriodMode === 'today') {
+      const todayStr = db.getOperationalDateString();
+      return { start: todayStr, end: todayStr, label: 'Hoje (Turno Atual)' };
+    }
+
+    if (pdfPeriodMode === 'this_week') {
+      const monStr = getThisMonday();
+      const [y, m, d] = monStr.split('-').map(Number);
+      const sun = new Date(y, m - 1, d + 6);
+      const sunStr = `${sun.getFullYear()}-${String(sun.getMonth() + 1).padStart(2, '0')}-${String(sun.getDate()).padStart(2, '0')}`;
+      return { start: monStr, end: sunStr, label: 'Esta Semana (Segunda a Domingo)' };
+    }
+
+    if (pdfPeriodMode === 'last_week') {
+      const monStr = getThisMonday();
+      const [y, m, d] = monStr.split('-').map(Number);
+      const lastMon = new Date(y, m - 1, d - 7);
+      const lastSun = new Date(y, m - 1, d - 1);
+      const lastMonStr = `${lastMon.getFullYear()}-${String(lastMon.getMonth() + 1).padStart(2, '0')}-${String(lastSun.getDate()).padStart(2, '0')}`;
+      const lastSunStr = `${lastSun.getFullYear()}-${String(lastSun.getMonth() + 1).padStart(2, '0')}-${String(lastSun.getDate()).padStart(2, '0')}`;
+      return { start: lastMonStr, end: lastSunStr, label: 'Semana Passada' };
+    }
+
+    if (pdfPeriodMode === 'this_month') {
+      const y = now.getFullYear();
+      const m = now.getMonth();
+      const startStr = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+      const lastDay = new Date(y, m + 1, 0).getDate();
+      const endStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      return { start: startStr, end: endStr, label: 'Este Mês' };
+    }
+
+    const fromFormatted = pdfCustomFrom ? new Date(pdfCustomFrom + 'T00:00:00').toLocaleDateString('pt-BR') : '';
+    const toFormatted = pdfCustomTo ? new Date(pdfCustomTo + 'T00:00:00').toLocaleDateString('pt-BR') : '';
+    const label = fromFormatted && toFormatted ? `De ${fromFormatted} até ${toFormatted}` : 'Período Personalizado';
+
+    return {
+      start: pdfCustomFrom || '1970-01-01',
+      end: pdfCustomTo || '2099-12-31',
+      label
+    };
+  };
+
+  const pdfBounds = getPdfDateBounds();
+
+  // Entregas filtradas em tempo real para compor o PDF de acordo com o período escolhido no modal
+  const pdfFilteredDeliveries = deliveries.filter(d => {
+    if (d.status !== 'active') return false;
+    if (d.date < pdfBounds.start || d.date > pdfBounds.end) return false;
+    return true;
+  });
+
   const financeFilteredDeliveries = deliveries.filter(d => {
     if (d.status !== 'active') return false;
 
@@ -1368,6 +1426,26 @@ export default function AdminDashboard() {
     setPdfSelectedRiderIds(allRiders.map(r => r.id));
     setPdfOnlyWithDeliveries(true);
     setPdfIncludeOrderNumbers(true);
+
+    // Se estiver na aba de relatórios com período personalizado, herda as datas
+    if (activeTab === 'reports') {
+      if (reportPeriod === 'custom') {
+        setPdfPeriodMode('custom');
+        setPdfCustomFrom(customStartDate);
+        setPdfCustomTo(customEndDate);
+      } else if (reportPeriod === 'daily') {
+        setPdfPeriodMode('today');
+      } else if (reportPeriod === 'weekly') {
+        setPdfPeriodMode('this_week');
+      } else if (reportPeriod === 'monthly') {
+        setPdfPeriodMode('this_month');
+      }
+    } else if (activeTab === 'finance') {
+      setPdfPeriodMode(financePeriodMode);
+      setPdfCustomFrom(financeCustomFrom);
+      setPdfCustomTo(financeCustomTo);
+    }
+
     setShowPdfExportModal(true);
   };
 
@@ -1382,11 +1460,11 @@ export default function AdminDashboard() {
 
     generateGeneralRidersEarningsPdf({
       riders: selectedRiders,
-      deliveries: financeFilteredDeliveries,
+      deliveries: pdfFilteredDeliveries,
       establishments,
-      periodLabel: financeBounds.label,
-      startDate: financeBounds.start,
-      endDate: financeBounds.end,
+      periodLabel: pdfBounds.label,
+      startDate: pdfBounds.start,
+      endDate: pdfBounds.end,
       onlyWithDeliveries: pdfOnlyWithDeliveries,
       includeOrderNumbers: pdfIncludeOrderNumbers
     });
@@ -1395,13 +1473,26 @@ export default function AdminDashboard() {
   };
 
   const handleExportIndividualPdf = (rider: User) => {
+    let bounds = financeBounds;
+    if (activeTab === 'reports' && reportPeriod === 'custom' && customStartDate && customEndDate) {
+      bounds = {
+        start: customStartDate,
+        end: customEndDate,
+        label: `De ${new Date(customStartDate + 'T00:00:00').toLocaleDateString('pt-BR')} até ${new Date(customEndDate + 'T00:00:00').toLocaleDateString('pt-BR')}`
+      };
+    } else if (activeTab === 'reports' && reportPeriod === 'daily') {
+      bounds = { start: todayStr, end: todayStr, label: 'Hoje' };
+    }
+
+    const filteredForRider = deliveries.filter(d => d.status === 'active' && d.date >= bounds.start && d.date <= bounds.end);
+
     generateIndividualRiderEarningsPdf({
       rider,
-      deliveries: financeFilteredDeliveries,
+      deliveries: filteredForRider,
       establishments,
-      periodLabel: financeBounds.label,
-      startDate: financeBounds.start,
-      endDate: financeBounds.end
+      periodLabel: bounds.label,
+      startDate: bounds.start,
+      endDate: bounds.end
     });
   };
 
@@ -3418,7 +3509,7 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* MODAL DE CONFIGURAÇÃO DE EXPORTAÇÃO PDF */}
+      {/* MODAL DE CONFIGURAÇÃO DE EXPORTAÇÃO PDF COM SELETOR COMPLETO DE DATAS */}
       {showPdfExportModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto">
@@ -3429,7 +3520,7 @@ export default function AdminDashboard() {
                 </div>
                 <div>
                   <h3 className="text-base font-extrabold text-slate-800">Exportar Relatório PDF Consolidado</h3>
-                  <p className="text-xs text-slate-500">Selecione o filtro e os motoboys para compor o documento</p>
+                  <p className="text-xs text-slate-500">Selecione o período, filtros e motoboys para compor o documento</p>
                 </div>
               </div>
               <button 
@@ -3441,9 +3532,101 @@ export default function AdminDashboard() {
             </div>
 
             <div className="space-y-4 text-xs">
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <span className="font-bold text-slate-500 uppercase text-[10px] block mb-1">Período Selecionado:</span>
-                <span className="font-extrabold text-indigo-900 text-sm">{financeBounds.label}</span>
+              
+              {/* SELETOR INTERATIVO DE PERÍODO DENTRO DO MODAL */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-extrabold text-slate-700 uppercase text-[10px] flex items-center gap-1">
+                    <Calendar className="h-3.5 w-3.5 text-indigo-600" />
+                    <span>Período do Relatório:</span>
+                  </span>
+                  <span className="font-extrabold text-indigo-900 text-xs">{pdfBounds.label}</span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setPdfPeriodMode('this_week')}
+                    className={`py-1.5 rounded-xl text-[11px] font-black transition-all border ${
+                      pdfPeriodMode === 'this_week' 
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    Esta Semana
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPdfPeriodMode('last_week')}
+                    className={`py-1.5 rounded-xl text-[11px] font-black transition-all border ${
+                      pdfPeriodMode === 'last_week' 
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    Semana Passada
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPdfPeriodMode('today')}
+                    className={`py-1.5 rounded-xl text-[11px] font-black transition-all border ${
+                      pdfPeriodMode === 'today' 
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    Hoje
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPdfPeriodMode('this_month')}
+                    className={`py-1.5 rounded-xl text-[11px] font-black transition-all border ${
+                      pdfPeriodMode === 'this_month' 
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    Este Mês
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPdfPeriodMode('custom')}
+                    className={`py-1.5 rounded-xl text-[11px] font-black transition-all border ${
+                      pdfPeriodMode === 'custom' 
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    Personalizado
+                  </button>
+                </div>
+
+                {pdfPeriodMode === 'custom' && (
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-200/60 animate-fadeIn">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data Inicial</label>
+                      <input
+                        type="date"
+                        value={pdfCustomFrom}
+                        onChange={(e) => setPdfCustomFrom(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data Final</label>
+                      <input
+                        type="date"
+                        value={pdfCustomTo}
+                        onChange={(e) => setPdfCustomTo(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Opções de Checkbox */}
@@ -3502,7 +3685,7 @@ export default function AdminDashboard() {
                 <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-xl p-2 space-y-1 bg-slate-50/40">
                   {users.filter(u => u.role === 'rider').map(rider => {
                     const isChecked = pdfSelectedRiderIds.includes(rider.id);
-                    const delCount = financeFilteredDeliveries.filter(d => d.riderId === rider.id).length;
+                    const delCount = pdfFilteredDeliveries.filter(d => d.riderId === rider.id).length;
 
                     return (
                       <div
