@@ -48,7 +48,7 @@ export const generateGeneralRidersEarningsPdf = ({
     return activeDeliveries.some(d => d.riderId === r.id);
   });
 
-  // Totais Gerais
+  // Totais Gerais Consolidados
   const relevantDeliveries = activeDeliveries.filter(d => targetRiders.some(r => r.id === d.riderId));
   const totalGross = relevantDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
   const totalAdminCut = relevantDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
@@ -63,68 +63,77 @@ export const generateGeneralRidersEarningsPdf = ({
   const totalStandardCount = totalStandardDeliveries.length;
   const totalStandardValue = totalStandardDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
 
-  // Cabeçalho Paisagem
+  // 1. Cabeçalho Superior
   doc.setFillColor(15, 23, 42); // slate-900
-  doc.rect(0, 0, 297, 28, 'F');
+  doc.rect(0, 0, 297, 27, 'F');
 
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
-  doc.text('MOTOHUB DELIVERY - RELATÓRIO CONSOLIDADO DE FECHAMENTO', 14, 12);
+  doc.setFontSize(15);
+  doc.text('MOTOHUB DELIVERY — FECHAMENTO GERAL DE REPASSES', 14, 11);
 
-  doc.setFontSize(9);
+  doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(203, 213, 225);
-  doc.text(`Período de Apuração: ${periodLabel} | Gerado em: ${nowStr} | Entregadores Selecionados: ${targetRiders.length}`, 14, 19);
+  doc.text(`Período de Apuração: ${periodLabel}  |  Gerado em: ${nowStr}  |  Entregadores Listados: ${targetRiders.length}`, 14, 18);
+  doc.text('Regra: Corridas Padrão (R$ 8) possuem Taxa Adm de R$ 1,00 | Corridas no Mesmo Endereço (R$ 4) são 100% Isentas.', 14, 23);
 
-  // Bloco de Resumo em Cards
+  // 2. Bloco Resumo Superior (Destaque para Valor Bruto vs Valor Líquido)
   doc.setFillColor(248, 250, 252);
-  doc.roundedRect(14, 33, 269, 20, 2.5, 2.5, 'F');
+  doc.roundedRect(14, 31, 269, 21, 2.5, 2.5, 'F');
   doc.setDrawColor(226, 232, 240);
-  doc.roundedRect(14, 33, 269, 20, 2.5, 2.5, 'S');
+  doc.roundedRect(14, 31, 269, 21, 2.5, 2.5, 'S');
 
-  doc.setFontSize(7.5);
+  doc.setFontSize(7);
   doc.setTextColor(100, 116, 139);
-  doc.text('TOTAL CORRIDAS', 20, 39);
-  doc.text('PADRÃO (R$ 8,00)', 62, 39);
-  doc.text('MESMO END. (R$ 4,00)', 110, 39);
-  doc.text('+ ADICIONAIS', 160, 39);
-  doc.text('TAXA ADM (R$ 1,00)', 205, 39);
-  doc.text('LÍQUIDO A REPASSAR', 250, 39);
+  doc.setFont('helvetica', 'bold');
+  doc.text('TOTAL CORRIDAS', 18, 37);
+  doc.text('PADRÃO (R$ 8,00)', 52, 37);
+  doc.text('MESMO END. (R$ 4,00)', 92, 37);
+  doc.text('+ ADICIONAIS', 136, 37);
+  doc.text('VALOR BRUTO TOTAL', 174, 37);
+  doc.text('TAXA ADM (- R$ 1)', 214, 37);
+  doc.text('VALOR LÍQUIDO MOTOBOYS', 248, 37);
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10.5);
+  doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
-  doc.text(`${relevantDeliveries.length}`, 20, 47);
+  doc.text(`${relevantDeliveries.length}`, 18, 45);
 
   doc.setTextColor(30, 41, 59);
-  doc.text(`${totalStandardCount} (R$ ${totalStandardValue.toFixed(2)})`, 62, 47);
+  doc.text(`${totalStandardCount} (R$ ${totalStandardValue.toFixed(2)})`, 52, 45);
 
   doc.setTextColor(126, 34, 206);
-  doc.text(`${totalSameAddressCount} (R$ ${totalSameAddressValue.toFixed(2)})`, 110, 47);
+  doc.text(`${totalSameAddressCount} (R$ ${totalSameAddressValue.toFixed(2)})`, 92, 45);
 
   doc.setTextColor(180, 83, 9);
-  doc.text(`R$ ${totalAdditionals.toFixed(2)}`, 160, 47);
+  doc.text(`R$ ${totalAdditionals.toFixed(2)}`, 136, 45);
 
-  doc.setTextColor(185, 28, 28);
-  doc.text(`R$ ${totalAdminCut.toFixed(2)}`, 205, 47);
+  // Destaque do Bruto
+  doc.setTextColor(30, 58, 138); // blue-900
+  doc.text(`R$ ${totalGross.toFixed(2)}`, 174, 45);
 
-  doc.setTextColor(5, 150, 105);
-  doc.text(`R$ ${totalRidersNet.toFixed(2)}`, 250, 47);
+  // Destaque da Taxa
+  doc.setTextColor(185, 28, 28); // red-700
+  doc.text(`- R$ ${totalAdminCut.toFixed(2)}`, 214, 45);
 
-  // Tabela Consolidada com ou sem coluna de números dos pedidos
+  // Destaque do Líquido
+  doc.setTextColor(5, 150, 105); // emerald-600
+  doc.text(`R$ ${totalRidersNet.toFixed(2)}`, 248, 45);
+
+  // 3. Tabela Consolidada com Colunas de Bruto e Líquido Bem Evidenciadas
   const headers = [
     '#',
     'Entregador (Motoboy)',
     'Telefone / CPF',
-    'Total',
-    ...(includeOrderNumbers ? ['Nº Pedidos / Corridas'] : []),
+    'Qtd',
+    ...(includeOrderNumbers ? ['Nº Pedidos'] : []),
     'Padrão (R$ 8)',
     'Mesmo End. (R$ 4)',
     '+ Adicionais',
-    'Bruto Total',
-    'Taxa Adm (R$ 1)',
-    'Líquido Motoboy',
+    'VALOR BRUTO',
+    'TAXA ADM',
+    'LÍQUIDO MOTOBOY',
     'Status'
   ];
 
@@ -173,33 +182,33 @@ export const generateGeneralRidersEarningsPdf = ({
 
   const columnStylesConfig: any = includeOrderNumbers ? {
     0: { halign: 'center', cellWidth: 7 },
-    1: { fontStyle: 'bold', halign: 'left', cellWidth: 36 },
-    2: { halign: 'center', cellWidth: 24 },
-    3: { halign: 'center', fontStyle: 'bold', cellWidth: 12 },
+    1: { fontStyle: 'bold', halign: 'left', cellWidth: 35 },
+    2: { halign: 'center', cellWidth: 23 },
+    3: { halign: 'center', fontStyle: 'bold', cellWidth: 10 },
     4: { halign: 'left', cellWidth: 42, fontStyle: 'normal', textColor: [71, 85, 105] }, // Nº Pedidos
     5: { halign: 'center', cellWidth: 26 },
     6: { halign: 'center', textColor: [126, 34, 206], cellWidth: 26 },
     7: { halign: 'right', textColor: [180, 83, 9], cellWidth: 18 },
-    8: { halign: 'right', fontStyle: 'bold', cellWidth: 22 },
-    9: { halign: 'right', textColor: [185, 28, 28], cellWidth: 18 },
-    10: { halign: 'right', fontStyle: 'bold', textColor: [5, 150, 105], cellWidth: 20 },
-    11: { halign: 'center', fontStyle: 'bold', cellWidth: 18 }
+    8: { halign: 'right', fontStyle: 'bold', textColor: [30, 58, 138], cellWidth: 23 }, // Bruto
+    9: { halign: 'right', textColor: [185, 28, 28], cellWidth: 18 }, // Taxa
+    10: { halign: 'right', fontStyle: 'bold', textColor: [5, 150, 105], cellWidth: 24 }, // Líquido
+    11: { halign: 'center', fontStyle: 'bold', cellWidth: 17 }
   } : {
     0: { halign: 'center', cellWidth: 8 },
-    1: { fontStyle: 'bold', halign: 'left', cellWidth: 46 },
+    1: { fontStyle: 'bold', halign: 'left', cellWidth: 45 },
     2: { halign: 'center', cellWidth: 28 },
-    3: { halign: 'center', fontStyle: 'bold', cellWidth: 14 },
+    3: { halign: 'center', fontStyle: 'bold', cellWidth: 12 },
     4: { halign: 'center', cellWidth: 32 },
     5: { halign: 'center', textColor: [126, 34, 206], cellWidth: 32 },
     6: { halign: 'right', textColor: [180, 83, 9], cellWidth: 22 },
-    7: { halign: 'right', fontStyle: 'bold', cellWidth: 24 },
-    8: { halign: 'right', textColor: [185, 28, 28], cellWidth: 22 },
-    9: { halign: 'right', fontStyle: 'bold', textColor: [5, 150, 105], cellWidth: 26 },
-    10: { halign: 'center', fontStyle: 'bold', cellWidth: 21 }
+    7: { halign: 'right', fontStyle: 'bold', textColor: [30, 58, 138], cellWidth: 25 }, // Bruto
+    8: { halign: 'right', textColor: [185, 28, 28], cellWidth: 20 }, // Taxa
+    9: { halign: 'right', fontStyle: 'bold', textColor: [5, 150, 105], cellWidth: 26 }, // Líquido
+    10: { halign: 'center', fontStyle: 'bold', cellWidth: 19 }
   };
 
   autoTable(doc, {
-    startY: 57,
+    startY: 55,
     head: [headers],
     body: tableData as any,
     theme: 'grid',
@@ -221,19 +230,20 @@ export const generateGeneralRidersEarningsPdf = ({
   });
 
   // Linha final com totais consolidados
-  const finalY = (doc as any).lastAutoTable.finalY + 8;
+  const finalY = (doc as any).lastAutoTable.finalY + 7;
   if (finalY < 185) {
     doc.setFillColor(241, 245, 249);
-    doc.rect(14, finalY, 269, 9, 'F');
+    doc.rect(14, finalY, 269, 10, 'F');
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8.5);
     doc.setTextColor(15, 23, 42);
-    doc.text(`TOTAL GERAL ACUMULADO (${relevantDeliveries.length} corridas):`, 18, finalY + 6);
-    doc.text(`Bruto: R$ ${totalGross.toFixed(2)}`, 140, finalY + 6);
+    doc.text(`TOTAL GERAL ACUMULADO (${relevantDeliveries.length} corridas):`, 18, finalY + 6.5);
+    doc.setTextColor(30, 58, 138);
+    doc.text(`VALOR BRUTO: R$ ${totalGross.toFixed(2)}`, 132, finalY + 6.5);
     doc.setTextColor(185, 28, 28);
-    doc.text(`Taxa Adm: R$ ${totalAdminCut.toFixed(2)}`, 190, finalY + 6);
+    doc.text(`TAXA ADM: - R$ ${totalAdminCut.toFixed(2)}`, 185, finalY + 6.5);
     doc.setTextColor(5, 150, 105);
-    doc.text(`Líquido a Pagar: R$ ${totalRidersNet.toFixed(2)}`, 235, finalY + 6);
+    doc.text(`VALOR LÍQUIDO (A PAGAR): R$ ${totalRidersNet.toFixed(2)}`, 230, finalY + 6.5);
   }
 
   // Rodapé com numeração de página
@@ -243,7 +253,7 @@ export const generateGeneralRidersEarningsPdf = ({
     doc.setFontSize(8);
     doc.setTextColor(148, 163, 184);
     doc.text(
-      `MotoHub Delivery - Página ${i} de ${pageCount} | Documento Oficial de Fechamento Financeiro`,
+      `MotoHub Delivery — Página ${i} de ${pageCount} | Documento Oficial de Fechamento Financeiro`,
       14,
       doc.internal.pageSize.height - 8
     );
@@ -302,22 +312,23 @@ export const generateIndividualRiderEarningsPdf = ({
   doc.text(`CPF: ${rider.cpf || 'Não informado'} | Telefone: ${rider.phone || 'Não informado'} | Período: ${periodLabel}`, 14, 28);
   doc.text(`Gerado em: ${nowStr}`, 14, 33);
 
-  // Caixa de Resumo de 6 Métricas
+  // Caixa de Resumo de Métricas (Bruto, Taxa Adm e Líquido)
   doc.setFillColor(248, 250, 252);
-  doc.roundedRect(14, 40, 182, 28, 3, 3, 'F');
+  doc.roundedRect(14, 40, 182, 30, 3, 3, 'F');
   doc.setDrawColor(226, 232, 240);
-  doc.roundedRect(14, 40, 182, 28, 3, 3, 'S');
+  doc.roundedRect(14, 40, 182, 30, 3, 3, 'S');
 
-  doc.setFontSize(7.5);
+  doc.setFontSize(7);
   doc.setTextColor(100, 116, 139);
+  doc.setFont('helvetica', 'bold');
   doc.text('TOTAL CORRIDAS', 18, 46);
   doc.text('PADRÃO (R$ 8,00)', 52, 46);
   doc.text('MESMO END. (R$ 4,00)', 88, 46);
-  doc.text('+ ADICIONAIS', 124, 46);
-  doc.text('TAXA ADM (R$ 1)', 154, 46);
+  doc.text('+ ADICIONAIS', 126, 46);
+  doc.text('TAXA ADM (- R$ 1)', 158, 46);
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10.5);
+  doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
   doc.text(`${activeDeliveries.length}`, 18, 54);
 
@@ -328,20 +339,20 @@ export const generateIndividualRiderEarningsPdf = ({
   doc.text(`${sameAddressCount} (R$ ${sameAddressTotal.toFixed(2)})`, 88, 54);
 
   doc.setTextColor(180, 83, 9);
-  doc.text(`R$ ${totalAdditionals.toFixed(2)}`, 124, 54);
+  doc.text(`R$ ${totalAdditionals.toFixed(2)}`, 126, 54);
 
   doc.setTextColor(185, 28, 28);
-  doc.text(`- R$ ${totalAdminCut.toFixed(2)}`, 154, 54);
+  doc.text(`- R$ ${totalAdminCut.toFixed(2)}`, 158, 54);
 
-  // Linha inferior do resumo: Bruto Total vs Líquido Final a Receber
+  // Linha inferior do resumo com Valor Bruto e Valor Líquido em evidência
   doc.setFillColor(241, 245, 249);
-  doc.rect(14, 60, 182, 8, 'F');
-  doc.setFontSize(8.5);
-  doc.setTextColor(15, 23, 42);
-  doc.text(`Bruto Total: R$ ${totalGross.toFixed(2)}`, 18, 65.5);
+  doc.rect(14, 60, 182, 10, 'F');
+  doc.setFontSize(9);
+  doc.setTextColor(30, 58, 138); // blue-900
+  doc.text(`VALOR BRUTO TOTAL: R$ ${totalGross.toFixed(2)}`, 18, 66.5);
 
-  doc.setTextColor(5, 150, 105);
-  doc.text(`VALOR LÍQUIDO A RECEBER: R$ ${totalRiderNet.toFixed(2)}`, 105, 65.5);
+  doc.setTextColor(5, 150, 105); // emerald-600
+  doc.text(`VALOR LÍQUIDO A RECEBER (MOTOBOY): R$ ${totalRiderNet.toFixed(2)}`, 95, 66.5);
 
   // Tabela detalhada de corridas
   const tableData = activeDeliveries.map((del, idx) => {
@@ -380,7 +391,7 @@ export const generateIndividualRiderEarningsPdf = ({
   });
 
   autoTable(doc, {
-    startY: 72,
+    startY: 74,
     head: [[
       '#',
       'Data/Hora',
@@ -388,9 +399,9 @@ export const generateIndividualRiderEarningsPdf = ({
       'Estabelecimento',
       'Tipo de Corrida & Adicional',
       'Pag. Cliente',
-      'Bruto',
-      'Taxa Adm',
-      'Líquido',
+      'VALOR BRUTO',
+      'TAXA ADM',
+      'VALOR LÍQUIDO',
       'Status'
     ]],
     body: tableData as any,
@@ -408,14 +419,14 @@ export const generateIndividualRiderEarningsPdf = ({
     },
     columnStyles: {
       0: { halign: 'center', cellWidth: 8 },
-      1: { halign: 'center', cellWidth: 26 },
-      2: { halign: 'center', fontStyle: 'bold', cellWidth: 18 },
+      1: { halign: 'center', cellWidth: 25 },
+      2: { halign: 'center', fontStyle: 'bold', cellWidth: 17 },
       3: { halign: 'left', cellWidth: 35 },
       4: { halign: 'left', cellWidth: 35 },
-      5: { halign: 'center', cellWidth: 18 },
-      6: { halign: 'right', cellWidth: 15 },
+      5: { halign: 'center', cellWidth: 16 },
+      6: { halign: 'right', fontStyle: 'bold', textColor: [30, 58, 138], cellWidth: 16 },
       7: { halign: 'right', textColor: [185, 28, 28], cellWidth: 13 },
-      8: { halign: 'right', fontStyle: 'bold', textColor: [5, 150, 105], cellWidth: 16 },
+      8: { halign: 'right', fontStyle: 'bold', textColor: [5, 150, 105], cellWidth: 17 },
       9: { halign: 'center', fontStyle: 'bold', cellWidth: 14 }
     },
     alternateRowStyles: {
@@ -443,7 +454,7 @@ export const generateIndividualRiderEarningsPdf = ({
     doc.setFontSize(8);
     doc.setTextColor(148, 163, 184);
     doc.text(
-      `Extrato de Acerto - ${rider.name} | MotoHub Delivery | Página ${i} de ${pageCount}`,
+      `Extrato de Acerto — ${rider.name} | MotoHub Delivery | Página ${i} de ${pageCount}`,
       14,
       doc.internal.pageSize.height - 8
     );
