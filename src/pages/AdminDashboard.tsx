@@ -1331,6 +1331,7 @@ export default function AdminDashboard() {
         summary[r.id] = { 
           id: r.id, 
           name: r.name, 
+          active: r.active,
           phone: r.phone,
           cpf: r.cpf,
           total: 0, 
@@ -1374,7 +1375,7 @@ export default function AdminDashboard() {
       return Object.values(summary);
     } else if (reportType === 'deliveries') {
       const summary: any = {};
-      riders.forEach(r => { summary[r.id] = { id: r.id, name: r.name, count: 0, cancelled: 0 }; });
+      riders.forEach(r => { summary[r.id] = { id: r.id, name: r.name, active: r.active, count: 0, cancelled: 0 }; });
       deliveries.forEach(d => {
         const dDate = new Date(d.date + 'T00:00:00');
         if (dDate >= start && dDate <= end && summary[d.riderId]) {
@@ -1401,13 +1402,13 @@ export default function AdminDashboard() {
     const data = getFilteredReportData();
     let csvContent = "data:text/csv;charset=utf-8,";
     if (reportType === 'earnings') {
-      csvContent += "Motoboy,Total Corridas,Corridas Padrao (R$ 8),Corridas Mesmo End (R$ 4),Adicionais (R$),Bruto Total (R$),Taxa Adm (R$ 1),Liquido Motoboy (R$)\n";
+      csvContent += "Motoboy,Status,Total Corridas,Corridas Padrao (R$ 8),Corridas Mesmo End (R$ 4),Adicionais (R$),Bruto Total (R$),Taxa Adm (R$ 1),Liquido Motoboy (R$)\n";
       data.forEach((row: any) => { 
-        csvContent += `"${row.name}",${row.count},"${row.stdCount} (R$ ${row.stdTotal.toFixed(2)})","${row.sameAddrCount} (R$ ${row.sameAddrTotal.toFixed(2)})",${row.additionalsTotal.toFixed(2)},${row.total.toFixed(2)},${row.adminCut.toFixed(2)},${row.net.toFixed(2)}\n`; 
+        csvContent += `"${row.name} ${!row.active ? '(Inativo)' : ''}","${row.active ? 'Ativo' : 'Inativo'}",${row.count},"${row.stdCount} (R$ ${row.stdTotal.toFixed(2)})","${row.sameAddrCount} (R$ ${row.sameAddrTotal.toFixed(2)})",${row.additionalsTotal.toFixed(2)},${row.total.toFixed(2)},${row.adminCut.toFixed(2)},${row.net.toFixed(2)}\n`; 
       });
     } else if (reportType === 'deliveries') {
-      csvContent += "Motoboy,Corridas Ativas,Corridas Canceladas\n";
-      data.forEach((row: any) => { csvContent += `"${row.name}",${row.count},${row.cancelled}\n`; });
+      csvContent += "Motoboy,Status,Corridas Ativas,Corridas Canceladas\n";
+      data.forEach((row: any) => { csvContent += `"${row.name} ${!row.active ? '(Inativo)' : ''}","${row.active ? 'Ativo' : 'Inativo'}",${row.count},${row.cancelled}\n`; });
     } else {
       csvContent += "Estabelecimento,Total de Escalas\n";
       data.forEach((row: any) => { csvContent += `"${row.name}",${row.count}\n`; });
@@ -2372,7 +2373,9 @@ export default function AdminDashboard() {
                     >
                       <option value="all">Todos os Motoboys</option>
                       {users.filter(u => u.role === 'rider').map(r => (
-                        <option key={r.id} value={r.id}>{r.name}</option>
+                        <option key={r.id} value={r.id}>
+                          {r.name} {!r.active ? '(Inativo)' : ''}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -2476,7 +2479,7 @@ export default function AdminDashboard() {
                               </span>
                             )}
                             <p className="font-extrabold text-slate-800 text-sm">
-                              {rider?.name || 'Motoboy'} 
+                              {rider?.name || 'Motoboy'} {!rider?.active ? '(Inativo)' : ''}
                               <span className="text-slate-400 font-normal"> em </span> 
                               <span className="text-indigo-600">{est?.name || 'Estabelecimento'}</span>
                             </p>
@@ -2740,7 +2743,9 @@ export default function AdminDashboard() {
                     >
                       <option value="all">Todos os Motoboys</option>
                       {users.filter(u => u.role === 'rider').map(r => (
-                        <option key={r.id} value={r.id}>{r.name}</option>
+                        <option key={r.id} value={r.id}>
+                          {r.name} {!r.active ? '(Inativo)' : ''}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -2840,7 +2845,9 @@ export default function AdminDashboard() {
                                   #{del.orderNumber}
                                 </span>
                               )}
-                              <p className="font-extrabold text-slate-800 text-sm">{rider?.name || 'Motoboy'}</p>
+                              <p className="font-extrabold text-slate-800 text-sm">
+                                {rider?.name || 'Motoboy'} {!rider?.active ? '(Inativo)' : ''}
+                              </p>
                               <span className="text-xs text-slate-500 font-medium">• {est?.name || 'Estabelecimento'}</span>
                               
                               {/* Badge de Repetição do mesmo número de pedido */}
@@ -3255,7 +3262,7 @@ export default function AdminDashboard() {
                         return (
                           <div key={rider.id} className="space-y-2">
                             <RiderFinancialMetricsCard
-                              riderName={rider.name}
+                              riderName={rider.name + (!rider.active ? ' (Inativo)' : '')}
                               riderPhone={rider.phone}
                               deliveries={riderDeliveries}
                               isPaid={allPaid}
@@ -3435,9 +3442,11 @@ export default function AdminDashboard() {
                     onChange={(e) => setSelectedReportRiderId(e.target.value)} 
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs font-semibold"
                   >
-                    <option value="all">Todos os Motoboys</option>
+                    <option value="all">Todos os Motoboys (Ativos e Inativos)</option>
                     {users.filter(u => u.role === 'rider').map(r => (
-                      <option key={r.id} value={r.id}>{r.name}</option>
+                      <option key={r.id} value={r.id}>
+                        {r.name} {!r.active ? '(Inativo)' : ''}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -3473,7 +3482,16 @@ export default function AdminDashboard() {
 
                         return (
                           <tr key={idx} className="hover:bg-slate-50/70">
-                            <td className="p-3 font-semibold text-slate-800">{row.name}</td>
+                            <td className="p-3 font-semibold text-slate-800">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span>{row.name}</span>
+                                {!row.active && (
+                                  <span className="text-[9px] font-bold text-red-600 bg-red-50 border border-red-200 px-1.5 py-0.2 rounded-full uppercase">
+                                    Inativo
+                                  </span>
+                                )}
+                              </div>
+                            </td>
                             {reportType === 'earnings' && (
                               <>
                                 <td className="p-3 text-center font-bold text-slate-700">{row.stdCount || 0} (R$ {Number(row.stdTotal || 0).toFixed(2)})</td>
@@ -3702,6 +3720,11 @@ export default function AdminDashboard() {
                         <div className="flex items-center space-x-2 min-w-0">
                           {isChecked ? <CheckSquare className="h-4 w-4 text-indigo-600 flex-shrink-0" /> : <Square className="h-4 w-4 text-slate-400 flex-shrink-0" />}
                           <span className="truncate">{rider.name}</span>
+                          {!rider.active && (
+                            <span className="text-[9px] font-bold text-red-600 bg-red-50 border border-red-200 px-1.5 py-0.2 rounded-full uppercase flex-shrink-0">
+                              Inativo
+                            </span>
+                          )}
                         </div>
                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold flex-shrink-0 ${
                           delCount > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'
