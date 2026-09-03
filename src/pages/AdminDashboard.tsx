@@ -53,7 +53,9 @@ import {
   Copy, 
   UploadCloud, 
   Loader2,
-  FileSpreadsheet
+  FileSpreadsheet,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 
 import L from 'leaflet';
@@ -172,6 +174,11 @@ export default function AdminDashboard() {
   const [financeRiderSearch, setFinanceRiderSearch] = useState<string>('');
   const [financeEstSearch, setFinanceEstSearch] = useState<string>('');
   const [financeActiveSection, setFinanceActiveSection] = useState<'riders' | 'establishments'>('riders');
+
+  // Filtros Avançados de Exportação de Relatório PDF
+  const [pdfOnlyWithDeliveries, setPdfOnlyWithDeliveries] = useState<boolean>(true);
+  const [pdfSelectedRiderIds, setPdfSelectedRiderIds] = useState<string[]>([]);
+  const [showPdfExportModal, setShowPdfExportModal] = useState<boolean>(false);
 
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
 
@@ -1177,7 +1184,6 @@ export default function AdminDashboard() {
       return false;
     }
 
-    // Filtro de cobrança no fechamento
     if (financePaymentFilter === 'to_collect' && (!d.paymentMethod || d.paymentMethod === 'already_paid')) return false;
     if (financePaymentFilter === 'money' && d.paymentMethod !== 'money') return false;
     if (financePaymentFilter === 'card' && d.paymentMethod !== 'card_debit' && d.paymentMethod !== 'card_credit') return false;
@@ -1235,7 +1241,6 @@ export default function AdminDashboard() {
 
   const totalFinanceGrossRevenue = financeFilteredDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
   const totalFinanceDeliveriesCount = financeFilteredDeliveries.length;
-  // Corridas de mesmo endereço (R$ 4,00) são 100% isentas da taxa administrativa
   const totalFinanceAdminCommission = financeFilteredDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
   const totalFinanceRidersNet = Math.max(0, totalFinanceGrossRevenue - totalFinanceAdminCommission);
 
@@ -1261,14 +1266,50 @@ export default function AdminDashboard() {
     const riders = users.filter(u => u.role === 'rider');
     if (reportType === 'earnings') {
       const summary: any = {};
-      riders.forEach(r => { summary[r.id] = { id: r.id, name: r.name, total: 0, count: 0 }; });
+      riders.forEach(r => { 
+        summary[r.id] = { 
+          id: r.id, 
+          name: r.name, 
+          phone: r.phone,
+          cpf: r.cpf,
+          total: 0, 
+          count: 0,
+          stdCount: 0,
+          stdTotal: 0,
+          sameAddrCount: 0,
+          sameAddrTotal: 0,
+          additionalsTotal: 0,
+          adminCut: 0,
+          net: 0
+        }; 
+      });
       deliveries.filter(d => d.status === 'active').forEach(d => {
         const dDate = new Date(d.date + 'T00:00:00');
         if (dDate >= start && dDate <= end && summary[d.riderId]) {
-          summary[d.riderId].total += d.value;
+          const val = Number(d.value || 0);
+          const add = Number(d.additionalValue || 0);
+          const isSame = d.deliveryType === 'same_address' || val <= 4.00;
+          const fee = getAdminFeeForDelivery(d);
+
+          summary[d.riderId].total += val;
           summary[d.riderId].count += 1;
+          summary[d.riderId].additionalsTotal += add;
+          summary[d.riderId].adminCut += fee;
+
+          if (isSame) {
+            summary[d.riderId].sameAddrCount += 1;
+            summary[d.riderId].sameAddrTotal += val;
+          } else {
+            summary[d.riderId].stdCount += 1;
+            summary[d.riderId].stdTotal += val;
+          }
         }
       });
+
+      Object.values(summary).forEach((item: any) => {
+        item.net = Math.max(0, item.total - item.adminCut);
+      });
+
       return Object.values(summary);
     } else if (reportType === 'deliveries') {
       const summary: any = {};
@@ -1299,8 +1340,10 @@ export default function AdminDashboard() {
     const data = getFilteredReportData();
     let csvContent = "data:text/csv;charset=utf-8,";
     if (reportType === 'earnings') {
-      csvContent += "Motoboy,Total Faturado (R$),Quantidade de Corridas\n";
-      data.forEach((row: any) => { csvContent += `"${row.name}",${row.total.toFixed(2)},${row.count}\n`; });
+      csvContent += "Motoboy,Total Corridas,Corridas Padrao (R$ 8),Corridas Mesmo End (R$ 4),Adicionais (R$),Bruto Total (R$),Taxa Adm (R$ 1),Liquido Motoboy (R$)\n";
+      data.forEach((row: any) => { 
+        csvContent += `"${row.name}",${row.count},"${row.stdCount} (R$ ${row.stdTotal.toFixed(2)})","${row.sameAddrCount} (R$ ${row.sameAddrTotal.toFixed(2)})",${row.additionalsTotal.toFixed(2)},${row.total.toFixed(2)},${row.adminCut.toFixed(2)},${row.net.toFixed(2)}\n`; 
+      });
     } else if (reportType === 'deliveries') {
       csvContent += "Motoboy,Corridas Ativas,Corridas Canceladas\n";
       data.forEach((row: any) => { csvContent += `"${row.name}",${row.count},${row.cancelled}\n`; });
@@ -1317,16 +1360,33 @@ export default function AdminDashboard() {
     document.body.removeChild(link);
   };
 
-  const handleExportGeneralPdf = () => {
-    const activeRiders = users.filter(u => u.role === 'rider');
+  const handleOpenPdfExportModal = () => {
+    const allRiders = users.filter(u => u.role === 'rider');
+    setPdfSelectedRiderIds(allRiders.map(r => r.id));
+    setPdfOnlyWithDeliveries(true);
+    setShowPdfExportModal(true);
+  };
+
+  const handleExecutePdfExport = () => {
+    const allRiders = users.filter(u => u.role === 'rider');
+    const selectedRiders = allRiders.filter(r => pdfSelectedRiderIds.includes(r.id));
+
+    if (selectedRiders.length === 0) {
+      alert('Selecione pelo menos um motoboy para gerar o relatório PDF.');
+      return;
+    }
+
     generateGeneralRidersEarningsPdf({
-      riders: activeRiders,
+      riders: selectedRiders,
       deliveries: financeFilteredDeliveries,
       establishments,
       periodLabel: financeBounds.label,
       startDate: financeBounds.start,
-      endDate: financeBounds.end
+      endDate: financeBounds.end,
+      onlyWithDeliveries: pdfOnlyWithDeliveries
     });
+
+    setShowPdfExportModal(false);
   };
 
   const handleExportIndividualPdf = (rider: User) => {
@@ -2842,9 +2902,9 @@ export default function AdminDashboard() {
 
                 <div className="flex items-center gap-2 flex-wrap">
                   <button
-                    onClick={handleExportGeneralPdf}
+                    onClick={handleOpenPdfExportModal}
                     className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-md"
-                    title="Baixar Relatório Geral Consolidado em PDF de Todos os Motoboys"
+                    title="Configurar e Baixar Relatório Geral Consolidado em PDF"
                   >
                     <Download className="h-4 w-4" />
                     <span>Exportar PDF Consolidado</span>
@@ -3232,16 +3292,16 @@ export default function AdminDashboard() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h2 className="text-xl font-bold text-slate-800">Relatórios Gerenciais</h2>
-                  <p className="text-xs text-slate-500 mt-0.5">Exporte relatórios consolidados em formato PDF ou planilha CSV</p>
+                  <p className="text-xs text-slate-500 mt-0.5">Exporte relatórios consolidados em formato PDF com corridas R$8, R$4 e adicionais discriminados</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button 
-                    onClick={handleExportGeneralPdf}
+                    onClick={handleOpenPdfExportModal}
                     className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-black transition-all shadow-md"
                     title="Baixar Relatório PDF de Repasses"
                   >
                     <Download className="h-4 w-4" />
-                    <span>Baixar Relatório PDF</span>
+                    <span>Configurar e Baixar PDF</span>
                   </button>
 
                   <button 
@@ -3258,7 +3318,7 @@ export default function AdminDashboard() {
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo de Relatório</label>
                   <select value={reportType} onChange={(e) => setReportType(e.target.value as any)} className="w-full p-2 border border-slate-300 rounded-lg text-xs font-semibold">
-                    <option value="earnings">Faturamento por Motoboy</option>
+                    <option value="earnings">Faturamento por Motoboy (Completo)</option>
                     <option value="deliveries">Quantidade de Corridas por Motoboy</option>
                     <option value="schedules">Escalas por Estabelecimento</option>
                   </select>
@@ -3296,13 +3356,16 @@ export default function AdminDashboard() {
 
               <div className="overflow-x-auto border border-slate-200 rounded-xl">
                 <table className="w-full text-left text-xs text-slate-600">
-                  <thead className="bg-slate-50 font-bold uppercase border-b border-slate-200">
+                  <thead className="bg-slate-50 font-bold uppercase border-b border-slate-200 text-[10px]">
                     <tr>
                       <th className="p-3">Nome</th>
-                      {reportType === 'earnings' && <th className="p-3 text-right">Total Bruto (R$)</th>}
-                      {reportType === 'earnings' && <th className="p-3 text-right">Taxa Adm (R$ 1)</th>}
-                      {reportType === 'earnings' && <th className="p-3 text-right">Líquido Motoboy (R$)</th>}
-                      <th className="p-3 text-center">Quantidade</th>
+                      {reportType === 'earnings' && <th className="p-3 text-center">Padrão (R$8)</th>}
+                      {reportType === 'earnings' && <th className="p-3 text-center">Mesmo End. (R$4)</th>}
+                      {reportType === 'earnings' && <th className="p-3 text-right">+ Adicionais</th>}
+                      {reportType === 'earnings' && <th className="p-3 text-right">Total Bruto</th>}
+                      {reportType === 'earnings' && <th className="p-3 text-right">Taxa Adm</th>}
+                      {reportType === 'earnings' && <th className="p-3 text-right">Líquido Motoboy</th>}
+                      <th className="p-3 text-center">Corridas</th>
                       <th className="p-3 text-right">Extrato Individual</th>
                     </tr>
                   </thead>
@@ -3311,16 +3374,20 @@ export default function AdminDashboard() {
                       .filter((row: any) => selectedReportRiderId === 'all' || row.id === selectedReportRiderId)
                       .map((row: any, idx: number) => {
                         const riderObj = users.find(u => u.id === row.id);
-                        const rowDeliveries = deliveries.filter(d => d.riderId === row.id && d.status === 'active');
-                        const adminFee = rowDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
-                        const netEarnings = Math.max(0, row.total - adminFee);
 
                         return (
                           <tr key={idx} className="hover:bg-slate-50/70">
                             <td className="p-3 font-semibold text-slate-800">{row.name}</td>
-                            {reportType === 'earnings' && <td className="p-3 text-right font-bold text-slate-700">R$ {row.total.toFixed(2)}</td>}
-                            {reportType === 'earnings' && <td className="p-3 text-right font-semibold text-red-600">R$ {adminFee.toFixed(2)}</td>}
-                            {reportType === 'earnings' && <td className="p-3 text-right font-black text-emerald-600">R$ {netEarnings.toFixed(2)}</td>}
+                            {reportType === 'earnings' && (
+                              <>
+                                <td className="p-3 text-center font-bold text-slate-700">{row.stdCount || 0} (R$ {Number(row.stdTotal || 0).toFixed(2)})</td>
+                                <td className="p-3 text-center font-bold text-purple-700">{row.sameAddrCount || 0} (R$ {Number(row.sameAddrTotal || 0).toFixed(2)})</td>
+                                <td className="p-3 text-right font-bold text-amber-700">R$ {Number(row.additionalsTotal || 0).toFixed(2)}</td>
+                                <td className="p-3 text-right font-bold text-slate-900">R$ {Number(row.total || 0).toFixed(2)}</td>
+                                <td className="p-3 text-right font-semibold text-red-600">R$ {Number(row.adminCut || 0).toFixed(2)}</td>
+                                <td className="p-3 text-right font-black text-emerald-600">R$ {Number(row.net || 0).toFixed(2)}</td>
+                              </>
+                            )}
                             <td className="p-3 text-center font-bold">{row.count}</td>
                             <td className="p-3 text-right">
                               {riderObj && row.count > 0 && (
@@ -3345,6 +3412,127 @@ export default function AdminDashboard() {
           )}
         </div>
       </div>
+
+      {/* MODAL DE CONFIGURAÇÃO DE EXPORTAÇÃO PDF */}
+      {showPdfExportModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <div className="flex items-center space-x-2">
+                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
+                  <Download className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-800">Exportar Relatório PDF Consolidado</h3>
+                  <p className="text-xs text-slate-500">Selecione o filtro e os motoboys para compor o documento</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowPdfExportModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <span className="font-bold text-slate-500 uppercase text-[10px] block mb-1">Período Selecionado:</span>
+                <span className="font-extrabold text-indigo-900 text-sm">{financeBounds.label}</span>
+              </div>
+
+              {/* Opção: Apenas com corridas lançadas */}
+              <label className="flex items-center space-x-2.5 p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={pdfOnlyWithDeliveries}
+                  onChange={(e) => setPdfOnlyWithDeliveries(e.target.checked)}
+                  className="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4"
+                />
+                <span className="font-bold text-slate-800 text-xs select-none">
+                  Gerar apenas para motoboys que possuem corridas ativas no período (ocultar zerados)
+                </span>
+              </label>
+
+              {/* Seleção de Motoboys */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-700 uppercase">
+                    Selecionar Motoboys ({pdfSelectedRiderIds.length}/{users.filter(u => u.role === 'rider').length})
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => setPdfSelectedRiderIds(users.filter(u => u.role === 'rider').map(r => r.id))}
+                      className="text-indigo-600 font-bold hover:underline text-[11px]"
+                    >
+                      Marcar Todos
+                    </button>
+                    <span className="text-slate-300">•</span>
+                    <button
+                      type="button"
+                      onClick={() => setPdfSelectedRiderIds([])}
+                      className="text-slate-500 font-bold hover:underline text-[11px]"
+                    >
+                      Desmarcar
+                    </button>
+                  </div>
+                </div>
+
+                <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-xl p-2 space-y-1 bg-slate-50/40">
+                  {users.filter(u => u.role === 'rider').map(rider => {
+                    const isChecked = pdfSelectedRiderIds.includes(rider.id);
+                    const delCount = financeFilteredDeliveries.filter(d => d.riderId === rider.id).length;
+
+                    return (
+                      <div
+                        key={rider.id}
+                        onClick={() => {
+                          setPdfSelectedRiderIds(prev => 
+                            prev.includes(rider.id) ? prev.filter(id => id !== rider.id) : [...prev, rider.id]
+                          );
+                        }}
+                        className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors text-xs select-none ${
+                          isChecked ? 'bg-indigo-50 border border-indigo-200 font-bold text-indigo-950' : 'bg-white border border-slate-100 text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-2 min-w-0">
+                          {isChecked ? <CheckSquare className="h-4 w-4 text-indigo-600 flex-shrink-0" /> : <Square className="h-4 w-4 text-slate-400 flex-shrink-0" />}
+                          <span className="truncate">{rider.name}</span>
+                        </div>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold flex-shrink-0 ${
+                          delCount > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'
+                        }`}>
+                          {delCount} corrida(s)
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowPdfExportModal(false)}
+                  className="px-4 py-2 border border-slate-300 rounded-xl font-bold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecutePdfExport}
+                  disabled={pdfSelectedRiderIds.length === 0}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white rounded-xl font-black shadow-md flex items-center gap-1.5"
+                >
+                  <Download className="h-4 w-4" />
+                  <span>Gerar e Baixar PDF</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <UserModal
         isOpen={showUserModal}
