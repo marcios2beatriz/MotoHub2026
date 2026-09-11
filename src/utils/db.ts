@@ -125,6 +125,36 @@ export interface RouteHistoryItem {
   createdAt: string;
 }
 
+export interface Product {
+  id: string;
+  establishmentId: string;
+  name: string;
+  sku?: string;
+  category?: string;
+  unit?: string;
+  minStock: number;
+  currentStock: number;
+  costPrice: number;
+  salePrice: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface StockMovement {
+  id: string;
+  establishmentId: string;
+  productId: string;
+  productName?: string;
+  type: 'in' | 'out' | 'adjustment';
+  quantity: number;
+  previousStock: number;
+  newStock: number;
+  reason?: string;
+  costPrice?: number;
+  createdBy?: string;
+  createdAt?: string;
+}
+
 export function isSameDayString(d1?: string, d2?: string): boolean {
   if (!d1 || !d2) return false;
   const clean1 = d1.split('T')[0].split(' ')[0].trim();
@@ -274,6 +304,40 @@ function formatDeliveryPayload(d: Delivery) {
   };
 }
 
+function parseProductRow(p: any): Product {
+  return {
+    id: p.id,
+    establishmentId: p.establishment_id,
+    name: p.name,
+    sku: p.sku || undefined,
+    category: p.category || 'Geral',
+    unit: p.unit || 'UN',
+    minStock: Number(p.min_stock || 0),
+    currentStock: Number(p.current_stock || 0),
+    costPrice: Number(p.cost_price || 0),
+    salePrice: Number(p.sale_price || 0),
+    createdAt: p.created_at,
+    updatedAt: p.updated_at
+  };
+}
+
+function parseStockMovementRow(m: any): StockMovement {
+  return {
+    id: m.id,
+    establishmentId: m.establishment_id,
+    productId: m.product_id,
+    productName: m.product_name || undefined,
+    type: m.type,
+    quantity: Number(m.quantity || 0),
+    previousStock: Number(m.previous_stock || 0),
+    newStock: Number(m.new_stock || 0),
+    reason: m.reason || undefined,
+    costPrice: Number(m.cost_price || 0),
+    createdBy: m.created_by || undefined,
+    createdAt: m.created_at
+  };
+}
+
 // Memória local volátil em runtime (sincronizada com Supabase)
 let memoryUsers: User[] = [];
 let memoryEstablishments: Establishment[] = [];
@@ -283,6 +347,8 @@ let memoryNotifications: Notification[] = [];
 let memoryRequests: PartnerRequest[] = [];
 let memoryLocations: Record<string, RiderLocation> = {};
 let memoryRouteHistory: RouteHistoryItem[] = [];
+let memoryProducts: Product[] = [];
+let memoryStockMovements: StockMovement[] = [];
 
 const inFlightOrderLocks = new Set<string>();
 
@@ -689,6 +755,138 @@ export const db = {
     await this.pullFromSupabase();
   },
 
+  getProducts(establishmentId?: string): Product[] {
+    if (!establishmentId) return memoryProducts;
+    return memoryProducts.filter(p => this.isSameEstablishment(p.establishmentId, establishmentId));
+  },
+
+  async saveProduct(product: Product): Promise<void> {
+    const existingIdx = memoryProducts.findIndex(p => p.id === product.id);
+    const nowStr = new Date().toISOString();
+    const updatedProd: Product = {
+      ...product,
+      updatedAt: nowStr,
+      createdAt: product.createdAt || nowStr
+    };
+
+    if (existingIdx >= 0) {
+      memoryProducts[existingIdx] = updatedProd;
+    } else {
+      memoryProducts.push(updatedProd);
+    }
+
+    try {
+      await supabase.from('products').upsert({
+        id: updatedProd.id,
+        establishment_id: updatedProd.establishmentId,
+        name: updatedProd.name,
+        sku: updatedProd.sku || null,
+        category: updatedProd.category || 'Geral',
+        unit: updatedProd.unit || 'UN',
+        min_stock: updatedProd.minStock,
+        current_stock: updatedProd.currentStock,
+        cost_price: updatedProd.costPrice,
+        sale_price: updatedProd.salePrice,
+        updated_at: updatedProd.updatedAt,
+        created_at: updatedProd.createdAt
+      }, { onConflict: 'id' });
+    } catch (err) {
+      console.warn('Erro ao salvar produto no Supabase:', err);
+    }
+
+    window.dispatchEvent(new Event('db-sync-complete'));
+  },
+
+  async deleteProduct(id: string): Promise<void> {
+    memoryProducts = memoryProducts.filter(p => p.id !== id);
+    try {
+      await supabase.from('products').delete().eq('id', id);
+      await supabase.from('stock_movements').delete().eq('product_id', id);
+    } catch (err) {
+      console.warn('Erro ao excluir produto no Supabase:', err);
+    }
+    window.dispatchEvent(new Event('db-sync-complete'));
+  },
+
+  getStockMovements(establishmentId?: string, productId?: string): StockMovement[] {
+    return memoryStockMovements.filter(m => {
+      if (establishmentId && !this.isSameEstablishment(m.establishmentId, establishmentId)) return false;
+      if (productId && m.productId !== productId) return false;
+      return true;
+    });
+  },
+
+  async addStockMovement(movement: Omit<StockMovement, 'id' | 'createdAt'>): Promise<StockMovement> {
+    const id = 'sm_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+    const nowStr = new Date().toISOString();
+    const product = memoryProducts.find(p => p.id === movement.productId);
+    const prevStock = product ? Number(product.currentStock || 0) : movement.previousStock;
+    let newStock = prevStock;
+
+    if (movement.type === 'in') {
+      newStock = prevStock + Number(movement.quantity);
+    } else if (movement.type === 'out') {
+      newStock = Math.max(0, prevStock - Number(movement.quantity));
+    } else {
+      newStock = Number(movement.newStock ?? movement.quantity);
+    }
+
+    const newMov: StockMovement = {
+      id,
+      establishmentId: movement.establishmentId,
+      productId: movement.productId,
+      productName: product?.name || movement.productName,
+      type: movement.type,
+      quantity: Number(movement.quantity),
+      previousStock: prevStock,
+      newStock: newStock,
+      reason: movement.reason,
+      costPrice: movement.costPrice ?? product?.costPrice,
+      createdBy: movement.createdBy,
+      createdAt: nowStr
+    };
+
+    memoryStockMovements = [newMov, ...memoryStockMovements];
+
+    if (product) {
+      product.currentStock = newStock;
+      product.updatedAt = nowStr;
+      if (movement.type === 'in' && movement.costPrice && movement.costPrice > 0) {
+        product.costPrice = movement.costPrice;
+      }
+      try {
+        await supabase.from('products').update({
+          current_stock: newStock,
+          cost_price: product.costPrice,
+          updated_at: nowStr
+        }).eq('id', product.id);
+      } catch (err) {
+        console.warn('Erro ao atualizar estoque do produto no Supabase:', err);
+      }
+    }
+
+    try {
+      await supabase.from('stock_movements').insert({
+        id: newMov.id,
+        establishment_id: newMov.establishmentId,
+        product_id: newMov.productId,
+        type: newMov.type,
+        quantity: newMov.quantity,
+        previous_stock: newMov.previousStock,
+        new_stock: newMov.newStock,
+        reason: newMov.reason || null,
+        cost_price: newMov.costPrice || 0,
+        created_by: newMov.createdBy || null,
+        created_at: newMov.createdAt
+      });
+    } catch (err) {
+      console.warn('Erro ao salvar movimentação de estoque no Supabase:', err);
+    }
+
+    window.dispatchEvent(new Event('db-sync-complete'));
+    return newMov;
+  },
+
   getRouteHistory(): RouteHistoryItem[] {
     return memoryRouteHistory;
   },
@@ -971,6 +1169,22 @@ export const db = {
         memoryLocations = mappedLocs;
       }
 
+      // Puxar produtos do estoque
+      const { data: prodsData } = await supabase.from('products').select('*').limit(10000);
+      if (prodsData) {
+        memoryProducts = prodsData.map(parseProductRow);
+      }
+
+      // Puxar histórico de movimentações de estoque
+      const { data: movsData } = await supabase
+        .from('stock_movements')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(10000);
+      if (movsData) {
+        memoryStockMovements = movsData.map(parseStockMovementRow);
+      }
+
       window.dispatchEvent(new Event('db-sync-complete'));
     } catch (err) {
       console.warn('Erro ao consultar Supabase:', err);
@@ -1002,6 +1216,45 @@ try {
           const parsed = parseDeliveryRow(payload.new);
           memoryDeliveries = memoryDeliveries.map(d => d.id === parsed.id ? parsed : d);
           window.dispatchEvent(new Event('db-sync-complete'));
+        }
+      }
+    })
+    .subscribe();
+
+  supabase
+    .channel('public:products')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, (payload) => {
+      if (payload.eventType === 'DELETE') {
+        const deletedId = payload.old?.id;
+        if (deletedId) {
+          memoryProducts = memoryProducts.filter(p => p.id !== deletedId);
+          window.dispatchEvent(new Event('db-sync-complete'));
+        }
+      } else if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+        if (payload.new && payload.new.id) {
+          const parsed = parseProductRow(payload.new);
+          const idx = memoryProducts.findIndex(p => p.id === parsed.id);
+          if (idx >= 0) {
+            memoryProducts[idx] = parsed;
+          } else {
+            memoryProducts.push(parsed);
+          }
+          window.dispatchEvent(new Event('db-sync-complete'));
+        }
+      }
+    })
+    .subscribe();
+
+  supabase
+    .channel('public:stock_movements')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_movements' }, (payload) => {
+      if (payload.eventType === 'INSERT') {
+        if (payload.new && payload.new.id) {
+          const parsed = parseStockMovementRow(payload.new);
+          if (!memoryStockMovements.some(m => m.id === parsed.id)) {
+            memoryStockMovements = [parsed, ...memoryStockMovements];
+            window.dispatchEvent(new Event('db-sync-complete'));
+          }
         }
       }
     })

@@ -41,10 +41,12 @@ import {
   TrendingUp, 
   X, 
   Phone, 
-  ArrowUpDown, 
-  Copy, 
+  ArrowUpDown,
+  Copy,
   Loader2,
-  Sparkle
+  Sparkle,
+  Package,
+  Boxes
 } from 'lucide-react';
 import L from 'leaflet';
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
@@ -52,6 +54,7 @@ import ScheduleChatModal from '../components/ScheduleChatModal';
 import DeliveryModal from '../components/DeliveryModal';
 import BatchDeliveryModal from '../components/BatchDeliveryModal';
 import RiderFinancialMetricsCard from '../components/RiderFinancialMetricsCard';
+import InventoryManager from '../components/InventoryManager';
 import { realtimeGps } from '../utils/realtimeGps';
 
 const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
@@ -81,8 +84,8 @@ export default function EstablishmentDashboard() {
   const navigate = useNavigate();
   const [user] = useState(db.getCurrentUser());
 
-  // Aba ativa: Operação diária, Repasses individuais, Histórico de Corridas
-  const [activeTab, setActiveTab] = useState<'operation' | 'settlements' | 'deliveries_history'>('operation');
+  // Aba ativa: Operação diária, Repasses individuais, Histórico de Corridas, Controle de Estoque
+  const [activeTab, setActiveTab] = useState<'operation' | 'settlements' | 'deliveries_history' | 'inventory'>('operation');
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [allRiders, setAllRiders] = useState<User[]>([]);
@@ -1056,6 +1059,23 @@ export default function EstablishmentDashboard() {
           >
             <Check className="h-4 w-4" />
             <span>Todas as Corridas ({deliveries.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('inventory')}
+            className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 flex-shrink-0 ${
+              activeTab === 'inventory'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-700 bg-slate-50 hover:bg-slate-100 hover:text-slate-900 border border-slate-200'
+            }`}
+          >
+            <Boxes className="h-4 w-4 text-indigo-500" />
+            <span>Controle de Estoque</span>
+            {currentEst && db.getProducts(currentEst.id).filter(p => Number(p.currentStock || 0) <= Number(p.minStock || 0)).length > 0 && (
+              <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-1.5 py-0.2 rounded-full shadow-xs">
+                {db.getProducts(currentEst.id).filter(p => Number(p.currentStock || 0) <= Number(p.minStock || 0)).length}
+              </span>
+            )}
           </button>
         </div>
       </div>
@@ -2048,6 +2068,17 @@ export default function EstablishmentDashboard() {
                 })}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ABA 4: CONTROLE DE ESTOQUE & MERCADORIAS */}
+        {activeTab === 'inventory' && currentEst && (
+          <div className="animate-fadeIn">
+            <InventoryManager
+              establishmentId={currentEst.id}
+              establishmentName={currentEst.name}
+              userName={user?.name || currentEst.name}
+            />
           </div>
         )}
 
