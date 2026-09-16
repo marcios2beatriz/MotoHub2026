@@ -1197,10 +1197,10 @@ export const db = {
     console.log('🔄 EMERGÊNCIA: Forçando recarga COMPLETA dos dados do Supabase...');
 
     try {
-      // Otimização: selecionar apenas campos essenciais para reduzir tráfego
+      // Otimização: usar SELECT * temporariamente até identificar campos problemáticos
       const { data: usersData } = await supabase
         .from('users')
-        .select('id,name,email,role,active,phone,cpf,password_hash,must_reset_password,establishment_id,created_at,updated_at'); // Sem limite - carregar TODOS os usuários
+        .select('*'); // Voltar ao SELECT * que funcionava
       if (usersData) {
         memoryUsers = usersData.map(u => ({
           id: u.id,
@@ -1220,7 +1220,7 @@ export const db = {
 
       const { data: estsData } = await supabase
         .from('establishments')
-        .select('id,name,email,active,phone,street,number,complement,neighborhood,city,state,zip_code,created_at,updated_at'); // Sem limite - carregar TODOS os estabelecimentos
+        .select('*'); // Voltar ao SELECT * que funcionava
       if (estsData) {
         memoryEstablishments = estsData.map(e => ({
           id: e.id,
@@ -1244,8 +1244,8 @@ export const db = {
 
       const { data: schData } = await supabase
         .from('schedules')
-        .select('id,rider_id,establishment_id,date,shift,start_time,end_time,created_by,created_at,updated_at')
-        .order('date', { ascending: false }); // Sem limite - carregar TODAS as escalas
+        .select('*')
+        .order('date', { ascending: false }); // SELECT * + ordenação
       if (schData) {
         memorySchedules = schData.map(s => {
           let chat: string | undefined = undefined;
@@ -1288,9 +1288,9 @@ export const db = {
       while (hasMore) {
         const { data, error } = await supabase
           .from('deliveries')
-          .select('id,rider_id,establishment_id,date,time,value,status,schedule_id,order_number,updated_at')
+          .select('*')
           .range(delFrom, delFrom + delBatchSize - 1)
-          .order('date', { ascending: false }); // Ordenar por data, não por updated_at
+          .order('date', { ascending: false }); // SELECT * + ordenação por data
 
         if (error || !data || data.length === 0) {
           hasMore = false;
@@ -1315,7 +1315,7 @@ export const db = {
 
       const { data: reqsData } = await supabase
         .from('partner_requests')
-        .select('id,establishment_name,owner_name,phone,address,status,created_at'); // Sem limite
+        .select('*'); // SELECT * 
       if (reqsData) {
         memoryRequests = reqsData.map(r => ({
           id: r.id,
@@ -1330,7 +1330,7 @@ export const db = {
 
       const { data: locData } = await supabase
         .from('rider_locations')
-        .select('rider_id,rider_name,lat,lng,updated_at'); // Sem limite
+        .select('*'); // SELECT *
       if (locData) {
         const mappedLocs: Record<string, RiderLocation> = {};
         locData.forEach(l => {
@@ -1351,7 +1351,7 @@ export const db = {
       // Puxar produtos do estoque
       const { data: prodsData } = await supabase
         .from('products')
-        .select('id,establishment_id,name,sku,category,unit,min_stock,current_stock,cost_price,sale_price,created_at,updated_at'); // Sem limite
+        .select('*'); // SELECT *
       if (prodsData) {
         memoryProducts = prodsData.map(parseProductRow);
       }
@@ -1359,8 +1359,8 @@ export const db = {
       // Puxar histórico de movimentações de estoque (TODAS as movimentações)
       const { data: movsData } = await supabase
         .from('stock_movements')
-        .select('id,establishment_id,product_id,type,quantity,previous_stock,new_stock,reason,cost_price,created_by,created_at')
-        .order('created_at', { ascending: false }); // Sem filtro de data nem limite
+        .select('*')
+        .order('created_at', { ascending: false }); // SELECT * + ordenação
       if (movsData) {
         memoryStockMovements = movsData.map(parseStockMovementRow);
       }
