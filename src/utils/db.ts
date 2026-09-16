@@ -1173,7 +1173,7 @@ export const db = {
         memoryRequests = reqsData.map(r => ({
           id: r.id,
           establishmentName: r.establishment_name,
-          ownerName: r.ownerName,
+          ownerName: r.owner_name,
           phone: r.phone,
           address: r.address,
           status: r.status,
