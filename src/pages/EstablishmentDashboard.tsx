@@ -158,31 +158,90 @@ export default function EstablishmentDashboard() {
   const loadData = () => {
     if (!user) return;
 
+    console.log('🔍 DEBUG EstablishmentDashboard:', {
+      userEmail: user?.email,
+      userEstablishmentId: user?.establishmentId,
+      userRole: user?.role
+    });
+
+    const allEstablishments = db.getEstablishments();
+    console.log('🏪 Estabelecimentos disponíveis:', allEstablishments.map(e => ({ 
+      id: e.id, 
+      name: e.name, 
+      email: e.email 
+    })));
+
     let estFound: Establishment | undefined;
     if (user.establishmentId) {
       estFound = db.getEstablishments().find(e => e.id === user.establishmentId);
+      console.log('🔍 Busca por ID:', { 
+        searchingFor: user.establishmentId,
+        found: estFound?.name || 'NENHUM'
+      });
     }
     
     if (!estFound && user.email) {
       estFound = db.getEstablishments().find(e => e.email?.toLowerCase() === user.email.toLowerCase());
+      console.log('📧 Busca por Email:', { 
+        searchingFor: user.email,
+        found: estFound?.name || 'NENHUM'
+      });
     }
 
     if (!estFound) {
+      console.log('❌ ESTABELECIMENTO NÃO ENCONTRADO!');
       setCurrentEst(null);
       return;
     }
 
     setCurrentEst(estFound);
+    console.log('✅ Estabelecimento encontrado:', estFound.name);
 
-    const estDeliveries = db.getDeliveries().filter(d => 
+    const allDeliveries = db.getDeliveries();
+    const allSchedules = db.getSchedules();
+    
+    console.log('📊 Dados totais:', {
+      totalDeliveries: allDeliveries.length,
+      totalSchedules: allSchedules.length
+    });
+
+    const estDeliveries = allDeliveries.filter(d => 
       db.isSameEstablishment(d.establishmentId, estFound!.id)
     );
 
     const riders = db.getUsers().filter(u => u.role === 'rider' && u.active);
-    const schedules = db.getSchedules().filter(s => 
+    const schedules = allSchedules.filter(s => 
       db.isSameEstablishment(s.establishmentId, estFound!.id)
     );
     const locations = db.getRiderLocations();
+
+    console.log('🎯 Dados filtrados para estabelecimento:', {
+      establishmentName: estFound.name,
+      establishmentId: estFound.id,
+      filteredDeliveries: estDeliveries.length,
+      filteredSchedules: schedules.length
+    });
+
+    if (estDeliveries.length > 0) {
+      console.log('📋 Primeiras corridas:', estDeliveries.slice(0, 3).map(d => ({
+        id: d.id.substring(0, 8),
+        date: d.date,
+        time: d.time,
+        status: d.status,
+        orderNumber: d.orderNumber,
+        establishmentId: d.establishmentId
+      })));
+    }
+
+    if (schedules.length > 0) {
+      console.log('📅 Primeiras escalas:', schedules.slice(0, 3).map(s => ({
+        id: s.id.substring(0, 8),
+        date: s.date,
+        shift: s.shift,
+        riderId: s.riderId,
+        establishmentId: s.establishmentId
+      })));
+    }
 
     setDeliveries([...estDeliveries].sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time)));
     setAllRiders(riders);
