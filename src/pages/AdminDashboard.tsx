@@ -295,7 +295,7 @@ export default function AdminDashboard() {
 
     const interval = setInterval(() => {
       db.pullFromSupabase().then(() => loadData());
-    }, 2000);
+    }, 30000); // Reduzido de 2s para 30s — o realtime cobre alterações instantâneas
 
     const handleSyncComplete = () => loadData();
     window.addEventListener('db-sync-complete', handleSyncComplete);

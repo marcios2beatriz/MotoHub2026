@@ -199,7 +199,7 @@ export default function EstablishmentDashboard() {
     loadData();
     const interval = setInterval(() => {
       db.pullFromSupabase().then(() => loadData());
-    }, 3000);
+    }, 30000); // Reduzido de 3s para 30s — o realtime cobre alterações instantâneas
 
     const handleDataUpdate = () => loadData();
     window.addEventListener('db-sync-complete', handleDataUpdate);

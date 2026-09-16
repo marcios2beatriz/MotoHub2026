@@ -29,21 +29,14 @@ function AppHandler({ children }: { children: React.ReactNode }) {
     if (Capacitor.isNativePlatform()) {
       resumeListener = CapApp.addListener('appStateChange', (state) => {
         if (state.isActive) {
+          // Apenas um pull na reativação — os dashboards já fazem polling
           db.pullFromSupabase();
         }
       });
     }
 
-    // Sincronização periódica a cada 5 segundos para manter os dados atualizados em tempo real
-    const syncInterval = setInterval(() => {
-      const currentUser = db.getCurrentUser();
-      if (currentUser) {
-        db.pullFromSupabase();
-      }
-    }, 5000);
-
+    // Não fazemos polling aqui — os dashboards já têm intervalos + realtime cobre mudanças
     return () => {
-      clearInterval(syncInterval);
       if (resumeListener) {
         resumeListener.then((l: any) => l.remove()).catch(() => {});
       }

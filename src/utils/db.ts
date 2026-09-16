@@ -352,6 +352,10 @@ let memoryStockMovements: StockMovement[] = [];
 
 const inFlightOrderLocks = new Set<string>();
 
+// Throttle para pullFromSupabase — evita chamadas paralelas excessivas
+let lastPullTs = 0;
+const PULL_THROTTLE_MS = 20000; // máximo 1 pull a cada 20 segundos
+
 export const db = {
   isSameDayString,
   getDeliveryOperationalDate,
@@ -1032,8 +1036,19 @@ export const db = {
   },
 
   async pullFromSupabase() {
+    const now = Date.now();
+    // Throttle: previne chamadas paralelas excessivas
+    if (now - lastPullTs < PULL_THROTTLE_MS) {
+      return;
+    }
+    lastPullTs = now;
+
     try {
-      const { data: usersData } = await supabase.from('users').select('*').limit(10000);
+      // Otimização: selecionar apenas campos essenciais para reduzir tráfego
+      const { data: usersData } = await supabase
+        .from('users')
+        .select('id,name,email,role,active,phone,cpf,password_hash,must_reset_password,establishment_id,created_at,updated_at')
+        .limit(5000);
       if (usersData) {
         memoryUsers = usersData.map(u => ({
           id: u.id,
@@ -1051,7 +1066,10 @@ export const db = {
         }));
       }
 
-      const { data: estsData } = await supabase.from('establishments').select('*').limit(10000);
+      const { data: estsData } = await supabase
+        .from('establishments')
+        .select('id,name,email,active,phone,street,number,complement,neighborhood,city,state,zip_code,created_at,updated_at')
+        .limit(1000);
       if (estsData) {
         memoryEstablishments = estsData.map(e => ({
           id: e.id,
@@ -1073,7 +1091,10 @@ export const db = {
         }));
       }
 
-      const { data: schData } = await supabase.from('schedules').select('*').limit(10000);
+      const { data: schData } = await supabase
+        .from('schedules')
+        .select('id,rider_id,establishment_id,date,shift,start_time,end_time,created_by,created_at,updated_at')
+        .limit(2000);
       if (schData) {
         memorySchedules = schData.map(s => {
           let chat: string | undefined = undefined;
@@ -1107,17 +1128,18 @@ export const db = {
         });
       }
 
-      // Puxar todas as entregas do Supabase (Fonte da Verdade)
+      // Puxar entregas com paginação otimizada
       const allDelData: any[] = [];
       let delFrom = 0;
-      const delBatchSize = 1000;
+      const delBatchSize = 500; // reduzido de 1000 para 500
       let hasMore = true;
 
       while (hasMore) {
         const { data, error } = await supabase
           .from('deliveries')
-          .select('*')
-          .range(delFrom, delFrom + delBatchSize - 1);
+          .select('id,rider_id,establishment_id,date,time,value,status,schedule_id,order_number,updated_at')
+          .range(delFrom, delFrom + delBatchSize - 1)
+          .order('updated_at', { ascending: false }); // priorizar mais recentes
 
         if (error || !data || data.length === 0) {
           hasMore = false;
@@ -1130,6 +1152,11 @@ export const db = {
         } else {
           delFrom += delBatchSize;
         }
+
+        // Limite máximo para evitar consultas infinitas
+        if (allDelData.length >= 10000) {
+          hasMore = false;
+        }
       }
 
       if (allDelData.length > 0) {
@@ -1138,7 +1165,10 @@ export const db = {
         memoryDeliveries = [];
       }
 
-      const { data: reqsData } = await supabase.from('partner_requests').select('*').limit(10000);
+      const { data: reqsData } = await supabase
+        .from('partner_requests')
+        .select('id,establishment_name,owner_name,phone,address,status,created_at')
+        .limit(500);
       if (reqsData) {
         memoryRequests = reqsData.map(r => ({
           id: r.id,
@@ -1151,7 +1181,10 @@ export const db = {
         }));
       }
 
-      const { data: locData } = await supabase.from('rider_locations').select('*').limit(10000);
+      const { data: locData } = await supabase
+        .from('rider_locations')
+        .select('rider_id,rider_name,lat,lng,updated_at')
+        .limit(200);
       if (locData) {
         const mappedLocs: Record<string, RiderLocation> = {};
         locData.forEach(l => {
@@ -1170,17 +1203,23 @@ export const db = {
       }
 
       // Puxar produtos do estoque
-      const { data: prodsData } = await supabase.from('products').select('*').limit(10000);
+      const { data: prodsData } = await supabase
+        .from('products')
+        .select('id,establishment_id,name,sku,category,unit,min_stock,current_stock,cost_price,sale_price,created_at,updated_at')
+        .limit(2000);
       if (prodsData) {
         memoryProducts = prodsData.map(parseProductRow);
       }
 
-      // Puxar histórico de movimentações de estoque
+      // Puxar histórico de movimentações de estoque (últimas 30 dias)
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
       const { data: movsData } = await supabase
         .from('stock_movements')
-        .select('*')
+        .select('id,establishment_id,product_id,type,quantity,previous_stock,new_stock,reason,cost_price,created_by,created_at')
+        .gte('created_at', thirtyDaysAgo.toISOString())
         .order('created_at', { ascending: false })
-        .limit(10000);
+        .limit(5000);
       if (movsData) {
         memoryStockMovements = movsData.map(parseStockMovementRow);
       }
@@ -1255,6 +1294,133 @@ try {
             memoryStockMovements = [parsed, ...memoryStockMovements];
             window.dispatchEvent(new Event('db-sync-complete'));
           }
+        }
+      }
+    })
+    .subscribe();
+
+  // Canais realtime para reduzir polling das demais tabelas
+  supabase
+    .channel('public:users')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, (payload) => {
+      if (payload.eventType === 'DELETE') {
+        const deletedId = payload.old?.id;
+        if (deletedId) {
+          memoryUsers = memoryUsers.filter(u => u.id !== deletedId);
+          window.dispatchEvent(new Event('db-sync-complete'));
+        }
+      } else if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+        if (payload.new && payload.new.id) {
+          const newUser: User = {
+            id: payload.new.id,
+            name: payload.new.name,
+            email: payload.new.email,
+            role: payload.new.role,
+            active: payload.new.active ?? true,
+            phone: payload.new.phone || '',
+            cpf: payload.new.cpf || '',
+            passwordHash: payload.new.password_hash || '',
+            mustResetPassword: payload.new.must_reset_password || false,
+            establishmentId: payload.new.establishment_id || undefined,
+            createdAt: payload.new.created_at,
+            updatedAt: payload.new.updated_at
+          };
+          const idx = memoryUsers.findIndex(u => u.id === newUser.id);
+          if (idx >= 0) {
+            memoryUsers[idx] = newUser;
+          } else {
+            memoryUsers.push(newUser);
+          }
+          window.dispatchEvent(new Event('db-sync-complete'));
+        }
+      }
+    })
+    .subscribe();
+
+  supabase
+    .channel('public:establishments')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'establishments' }, (payload) => {
+      if (payload.eventType === 'DELETE') {
+        const deletedId = payload.old?.id;
+        if (deletedId) {
+          memoryEstablishments = memoryEstablishments.filter(e => e.id !== deletedId);
+          window.dispatchEvent(new Event('db-sync-complete'));
+        }
+      } else if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+        if (payload.new && payload.new.id) {
+          const newEst: Establishment = {
+            id: payload.new.id,
+            name: payload.new.name,
+            email: payload.new.email || undefined,
+            active: payload.new.active ?? true,
+            phone: payload.new.phone || '',
+            address: {
+              street: payload.new.street || '',
+              number: payload.new.number || '',
+              complement: payload.new.complement || '',
+              neighborhood: payload.new.neighborhood || '',
+              city: payload.new.city || '',
+              state: payload.new.state || '',
+              zipCode: payload.new.zip_code || ''
+            },
+            createdAt: payload.new.created_at,
+            updatedAt: payload.new.updated_at
+          };
+          const idx = memoryEstablishments.findIndex(e => e.id === newEst.id);
+          if (idx >= 0) {
+            memoryEstablishments[idx] = newEst;
+          } else {
+            memoryEstablishments.push(newEst);
+          }
+          window.dispatchEvent(new Event('db-sync-complete'));
+        }
+      }
+    })
+    .subscribe();
+
+  supabase
+    .channel('public:schedules')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, (payload) => {
+      if (payload.eventType === 'DELETE') {
+        const deletedId = payload.old?.id;
+        if (deletedId) {
+          memorySchedules = memorySchedules.filter(s => s.id !== deletedId);
+          window.dispatchEvent(new Event('db-sync-complete'));
+        }
+      } else if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+        if (payload.new && payload.new.id) {
+          let chat: string | undefined = undefined;
+          let createdBy: string | undefined = undefined;
+          if (payload.new.created_by && payload.new.created_by.startsWith('{')) {
+            try {
+              const parsed = JSON.parse(payload.new.created_by);
+              createdBy = parsed.createdBy || undefined;
+              chat = parsed.chat || undefined;
+            } catch (e) {}
+          } else {
+            createdBy = payload.new.created_by || undefined;
+          }
+
+          const newSchedule: Schedule = {
+            id: payload.new.id,
+            riderId: payload.new.rider_id,
+            establishmentId: payload.new.establishment_id,
+            date: payload.new.date,
+            shift: payload.new.shift,
+            startTime: payload.new.start_time,
+            endTime: payload.new.end_time,
+            chat,
+            createdBy,
+            createdAt: payload.new.created_at,
+            updatedAt: payload.new.updated_at
+          };
+          const idx = memorySchedules.findIndex(s => s.id === newSchedule.id);
+          if (idx >= 0) {
+            memorySchedules[idx] = newSchedule;
+          } else {
+            memorySchedules.push(newSchedule);
+          }
+          window.dispatchEvent(new Event('db-sync-complete'));
         }
       }
     })

@@ -124,6 +124,10 @@ class HighPrecisionGpsTracker {
   private lastLocation: GpsLocation | null = null;
   private lastStableHeading: number = 0;
   private listeners: Set<(state: GpsState) => void> = new Set();
+
+  // Throttle: evita enviar ao Supabase com frequência excessiva
+  private lastDbWriteTs: number = 0;
+  private readonly DB_WRITE_INTERVAL_MS = 8000; // grava no banco no máximo 1x a cada 8s
   
   private currentState: GpsState = {
     currentLocation: null,
@@ -267,16 +271,22 @@ class HighPrecisionGpsTracker {
 
     const currentUser = db.getCurrentUser();
     if (currentUser && currentUser.role === 'rider') {
-      db.updateRiderLocation(currentUser.id, currentUser.name, lat, lng);
-      realtimeGps.sendLocation({
-        riderId: currentUser.id,
-        riderName: currentUser.name,
-        lat,
-        lng,
-        speedKmh,
-        heading: finalHeading,
-        timestamp: now
-      });
+      const now2 = Date.now();
+      // Só grava no Supabase se passou o intervalo mínimo OU se o motoboy se moveu mais de 20m
+      const shouldWrite = (now2 - this.lastDbWriteTs) >= this.DB_WRITE_INTERVAL_MS || distanceMoved > 20;
+      if (shouldWrite) {
+        this.lastDbWriteTs = now2;
+        db.updateRiderLocation(currentUser.id, currentUser.name, lat, lng);
+        realtimeGps.sendLocation({
+          riderId: currentUser.id,
+          riderName: currentUser.name,
+          lat,
+          lng,
+          speedKmh,
+          heading: finalHeading,
+          timestamp: now
+        });
+      }
     }
 
     this.notify();
@@ -388,7 +398,7 @@ class HighPrecisionGpsTracker {
     if (!this.fallbackTimer) {
       this.fallbackTimer = setInterval(() => {
         this.forceLocationPoll();
-      }, 3000);
+      }, 8000); // Reduzido de 3s para 8s — menos polls de GPS
     }
   }
 

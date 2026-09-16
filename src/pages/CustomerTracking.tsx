@@ -106,7 +106,7 @@ export default function CustomerTracking() {
 
     const interval = setInterval(() => {
       db.pullFromSupabase().then(() => loadTrackingData());
-    }, 3000);
+    }, 15000); // Reduzido de 3s para 15s para rastreamento de cliente
 
     // Escuta atualizações de GPS em tempo real do motoboy
     const unsubscribeLocation = realtimeGps.subscribeToLocations((payload) => {
