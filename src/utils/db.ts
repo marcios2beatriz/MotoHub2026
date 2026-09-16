@@ -1187,19 +1187,20 @@ export const db = {
   },
 
   async pullFromSupabase() {
-    const now = Date.now();
-    // Throttle: previne chamadas paralelas excessivas
-    if (now - lastPullTs < PULL_THROTTLE_MS) {
-      return;
-    }
-    lastPullTs = now;
+    // EMERGÊNCIA: Removendo throttle temporariamente para forçar recarga completa dos dados
+    // const now = Date.now();
+    // if (now - lastPullTs < PULL_THROTTLE_MS) {
+    //   return;
+    // }
+    // lastPullTs = now;
+
+    console.log('🔄 EMERGÊNCIA: Forçando recarga COMPLETA dos dados do Supabase...');
 
     try {
       // Otimização: selecionar apenas campos essenciais para reduzir tráfego
       const { data: usersData } = await supabase
         .from('users')
-        .select('id,name,email,role,active,phone,cpf,password_hash,must_reset_password,establishment_id,created_at,updated_at')
-        .limit(5000);
+        .select('id,name,email,role,active,phone,cpf,password_hash,must_reset_password,establishment_id,created_at,updated_at'); // Sem limite - carregar TODOS os usuários
       if (usersData) {
         memoryUsers = usersData.map(u => ({
           id: u.id,
@@ -1219,8 +1220,7 @@ export const db = {
 
       const { data: estsData } = await supabase
         .from('establishments')
-        .select('id,name,email,active,phone,street,number,complement,neighborhood,city,state,zip_code,created_at,updated_at')
-        .limit(1000);
+        .select('id,name,email,active,phone,street,number,complement,neighborhood,city,state,zip_code,created_at,updated_at'); // Sem limite - carregar TODOS os estabelecimentos
       if (estsData) {
         memoryEstablishments = estsData.map(e => ({
           id: e.id,
@@ -1245,7 +1245,7 @@ export const db = {
       const { data: schData } = await supabase
         .from('schedules')
         .select('id,rider_id,establishment_id,date,shift,start_time,end_time,created_by,created_at,updated_at')
-        .limit(2000);
+        .order('date', { ascending: false }); // Sem limite - carregar TODAS as escalas
       if (schData) {
         memorySchedules = schData.map(s => {
           let chat: string | undefined = undefined;
@@ -1290,7 +1290,7 @@ export const db = {
           .from('deliveries')
           .select('id,rider_id,establishment_id,date,time,value,status,schedule_id,order_number,updated_at')
           .range(delFrom, delFrom + delBatchSize - 1)
-          .order('updated_at', { ascending: false }); // priorizar mais recentes
+          .order('date', { ascending: false }); // Ordenar por data, não por updated_at
 
         if (error || !data || data.length === 0) {
           hasMore = false;
@@ -1304,10 +1304,7 @@ export const db = {
           delFrom += delBatchSize;
         }
 
-        // Limite máximo para evitar consultas infinitas
-        if (allDelData.length >= 10000) {
-          hasMore = false;
-        }
+        // Remover limite máximo - carregar TODAS as entregas
       }
 
       if (allDelData.length > 0) {
@@ -1318,8 +1315,7 @@ export const db = {
 
       const { data: reqsData } = await supabase
         .from('partner_requests')
-        .select('id,establishment_name,owner_name,phone,address,status,created_at')
-        .limit(500);
+        .select('id,establishment_name,owner_name,phone,address,status,created_at'); // Sem limite
       if (reqsData) {
         memoryRequests = reqsData.map(r => ({
           id: r.id,
@@ -1334,8 +1330,7 @@ export const db = {
 
       const { data: locData } = await supabase
         .from('rider_locations')
-        .select('rider_id,rider_name,lat,lng,updated_at')
-        .limit(200);
+        .select('rider_id,rider_name,lat,lng,updated_at'); // Sem limite
       if (locData) {
         const mappedLocs: Record<string, RiderLocation> = {};
         locData.forEach(l => {
@@ -1356,28 +1351,32 @@ export const db = {
       // Puxar produtos do estoque
       const { data: prodsData } = await supabase
         .from('products')
-        .select('id,establishment_id,name,sku,category,unit,min_stock,current_stock,cost_price,sale_price,created_at,updated_at')
-        .limit(2000);
+        .select('id,establishment_id,name,sku,category,unit,min_stock,current_stock,cost_price,sale_price,created_at,updated_at'); // Sem limite
       if (prodsData) {
         memoryProducts = prodsData.map(parseProductRow);
       }
 
-      // Puxar histórico de movimentações de estoque (últimas 30 dias)
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      // Puxar histórico de movimentações de estoque (TODAS as movimentações)
       const { data: movsData } = await supabase
         .from('stock_movements')
         .select('id,establishment_id,product_id,type,quantity,previous_stock,new_stock,reason,cost_price,created_by,created_at')
-        .gte('created_at', thirtyDaysAgo.toISOString())
-        .order('created_at', { ascending: false })
-        .limit(5000);
+        .order('created_at', { ascending: false }); // Sem filtro de data nem limite
       if (movsData) {
         memoryStockMovements = movsData.map(parseStockMovementRow);
       }
 
       window.dispatchEvent(new Event('db-sync-complete'));
+      
+      console.log('✅ DADOS CARREGADOS:', {
+        usuarios: memoryUsers.length,
+        estabelecimentos: memoryEstablishments.length, 
+        escalas: memorySchedules.length,
+        entregas: memoryDeliveries.length,
+        produtos: memoryProducts.length,
+        movimentacoes: memoryStockMovements.length
+      });
     } catch (err) {
-      console.warn('Erro ao consultar Supabase:', err);
+      console.error('🚨 ERRO ao carregar dados do Supabase:', err);
     }
   }
 };
