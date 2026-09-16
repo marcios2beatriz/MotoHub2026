@@ -483,15 +483,14 @@ export default function RiderDashboard() {
     setIsSubmittingDelivery(true);
 
     try {
-      const allDeliveries = db.getDeliveries();
       const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && isSameDayString(s.date, operationalTodayStr));
       const nowStr = new Date().toISOString();
 
       const isSame = launchForm.deliveryType === 'same_address' || Number(finalVal) === 4 || Boolean(launchForm.linkedOrderNumber);
 
       if (editingDelivery) {
-        const updated = allDeliveries.map(d => d.id === editingDelivery.id ? {
-          ...d,
+        // Edição: usar função otimizada para atualizar apenas 1 registro
+        const updates: Partial<Delivery> = {
           establishmentId: launchForm.establishmentId,
           value: finalVal,
           orderNumber: cleanOrderNumber,
@@ -503,13 +502,14 @@ export default function RiderDashboard() {
           paymentMethod: launchForm.paymentMethod || 'already_paid',
           orderCollectionAmount: collectionAmount,
           changeFor: changeForValue,
-          scheduleId: activeSchedule?.id || d.scheduleId,
+          scheduleId: activeSchedule?.id || editingDelivery.scheduleId,
           updatedAt: nowStr
-        } : d);
+        };
 
-        await db.setDeliveries(updated);
+        await db.updateSingleDelivery(editingDelivery.id, updates);
         alert('Corrida atualizada com sucesso!');
       } else {
+        // Inserção: usar função otimizada para inserir apenas 1 registro
         const newDelivery: Delivery = {
           id: 'd_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
           riderId: user.id,
@@ -531,14 +531,14 @@ export default function RiderDashboard() {
           updatedAt: nowStr
         };
 
-        await db.setDeliveries([...allDeliveries, newDelivery]);
+        await db.addSingleDelivery(newDelivery);
         alert(`🎉 Corrida #${cleanOrderNumber} lançada com sucesso! Aguardando aprovação.`);
       }
 
       setShowLaunchModal(false);
       setEditingDelivery(null);
       setLaunchForm({ establishmentId: '', value: '8.00', orderNumber: '', notes: '', deliveryType: 'standard', additionalValue: '', additionalReason: '', linkedOrderNumber: '', paymentMethod: 'already_paid', orderCollectionAmount: '', changeFor: '' });
-      loadData();
+      // Não chamar loadData() - o realtime já atualiza automaticamente
     } catch (err) {
       console.error('Erro ao salvar corrida:', err);
       alert('Erro ao gravar corrida. Tente novamente.');
@@ -560,26 +560,19 @@ export default function RiderDashboard() {
 
     const updatedChat = currentDelivery.customerChat ? `${currentDelivery.customerChat}\n${formattedMessage}` : formattedMessage;
 
-    const allDeliveries = db.getDeliveries();
-    const updated = allDeliveries.map(d => d.id === customerChatDeliveryId ? {
-      ...d,
-      customerChat: updatedChat,
-      updatedAt: new Date().toISOString()
-    } : d);
-
-    db.setDeliveries(updated);
-    loadData();
+    // Usar função otimizada para atualizar apenas 1 registro
+    db.updateSingleDelivery(customerChatDeliveryId, {
+      customerChat: updatedChat
+    });
+    // Não chamar loadData() - realtime já atualiza
   };
 
   const handleSaveNotes = (deliveryId: string, updatedNotes: string) => {
-    const allDeliveries = db.getDeliveries();
-    const updated = allDeliveries.map(d => d.id === deliveryId ? {
-      ...d,
-      notes: updatedNotes,
-      updatedAt: new Date().toISOString()
-    } : d);
-    db.setDeliveries(updated);
-    loadData();
+    // Usar função otimizada para atualizar apenas 1 registro
+    db.updateSingleDelivery(deliveryId, {
+      notes: updatedNotes
+    });
+    // Não chamar loadData() - realtime já atualiza
   };
 
   const handleSaveScheduleChat = (scheduleId: string, updatedChat: string) => {

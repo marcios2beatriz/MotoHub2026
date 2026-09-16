@@ -391,15 +391,18 @@ export const db = {
 
     const targetOpDate = getDeliveryOperationalDate(date, time);
 
-    const duplicate = memoryDeliveries.find(d => {
-      if (excludeDeliveryId && d.id === excludeDeliveryId) return false;
+    // Otimização: Filtrar PRIMEIRO por data para reduzir iterações
+    const todayDeliveries = memoryDeliveries.filter(d => {
       if (d.status === 'cancelled' || d.status === 'rejected') return false;
-
-      const dNumber = (d.orderNumber || '').trim().replace('#', '');
-      if (!dNumber || dNumber !== cleanNumber) return false;
-
       const dOpDate = getDeliveryOperationalDate(d.date, d.time);
       return isSameDayString(dOpDate, targetOpDate) || isSameDayString(d.date, date);
+    });
+
+    // Buscar apenas nas entregas do dia (muito mais rápido)
+    const duplicate = todayDeliveries.find(d => {
+      if (excludeDeliveryId && d.id === excludeDeliveryId) return false;
+      const dNumber = (d.orderNumber || '').trim().replace('#', '');
+      return dNumber && dNumber === cleanNumber;
     });
 
     if (duplicate) {
@@ -645,6 +648,154 @@ export const db = {
       } catch (err) {
         console.warn('Aviso no envio de entregas ao Supabase:', err);
       }
+    }
+
+    window.dispatchEvent(new Event('db-sync-complete'));
+  },
+
+  // Função otimizada para adicionar UMA ÚNICA corrida (muito mais rápida)
+  async addSingleDelivery(delivery: Delivery): Promise<void> {
+    const canonicalRider = this.resolveUser(delivery.riderId);
+    const canonicalEst = this.resolveEstablishment(delivery.establishmentId);
+    const isSame = delivery.deliveryType === 'same_address' || Number(delivery.value) === 4 || Boolean(delivery.linkedOrderNumber);
+
+    const normalized: Delivery = {
+      ...delivery,
+      riderId: canonicalRider?.id || delivery.riderId,
+      establishmentId: canonicalEst?.id || delivery.establishmentId,
+      deliveryType: isSame ? ('same_address' as const) : ('standard' as const),
+      paymentMethod: delivery.paymentMethod || 'already_paid'
+    };
+
+    // Atualiza memória local instantaneamente
+    memoryDeliveries = [normalized, ...memoryDeliveries];
+
+    // Insere apenas 1 registro no Supabase (muito mais rápido)
+    const payload = formatDeliveryPayload(normalized);
+    try {
+      await supabase.from('deliveries').insert(payload);
+    } catch (err) {
+      console.warn('Erro ao inserir corrida no Supabase:', err);
+      // Remove da memória se falhou no banco
+      memoryDeliveries = memoryDeliveries.filter(d => d.id !== delivery.id);
+      throw err;
+    }
+
+    window.dispatchEvent(new Event('db-sync-complete'));
+  },
+
+  // Função otimizada para editar UMA ÚNICA corrida
+  async updateSingleDelivery(deliveryId: string, updates: Partial<Delivery>): Promise<void> {
+    const existingIdx = memoryDeliveries.findIndex(d => d.id === deliveryId);
+    if (existingIdx === -1) throw new Error('Corrida não encontrada');
+
+    const existing = memoryDeliveries[existingIdx];
+    const updated = { ...existing, ...updates, updatedAt: new Date().toISOString() };
+
+    const canonicalRider = this.resolveUser(updated.riderId);
+    const canonicalEst = this.resolveEstablishment(updated.establishmentId);
+    const isSame = updated.deliveryType === 'same_address' || Number(updated.value) === 4 || Boolean(updated.linkedOrderNumber);
+
+    const normalized: Delivery = {
+      ...updated,
+      riderId: canonicalRider?.id || updated.riderId,
+      establishmentId: canonicalEst?.id || updated.establishmentId,
+      deliveryType: isSame ? ('same_address' as const) : ('standard' as const),
+      paymentMethod: updated.paymentMethod || 'already_paid'
+    };
+
+    // Atualiza memória local instantaneamente
+    memoryDeliveries[existingIdx] = normalized;
+
+    // Atualiza apenas 1 registro no Supabase
+    const payload = formatDeliveryPayload(normalized);
+    try {
+      await supabase.from('deliveries').update(payload).eq('id', deliveryId);
+    } catch (err) {
+      console.warn('Erro ao atualizar corrida no Supabase:', err);
+      // Reverte a memória se falhou no banco
+      memoryDeliveries[existingIdx] = existing;
+      throw err;
+    }
+
+    window.dispatchEvent(new Event('db-sync-complete'));
+  },
+
+  // Função otimizada para atualizar múltiplas corridas com BATCH UPDATE
+  async updateMultipleDeliveries(updates: Array<{ id: string; changes: Partial<Delivery> }>): Promise<void> {
+    const updatedDeliveries: Delivery[] = [];
+    const originalDeliveries: { index: number; delivery: Delivery }[] = [];
+
+    // Preparar todas as atualizações
+    for (const update of updates) {
+      const existingIdx = memoryDeliveries.findIndex(d => d.id === update.id);
+      if (existingIdx === -1) continue;
+
+      const existing = memoryDeliveries[existingIdx];
+      originalDeliveries.push({ index: existingIdx, delivery: existing });
+
+      const updated = { ...existing, ...update.changes, updatedAt: new Date().toISOString() };
+      const canonicalRider = this.resolveUser(updated.riderId);
+      const canonicalEst = this.resolveEstablishment(updated.establishmentId);
+      const isSame = updated.deliveryType === 'same_address' || Number(updated.value) === 4 || Boolean(updated.linkedOrderNumber);
+
+      const normalized: Delivery = {
+        ...updated,
+        riderId: canonicalRider?.id || updated.riderId,
+        establishmentId: canonicalEst?.id || updated.establishmentId,
+        deliveryType: isSame ? ('same_address' as const) : ('standard' as const),
+        paymentMethod: updated.paymentMethod || 'already_paid'
+      };
+
+      memoryDeliveries[existingIdx] = normalized;
+      updatedDeliveries.push(normalized);
+    }
+
+    // Batch update no Supabase
+    try {
+      const payloads = updatedDeliveries.map(formatDeliveryPayload);
+      await supabase.from('deliveries').upsert(payloads, { onConflict: 'id' });
+    } catch (err) {
+      console.warn('Erro no batch update:', err);
+      // Reverte todas as mudanças na memória
+      for (const original of originalDeliveries) {
+        memoryDeliveries[original.index] = original.delivery;
+      }
+      throw err;
+    }
+
+    window.dispatchEvent(new Event('db-sync-complete'));
+  },
+
+  // Função otimizada para adicionar múltiplas corridas (batch insert)
+  async addMultipleDeliveries(deliveries: Delivery[]): Promise<void> {
+    const normalized = deliveries.map(d => {
+      const canonicalRider = this.resolveUser(d.riderId);
+      const canonicalEst = this.resolveEstablishment(d.establishmentId);
+      const isSame = d.deliveryType === 'same_address' || Number(d.value) === 4 || Boolean(d.linkedOrderNumber);
+
+      return {
+        ...d,
+        riderId: canonicalRider?.id || d.riderId,
+        establishmentId: canonicalEst?.id || d.establishmentId,
+        deliveryType: isSame ? ('same_address' as const) : ('standard' as const),
+        paymentMethod: d.paymentMethod || 'already_paid'
+      };
+    });
+
+    // Atualiza memória local instantaneamente
+    memoryDeliveries = [...normalized, ...memoryDeliveries];
+
+    // Batch insert no Supabase
+    try {
+      const payloads = normalized.map(formatDeliveryPayload);
+      await supabase.from('deliveries').insert(payloads);
+    } catch (err) {
+      console.warn('Erro no batch insert:', err);
+      // Remove da memória se falhou no banco
+      const idsToRemove = new Set(deliveries.map(d => d.id));
+      memoryDeliveries = memoryDeliveries.filter(d => !idsToRemove.has(d.id));
+      throw err;
     }
 
     window.dispatchEvent(new Event('db-sync-complete'));

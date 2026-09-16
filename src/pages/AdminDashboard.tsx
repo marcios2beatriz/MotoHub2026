@@ -976,17 +976,22 @@ export default function AdminDashboard() {
       }
     }
 
-    const updated = deliveries.map(d => d.id === id ? { ...d, status: 'active' as const, updatedAt: new Date().toISOString() } : d);
-    await db.setDeliveries(updated);
-    loadData();
+    // Usar função otimizada para atualizar apenas 1 registro
+    await db.updateSingleDelivery(id, { 
+      status: 'active' as const 
+    });
+    // Não chamar loadData() - realtime já atualiza
   };
 
   const handleRejectDelivery = async (id: string) => {
     const reason = prompt('Digite o motivo da rejeição:');
     if (reason !== null) {
-      const updated = deliveries.map(d => d.id === id ? { ...d, status: 'rejected' as const, notes: reason, updatedAt: new Date().toISOString() } : d);
-      await db.setDeliveries(updated);
-      loadData();
+      // Usar função otimizada para atualizar apenas 1 registro
+      await db.updateSingleDelivery(id, {
+        status: 'rejected' as const,
+        notes: reason
+      });
+      // Não chamar loadData() - realtime já atualiza
     }
   };
 
