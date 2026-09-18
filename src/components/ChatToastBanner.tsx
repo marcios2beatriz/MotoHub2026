@@ -34,7 +34,7 @@ export default function ChatToastBanner({ toast, onClose }: ChatToastBannerProps
         if (toast.onClick) toast.onClick();
         onClose();
       }}
-      className="fixed top-4 left-1/2 -translate-x-1/2 z-[10000] w-[92%] max-w-md bg-slate-900 text-white rounded-2xl p-4 shadow-2xl border-2 border-indigo-500/50 flex items-start justify-between gap-3 animate-bounce-short cursor-pointer transition-all hover:scale-[1.02]"
+      className="fixed top-4 left-4 right-4 z-[10000] mx-auto max-w-md bg-slate-900 text-white rounded-2xl p-4 shadow-2xl border-2 border-indigo-500/50 flex items-start justify-between gap-3 animate-bounce-short cursor-pointer transition-all hover:scale-[1.02]"
     >
       <div className="flex items-start gap-3 min-w-0">
         <div className="p-2.5 bg-indigo-600 rounded-xl text-white flex-shrink-0 animate-pulse">

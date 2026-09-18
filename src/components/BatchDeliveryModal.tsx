@@ -437,7 +437,8 @@ export default function BatchDeliveryModal({
         };
       });
 
-      await db.setDeliveries([...allDeliveries, ...newDeliveries]);
+      // Usar função otimizada para múltiplas inserções (muito mais rápida no mobile)
+      await db.addMultipleDeliveries(newDeliveries);
       
       resetToEmptyBatch();
       onSaved();

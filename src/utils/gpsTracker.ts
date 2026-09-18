@@ -5,6 +5,12 @@ import { Geolocation } from '@capacitor/geolocation';
 import { db } from './db';
 import { realtimeGps } from './realtimeGps';
 
+// Detectar se está em dispositivo mobile
+const isMobile = typeof window !== 'undefined' && (
+  /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+  window.innerWidth <= 768
+);
+
 // Interface do plugin Background Geolocation do Capacitor
 interface BackgroundGeolocationPlugin {
   addWatcher(
@@ -125,9 +131,14 @@ class HighPrecisionGpsTracker {
   private lastStableHeading: number = 0;
   private listeners: Set<(state: GpsState) => void> = new Set();
 
-  // Throttle: evita enviar ao Supabase com frequência excessiva
+  // Throttle: evita enviar ao Supabase com frequência excessiva (otimizado para mobile)
   private lastDbWriteTs: number = 0;
-  private readonly DB_WRITE_INTERVAL_MS = 8000; // grava no banco no máximo 1x a cada 8s
+  private readonly DB_WRITE_INTERVAL_MS = isMobile ? 12000 : 8000; // Mobile: 12s, Desktop: 8s
+  
+  // Background tracking melhorado
+  private isInBackground: boolean = false;
+  private backgroundLocationCount: number = 0;
+  private lastForegroundLocation: GpsLocation | null = null;
   
   private currentState: GpsState = {
     currentLocation: null,
@@ -164,17 +175,46 @@ class HighPrecisionGpsTracker {
     if (typeof window === 'undefined') return;
 
     const handleReactivate = () => {
+      this.isInBackground = false;
+      this.backgroundLocationCount = 0;
       this.enableWakeLock();
       this.enableAudioKeepAlive();
       this.forceLocationPoll();
+      console.log('📱 App voltou ao foreground - GPS refresh');
+    };
+
+    const handleGoBackground = () => {
+      this.isInBackground = true;
+      console.log('📱 App foi para background - mantendo GPS ativo');
+      // Aumenta frequência de location polls em background
+      this.enableBackgroundTracking();
     };
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         handleReactivate();
+      } else {
+        handleGoBackground();
       }
     });
+    
     window.addEventListener('focus', handleReactivate);
+    window.addEventListener('blur', handleGoBackground);
+  }
+
+  private enableBackgroundTracking() {
+    // Em background, força o worker a ser mais agressivo
+    if (this.worker) {
+      this.worker.postMessage('start');
+    }
+    
+    // Mantém wake lock ativo se possível
+    this.enableWakeLock();
+    
+    // Garante que o áudio keep alive continue
+    if (this.currentState.isNavigating) {
+      this.enableAudioKeepAlive();
+    }
   }
 
   public subscribe(callback: (state: GpsState) => void) {
@@ -272,10 +312,33 @@ class HighPrecisionGpsTracker {
     const currentUser = db.getCurrentUser();
     if (currentUser && currentUser.role === 'rider') {
       const now2 = Date.now();
-      // Só grava no Supabase se passou o intervalo mínimo OU se o motoboy se moveu mais de 20m
-      const shouldWrite = (now2 - this.lastDbWriteTs) >= this.DB_WRITE_INTERVAL_MS || distanceMoved > 20;
+      
+      // Lógica diferenciada para background vs foreground
+      let shouldWrite = false;
+      
+      if (this.isInBackground) {
+        // Em background: só grava se moveu distância significativa OU passou muito tempo
+        this.backgroundLocationCount++;
+        const timeSinceLastWrite = now2 - this.lastDbWriteTs;
+        const significantMovement = distanceMoved > 15; // 15m em background
+        const longTime = timeSinceLastWrite >= (this.DB_WRITE_INTERVAL_MS * 1.5); // 50% mais tempo em background
+        
+        shouldWrite = significantMovement || longTime || (this.backgroundLocationCount % 3 === 0); // A cada 3 polls em background
+        
+        if (shouldWrite) {
+          console.log(`📍 Background GPS: ${distanceMoved.toFixed(1)}m moved, ${(timeSinceLastWrite/1000).toFixed(0)}s elapsed`);
+        }
+      } else {
+        // Em foreground: lógica normal
+        const timeSinceLastWrite = now2 - this.lastDbWriteTs;
+        shouldWrite = timeSinceLastWrite >= this.DB_WRITE_INTERVAL_MS || distanceMoved > 10;
+      }
+      
       if (shouldWrite) {
         this.lastDbWriteTs = now2;
+        this.backgroundLocationCount = 0;
+        
+        // Atualiza local e envia para realtime
         db.updateRiderLocation(currentUser.id, currentUser.name, lat, lng);
         realtimeGps.sendLocation({
           riderId: currentUser.id,

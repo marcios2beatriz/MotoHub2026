@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, User, Establishment, Schedule, Delivery, PartnerRequest, RiderLocation, getDeliveryOperationalDate, isSameDayString } from '../utils/db';
+import { realtimeGps } from '../utils/realtimeGps';
 import { 
   Users, 
   Store, 
@@ -72,7 +73,6 @@ import BatchDeliveryModal from '../components/BatchDeliveryModal';
 import ChatToastBanner, { ChatToast } from '../components/ChatToastBanner';
 import RiderFinancialMetricsCard from '../components/RiderFinancialMetricsCard';
 import { sendDeviceNotification, playNotificationSound, requestNotificationPermission } from '../utils/notifications';
-import { realtimeGps } from '../utils/realtimeGps';
 import { generateGeneralRidersEarningsPdf, generateIndividualRiderEarningsPdf } from '../utils/pdfGenerator';
 
 const DAY_KEYS = ['seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom'] as const;
@@ -312,11 +312,61 @@ export default function AdminDashboard() {
       loadData();
     });
 
+    // Listener de notificações de chat
+    const unsubscribeChat = realtimeGps.subscribeToChatNotifications((payload) => {
+      // Admin recebe notificações de mensagens de motoboys e estabelecimentos
+      if (payload.toUserId === adminUser?.id) {
+        loadData(); // Atualiza dados para refletir novas mensagens
+        
+        // Toast visual (opcional, mas útil quando estiver na tela)
+        setActiveToast({
+          id: `chat_${Date.now()}`,
+          title: 'Nova Mensagem',
+          message: payload.message,
+          sender: payload.fromUserName
+        });
+        
+        // Remove toast após 5 segundos
+        setTimeout(() => setActiveToast(null), 5000);
+      }
+    });
+
+    // Listener de notificações de escala
+    const unsubscribeSchedule = realtimeGps.subscribeToScheduleNotifications((payload) => {
+      // Admin monitora todas as mudanças de escala do sistema
+      loadData(); // Atualiza dados para refletir mudanças nas escalas
+      
+      // Toast informativo para admin
+      let toastMessage = '';
+      switch (payload.action) {
+        case 'created':
+          toastMessage = `${payload.riderName} foi escalado em ${payload.establishmentName}`;
+          break;
+        case 'updated':
+          toastMessage = `Escala de ${payload.riderName} foi atualizada`;
+          break;
+        case 'deleted':
+          toastMessage = `Escala de ${payload.riderName} foi cancelada`;
+          break;
+      }
+      
+      setActiveToast({
+        id: `schedule_${Date.now()}`,
+        title: 'Atualização de Escala',
+        message: toastMessage,
+        sender: 'Sistema'
+      });
+      
+      setTimeout(() => setActiveToast(null), 5000);
+    });
+
     return () => {
       clearInterval(interval);
       window.removeEventListener('db-sync-complete', handleSyncComplete);
       unsubscribeLocation();
       unsubscribeOffline();
+      unsubscribeChat();
+      unsubscribeSchedule();
     };
   }, [adminUser, navigate, activeTab]);
 
@@ -1091,6 +1141,25 @@ export default function AdminDashboard() {
 
   const handleSaveScheduleChat = async (scheduleId: string, updatedChat: string) => {
     const allSchedules = db.getSchedules();
+    const schedule = allSchedules.find(s => s.id === scheduleId);
+    
+    if (schedule && adminUser) {
+      // Extrair a última mensagem enviada
+      const messages = updatedChat.split('\n');
+      const lastMessage = messages[messages.length - 1];
+      
+      // Enviar notificação realtime para o motoboy
+      realtimeGps.sendChatNotification({
+        fromUserId: adminUser.id,
+        fromUserName: adminUser.name,
+        toUserId: schedule.riderId,
+        message: lastMessage,
+        timestamp: Date.now(),
+        type: 'schedule_chat',
+        entityId: scheduleId
+      });
+    }
+    
     const updated = allSchedules.map(s => s.id === scheduleId ? {
       ...s,
       chat: updatedChat,

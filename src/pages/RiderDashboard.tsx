@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, Schedule, Delivery, Notification, Establishment, RouteHistoryItem, getDeliveryOperationalDate, isSameDayString } from '../utils/db';
+import { realtimeGps } from '../utils/realtimeGps';
 import { NEIGHBORHOOD_RATES } from '../utils/neighborhoods';
 import { 
   DollarSign, 
@@ -138,6 +139,10 @@ export default function RiderDashboard() {
   const [notesDeliveryId, setNotesDeliveryId] = useState<string | null>(null);
   const [customerChatDeliveryId, setCustomerChatDeliveryId] = useState<string | null>(null);
   const [activeScheduleChatId, setActiveScheduleChatId] = useState<string | null>(null);
+  
+  // Sistema de mensagens não lidas
+  const [unreadDeliveryChats, setUnreadDeliveryChats] = useState<Set<string>>(new Set());
+  const [unreadScheduleChats, setUnreadScheduleChats] = useState<Set<string>>(new Set());
 
   const [scheduleEstFilter, setScheduleEstFilter] = useState('');
   const [scheduleDateFilter, setScheduleDateFilter] = useState('');
@@ -193,22 +198,22 @@ export default function RiderDashboard() {
     }
   };
 
-  const loadData = () => {
+  const loadData = React.useCallback(() => {
     if (!user) return;
     const allUsers = db.getUsers();
     const freshUser = allUsers.find(u => db.isSameUser(u.id, user.id)) || user;
     
-    const allSchedules = db.getSchedules().filter(s => {
-      return db.isSameUser(s.riderId, freshUser.id);
-    });
+    const allSchedules = db.getSchedules().filter(s => 
+      db.isSameUser(s.riderId, freshUser.id)
+    );
 
-    const allDeliveries = db.getDeliveries().filter(d => {
-      return db.isSameUser(d.riderId, freshUser.id);
-    });
+    const allDeliveries = db.getDeliveries().filter(d => 
+      db.isSameUser(d.riderId, freshUser.id)
+    );
 
-    const allNotifications = db.getNotifications().filter(n => {
-      return db.isSameUser(n.riderId, freshUser.id);
-    });
+    const allNotifications = db.getNotifications().filter(n => 
+      db.isSameUser(n.riderId, freshUser.id)
+    );
 
     const allEsts = db.getEstablishments().filter(e => e.active);
     const myRoutes = db.getRouteHistory().filter(r => db.isSameUser(r.riderId, freshUser.id));
@@ -222,11 +227,12 @@ export default function RiderDashboard() {
 
     const sortedNotifications = [...allNotifications].sort((a, b) => b.date.localeCompare(a.date));
 
-    setSchedules(sortedSchedules);
-    setDeliveries(sortedDeliveries);
-    setNotifications(sortedNotifications);
-    setEstablishments(allEsts);
-    setRouteHistory(myRoutes);
+    // Otimização mobile: só atualizar state se houve mudanças reais
+    setSchedules(prev => JSON.stringify(prev) !== JSON.stringify(sortedSchedules) ? sortedSchedules : prev);
+    setDeliveries(prev => JSON.stringify(prev) !== JSON.stringify(sortedDeliveries) ? sortedDeliveries : prev);
+    setNotifications(prev => JSON.stringify(prev) !== JSON.stringify(sortedNotifications) ? sortedNotifications : prev);
+    setEstablishments(prev => JSON.stringify(prev) !== JSON.stringify(allEsts) ? allEsts : prev);
+    setRouteHistory(prev => JSON.stringify(prev) !== JSON.stringify(myRoutes) ? myRoutes : prev);
 
     if (!hasInitializedDestRef.current) {
       let restoredFromStorage = false;
@@ -261,7 +267,7 @@ export default function RiderDashboard() {
       }
       hasInitializedDestRef.current = true;
     }
-  };
+  }, [user]);
 
   useEffect(() => {
     if (!user || user.role !== 'rider') {
@@ -271,22 +277,91 @@ export default function RiderDashboard() {
     requestNotificationPermission();
     loadData();
 
-    const interval = setInterval(() => {
-      db.pullFromSupabase().then(() => loadData());
-    }, 30000); // Reduzido de 2s para 30s — o realtime cobre alterações instantâneas
+    // Otimização mobile: polling inteligente baseado na visibilidade da página
+    let interval: any;
+    
+    const setupPolling = () => {
+      clearInterval(interval);
+      // Polling mais lento no mobile quando na aba de navegação (GPS é tempo real)
+      // Polling mais rápido quando lançando corridas (aba operation)
+      const pollInterval = activeTab === 'navigation' ? 60000 : 30000; // 1min vs 30s
+      
+      interval = setInterval(() => {
+        // Só fazer pull se a página está visível (economia de bateria mobile)
+        if (!document.hidden) {
+          db.pullFromSupabase().then(() => loadData());
+        }
+      }, pollInterval);
+    };
+
+    // Configurar polling inicial
+    setupPolling();
+
+    // Reconfigurar quando aba muda
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        setupPolling();
+        loadData(); // Refresh imediato quando volta a ficar visível
+      } else {
+        clearInterval(interval); // Parar polling quando não visível (economia bateria)
+      }
+    };
 
     const handleSyncComplete = () => loadData();
     const handleHistoryUpdated = () => loadData();
 
+    // Adicionar listeners para notificações de chat e escala
+    const unsubscribeChat = realtimeGps.subscribeToChatNotifications((payload) => {
+      // Chat notifications são processadas automaticamente no realtimeGps
+      console.log('💬 Notificação de chat recebida:', payload.fromUserName);
+      
+      // Refresh dados se a mensagem é para este usuário
+      if (payload.toUserId === user?.id) {
+        loadData();
+        
+        // Adicionar badge visual de mensagem não lida
+        if (payload.type === 'delivery_chat') {
+          setUnreadDeliveryChats(prev => new Set(prev).add(payload.entityId));
+        } else if (payload.type === 'schedule_chat') {
+          setUnreadScheduleChats(prev => new Set(prev).add(payload.entityId));
+        }
+        
+        // Toast visual quando app está aberto
+        setActiveToast({
+          id: `chat_${Date.now()}`,
+          title: `💬 ${payload.fromUserName}`,
+          message: payload.message.length > 60 ? `${payload.message.substring(0, 60)}...` : payload.message,
+          sender: payload.fromUserName
+        });
+        
+        // Remove toast após 5 segundos
+        setTimeout(() => setActiveToast(null), 5000);
+      }
+    });
+
+    const unsubscribeSchedule = realtimeGps.subscribeToScheduleNotifications((payload) => {
+      // Schedule notifications são processadas automaticamente no realtimeGps
+      console.log('📅 Notificação de escala recebida:', payload.action);
+      
+      // Sempre refresh dados quando escalas mudam
+      if (payload.riderId === user?.id) {
+        loadData();
+      }
+    });
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('db-sync-complete', handleSyncComplete);
     window.addEventListener('route-history-updated', handleHistoryUpdated);
 
     return () => {
       clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('db-sync-complete', handleSyncComplete);
       window.removeEventListener('route-history-updated', handleHistoryUpdated);
+      unsubscribeChat();
+      unsubscribeSchedule();
     };
-  }, [user, navigate, activeTab]);
+  }, [user, navigate, activeTab, loadData]);
 
   const orderNumberCountMap = useMemo(() => {
     const map = new Map<string, number>();
@@ -548,7 +623,7 @@ export default function RiderDashboard() {
     }
   };
 
-  const handleSendCustomerMessage = (text: string) => {
+  const handleSendCustomerMessage = async (text: string) => {
     if (!customerChatDeliveryId) return;
     const now = new Date();
     const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -560,19 +635,41 @@ export default function RiderDashboard() {
 
     const updatedChat = currentDelivery.customerChat ? `${currentDelivery.customerChat}\n${formattedMessage}` : formattedMessage;
 
-    // Usar função otimizada para atualizar apenas 1 registro
-    db.updateSingleDelivery(customerChatDeliveryId, {
-      customerChat: updatedChat
-    });
-    // Não chamar loadData() - realtime já atualiza
+    try {
+      // Atualizar no banco
+      await db.updateSingleDelivery(customerChatDeliveryId, {
+        customerChat: updatedChat
+      });
+
+      // Enviar notificação realtime para o estabelecimento
+      const establishment = db.resolveEstablishment(currentDelivery.establishmentId);
+      if (establishment && user) {
+        realtimeGps.sendChatNotification({
+          fromUserId: user.id,
+          fromUserName: user.name,
+          toUserId: establishment.id, // Estabelecimento como destinatário
+          message: text,
+          timestamp: now.getTime(),
+          type: 'delivery_chat',
+          entityId: customerChatDeliveryId
+        });
+      }
+    } catch (err) {
+      console.error('Erro ao enviar mensagem:', err);
+      alert('Erro ao enviar mensagem. Tente novamente.');
+    }
   };
 
-  const handleSaveNotes = (deliveryId: string, updatedNotes: string) => {
-    // Usar função otimizada para atualizar apenas 1 registro
-    db.updateSingleDelivery(deliveryId, {
-      notes: updatedNotes
-    });
-    // Não chamar loadData() - realtime já atualiza
+  const handleSaveNotes = async (deliveryId: string, updatedNotes: string) => {
+    try {
+      // Usar função otimizada para atualizar apenas 1 registro
+      await db.updateSingleDelivery(deliveryId, {
+        notes: updatedNotes
+      });
+    } catch (err) {
+      console.error('Erro ao salvar anotações:', err);
+      alert('Erro ao salvar anotações. Tente novamente.');
+    }
   };
 
   const handleSaveScheduleChat = (scheduleId: string, updatedChat: string) => {
@@ -1175,12 +1272,29 @@ export default function RiderDashboard() {
 
                             {(delivery.status === 'active' || delivery.status === 'pending') && (
                               <button
-                                onClick={() => setCustomerChatDeliveryId(delivery.id)}
-                                className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg transition-colors flex items-center gap-1 text-xs font-bold"
-                                title="Chat com Cliente"
+                                onClick={() => {
+                                  setCustomerChatDeliveryId(delivery.id);
+                                  // Remove badge ao abrir chat
+                                  setUnreadDeliveryChats(prev => {
+                                    const next = new Set(prev);
+                                    next.delete(delivery.id);
+                                    return next;
+                                  });
+                                }}
+                                className={`px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-bold relative ${
+                                  unreadDeliveryChats.has(delivery.id)
+                                    ? 'bg-emerald-400 hover:bg-emerald-500 text-emerald-950 border border-emerald-500 shadow-md ring-2 ring-emerald-300 animate-pulse'
+                                    : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700'
+                                }`}
+                                title={unreadDeliveryChats.has(delivery.id) ? "Nova mensagem no chat!" : "Chat com Cliente"}
                               >
                                 <MessageSquare className="h-3.5 w-3.5" />
                                 <span>Chat Cliente</span>
+                                {unreadDeliveryChats.has(delivery.id) && (
+                                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full animate-bounce">
+                                    !
+                                  </span>
+                                )}
                               </button>
                             )}
 

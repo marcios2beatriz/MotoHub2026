@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { X, Link2, Plus, DollarSign, Sparkles, AlertCircle, HelpCircle, Loader2, CreditCard, Banknote, QrCode, CheckCircle2 } from 'lucide-react';
 import { User, Establishment, Delivery, db } from '../utils/db';
 

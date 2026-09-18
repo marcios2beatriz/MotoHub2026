@@ -276,7 +276,7 @@ export default function CustomerTracking() {
     }
   };
 
-  const handleSendMessage = (text: string) => {
+  const handleSendMessage = async (text: string) => {
     if (!delivery) return;
     const now = new Date();
     const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -285,15 +285,29 @@ export default function CustomerTracking() {
     const formattedMessage = `[${dateStr} ${timeStr} - Cliente]: ${text}`;
     const updatedChat = delivery.customerChat ? `${delivery.customerChat}\n${formattedMessage}` : formattedMessage;
 
-    const allDeliveries = db.getDeliveries();
-    const updated = allDeliveries.map(d => d.id === delivery.id ? {
-      ...d,
-      customerChat: updatedChat,
-      updatedAt: new Date().toISOString()
-    } : d);
+    try {
+      // Atualizar no banco usando função otimizada
+      await db.updateSingleDelivery(delivery.id, {
+        customerChat: updatedChat,
+        updatedAt: new Date().toISOString()
+      });
 
-    db.setDeliveries(updated);
-    setDelivery({ ...delivery, customerChat: updatedChat });
+      // Enviar notificação realtime para o motoboy
+      const { realtimeGps } = await import('../utils/realtimeGps');
+      realtimeGps.sendChatNotification({
+        fromUserId: 'customer_' + delivery.id, // ID único do cliente
+        fromUserName: 'Cliente',
+        toUserId: delivery.riderId,
+        message: text,
+        timestamp: now.getTime(),
+        type: 'delivery_chat',
+        entityId: delivery.id
+      });
+
+      setDelivery({ ...delivery, customerChat: updatedChat });
+    } catch (err) {
+      console.error('Erro ao enviar mensagem:', err);
+    }
   };
 
   if (loading) {

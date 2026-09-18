@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, Delivery, User, Schedule, RiderLocation, Establishment, getDeliveryOperationalDate, isSameDayString } from '../utils/db';
+import { realtimeGps } from '../utils/realtimeGps';
 import { 
   LogOut, 
   Check, 
@@ -55,7 +56,8 @@ import DeliveryModal from '../components/DeliveryModal';
 import BatchDeliveryModal from '../components/BatchDeliveryModal';
 import RiderFinancialMetricsCard from '../components/RiderFinancialMetricsCard';
 import InventoryManager from '../components/InventoryManager';
-import { realtimeGps } from '../utils/realtimeGps';
+import ChatToastBanner, { ChatToast } from '../components/ChatToastBanner';
+import { sendDeviceNotification, playNotificationSound, requestNotificationPermission } from '../utils/notifications';
 
 const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
 
@@ -145,6 +147,10 @@ export default function EstablishmentDashboard() {
 
   const [notesDeliveryId, setNotesDeliveryId] = useState<string | null>(null);
   const [activeScheduleChatId, setActiveScheduleChatId] = useState<string | null>(null);
+  
+  // Sistema de mensagens não lidas e notificações visuais
+  const [unreadScheduleChats, setUnreadScheduleChats] = useState<Set<string>>(new Set());
+  const [activeToast, setActiveToast] = useState<ChatToast | null>(null);
 
   // Mapa GPS
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -255,6 +261,9 @@ export default function EstablishmentDashboard() {
       return;
     }
 
+    // Solicitar permissão de notificações
+    requestNotificationPermission();
+    
     loadData();
     const interval = setInterval(() => {
       db.pullFromSupabase().then(() => loadData());
@@ -275,11 +284,65 @@ export default function EstablishmentDashboard() {
       loadData();
     });
 
+    // Adicionar listeners para notificações de chat e escala
+    const unsubscribeChat = realtimeGps.subscribeToChatNotifications((payload) => {
+      console.log('💬 Estabelecimento recebeu notificação de chat:', payload);
+      
+      // Pegar o currentEst atualizado no momento da notificação
+      const est = db.getEstablishments().find(e => e.id === user?.establishmentId);
+      
+      // Verificar se a mensagem é para este estabelecimento
+      if (payload.toUserId === est?.id || payload.toUserId === user?.id) {
+        console.log('✅ Notificação confirmada para este estabelecimento');
+        loadData();
+        
+        // Som + vibração + notificação nativa
+        playNotificationSound();
+        sendDeviceNotification(
+          `💬 Mensagem de ${payload.fromUserName}`,
+          payload.message.length > 50 ? `${payload.message.substring(0, 50)}...` : payload.message
+        );
+        
+        // Adicionar badge visual de mensagem não lida
+        if (payload.type === 'schedule_chat') {
+          setUnreadScheduleChats(prev => new Set(prev).add(payload.entityId));
+        }
+        
+        // Toast visual quando app está aberto
+        setActiveToast({
+          id: `chat_${Date.now()}`,
+          title: `💬 ${payload.fromUserName}`,
+          message: payload.message.length > 60 ? `${payload.message.substring(0, 60)}...` : payload.message,
+          sender: payload.fromUserName
+        });
+        
+        // Remove toast após 5 segundos
+        setTimeout(() => setActiveToast(null), 5000);
+      } else {
+        console.log('❌ Notificação não é para este estabelecimento', {
+          payloadToUserId: payload.toUserId,
+          establishmentId: est?.id,
+          userId: user?.id
+        });
+      }
+    });
+
+    const unsubscribeSchedule = realtimeGps.subscribeToScheduleNotifications((payload) => {
+      console.log('📅 Estabelecimento recebeu notificação de escala:', payload.action);
+      
+      // Refresh dados quando escalas do estabelecimento mudam
+      if (payload.establishmentId === currentEst?.id) {
+        loadData();
+      }
+    });
+
     return () => {
       clearInterval(interval);
       window.removeEventListener('db-sync-complete', handleDataUpdate);
       unsubscribeLocation();
       unsubscribeOffline();
+      unsubscribeChat();
+      unsubscribeSchedule();
     };
   }, [user, navigate]);
 
@@ -503,9 +566,16 @@ export default function EstablishmentDashboard() {
       }
     }
 
-    const updated = allDeliveries.map(d => d.id === id ? { ...d, status: 'active' as const, updatedAt: new Date().toISOString() } : d);
-    await db.setDeliveries(updated);
-    loadData();
+    try {
+      // Usar função otimizada para atualizar apenas 1 registro (evita conflitos)
+      await db.updateSingleDelivery(id, { 
+        status: 'active' as const, 
+        updatedAt: new Date().toISOString() 
+      });
+    } catch (err) {
+      console.error('Erro ao aprovar corrida:', err);
+      alert('Erro ao aprovar corrida. Tente novamente.');
+    }
   };
 
   const handleApproveAllPendingDeliveries = async () => {
@@ -522,32 +592,44 @@ export default function EstablishmentDashboard() {
     }
 
     if (confirm(confirmMsg)) {
-      const allDeliveries = db.getDeliveries();
-      const pendingIds = new Set(pendingDels.map(p => p.id));
-      const updated = allDeliveries.map(d => pendingIds.has(d.id) ? {
-        ...d,
-        status: 'active' as const,
-        updatedAt: new Date().toISOString()
-      } : d);
+      try {
+        // Usar função otimizada para múltiplas atualizações (evita conflitos)
+        const updates = pendingDels.map(d => ({
+          id: d.id,
+          changes: {
+            status: 'active' as const,
+            updatedAt: new Date().toISOString()
+          }
+        }));
 
-      await db.setDeliveries(updated);
-      loadData();
-      alert(`${pendingDels.length} corrida(s) aprovada(s) com sucesso!`);
+        await db.updateMultipleDeliveries(updates);
+        alert(`${pendingDels.length} corrida(s) aprovada(s) com sucesso!`);
+      } catch (err) {
+        console.error('Erro ao aprovar corridas em lote:', err);
+        alert('Erro ao aprovar corridas. Tente novamente.');
+      }
     }
   };
 
   const handleRejectDelivery = async (id: string) => {
     const reason = prompt('Digite o motivo da rejeição:');
     if (reason !== null) {
-      const allDeliveries = db.getDeliveries();
-      const updated = allDeliveries.map(d => d.id === id ? {
-        ...d,
-        status: 'rejected' as const,
-        notes: d.notes ? `${d.notes}\nRejeitado: ${reason}` : `Rejeitado: ${reason}`,
-        updatedAt: new Date().toISOString()
-      } : d);
-      await db.setDeliveries(updated);
-      loadData();
+      try {
+        const currentDelivery = db.getDeliveries().find(d => d.id === id);
+        const updatedNotes = currentDelivery?.notes ? 
+          `${currentDelivery.notes}\nRejeitado: ${reason}` : 
+          `Rejeitado: ${reason}`;
+
+        // Usar função otimizada para atualizar apenas 1 registro
+        await db.updateSingleDelivery(id, {
+          status: 'rejected' as const,
+          notes: updatedNotes,
+          updatedAt: new Date().toISOString()
+        });
+      } catch (err) {
+        console.error('Erro ao rejeitar corrida:', err);
+        alert('Erro ao rejeitar corrida. Tente novamente.');
+      }
     }
   };
 
@@ -727,18 +809,39 @@ export default function EstablishmentDashboard() {
   };
 
   const handleSaveNotes = async (deliveryId: string, updatedNotes: string) => {
-    const allDeliveries = db.getDeliveries();
-    const updated = allDeliveries.map(d => d.id === deliveryId ? {
-      ...d,
-      notes: updatedNotes,
-      updatedAt: new Date().toISOString()
-    } : d);
-    await db.setDeliveries(updated);
-    loadData();
+    try {
+      // Usar função otimizada para atualizar apenas 1 registro
+      await db.updateSingleDelivery(deliveryId, {
+        notes: updatedNotes,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('Erro ao salvar anotações:', err);
+      alert('Erro ao salvar anotações. Tente novamente.');
+    }
   };
 
   const handleSaveScheduleChat = async (scheduleId: string, updatedChat: string) => {
     const allSchedules = db.getSchedules();
+    const schedule = allSchedules.find(s => s.id === scheduleId);
+    
+    if (schedule && currentEst && user) {
+      // Extrair a última mensagem enviada
+      const messages = updatedChat.split('\n');
+      const lastMessage = messages[messages.length - 1];
+      
+      // Enviar notificação realtime para o motoboy
+      realtimeGps.sendChatNotification({
+        fromUserId: currentEst.id,
+        fromUserName: currentEst.name,
+        toUserId: schedule.riderId,
+        message: lastMessage,
+        timestamp: Date.now(),
+        type: 'schedule_chat',
+        entityId: scheduleId
+      });
+    }
+    
     const updated = allSchedules.map(s => s.id === scheduleId ? {
       ...s,
       chat: updatedChat,
@@ -764,11 +867,21 @@ export default function EstablishmentDashboard() {
     if (!rider) return;
 
     if (confirm(`Deseja dar baixa e marcar as ${deliveryIds.length} corrida(s) de ${rider.name} como PAGAS?`)) {
-      const allDeliveries = db.getDeliveries();
-      const idSet = new Set(deliveryIds);
-      const updated = allDeliveries.map(d => idSet.has(d.id) ? { ...d, paid: true, updatedAt: new Date().toISOString() } : d);
-      await db.setDeliveries(updated);
-      loadData();
+      try {
+        // Usar função otimizada para múltiplas atualizações
+        const updates = deliveryIds.map(id => ({
+          id,
+          changes: { 
+            paid: true, 
+            updatedAt: new Date().toISOString() 
+          }
+        }));
+
+        await db.updateMultipleDeliveries(updates);
+      } catch (err) {
+        console.error('Erro ao dar baixa nas corridas:', err);
+        alert('Erro ao dar baixa. Tente novamente.');
+      }
     }
   };
 
@@ -777,11 +890,21 @@ export default function EstablishmentDashboard() {
     if (!rider) return;
 
     if (confirm(`Deseja reverter e marcar as ${deliveryIds.length} corrida(s) de ${rider.name} como A REPASSAR (PENDENTES)?`)) {
-      const allDeliveries = db.getDeliveries();
-      const idSet = new Set(deliveryIds);
-      const updated = allDeliveries.map(d => idSet.has(d.id) ? { ...d, paid: false, updatedAt: new Date().toISOString() } : d);
-      await db.setDeliveries(updated);
-      loadData();
+      try {
+        // Usar função otimizada para múltiplas atualizações
+        const updates = deliveryIds.map(id => ({
+          id,
+          changes: { 
+            paid: false, 
+            updatedAt: new Date().toISOString() 
+          }
+        }));
+
+        await db.updateMultipleDeliveries(updates);
+      } catch (err) {
+        console.error('Erro ao reverter baixa das corridas:', err);
+        alert('Erro ao reverter baixa. Tente novamente.');
+      }
     }
   };
 
@@ -1020,6 +1143,7 @@ export default function EstablishmentDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans pb-12">
+      <ChatToastBanner toast={activeToast} onClose={() => setActiveToast(null)} />
       
       {/* Header Principal */}
       <header className="bg-slate-900 text-white shadow-md sticky top-0 z-40">
@@ -1263,12 +1387,29 @@ export default function EstablishmentDashboard() {
                             </button>
 
                             <button
-                              onClick={() => setActiveScheduleChatId(sch.id)}
-                              className="px-3.5 py-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5"
-                              title="Chat do Turno com o Motoboy"
+                              onClick={() => {
+                                setActiveScheduleChatId(sch.id);
+                                // Remove badge ao abrir chat
+                                setUnreadScheduleChats(prev => {
+                                  const next = new Set(prev);
+                                  next.delete(sch.id);
+                                  return next;
+                                });
+                              }}
+                              className={`px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 relative ${
+                                unreadScheduleChats.has(sch.id)
+                                  ? 'bg-indigo-500 hover:bg-indigo-600 text-white border-2 border-indigo-600 shadow-lg ring-2 ring-indigo-300 animate-pulse'
+                                  : 'bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700'
+                              }`}
+                              title={unreadScheduleChats.has(sch.id) ? "Nova mensagem no chat!" : "Chat do Turno com o Motoboy"}
                             >
-                              <MessageSquare className="h-4 w-4 text-indigo-600" />
+                              <MessageSquare className={`h-4 w-4 ${unreadScheduleChats.has(sch.id) ? 'text-white' : 'text-indigo-600'}`} />
                               <span>Chat</span>
+                              {unreadScheduleChats.has(sch.id) && (
+                                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full animate-bounce">
+                                  !
+                                </span>
+                              )}
                             </button>
                           </div>
 

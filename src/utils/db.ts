@@ -352,9 +352,24 @@ let memoryStockMovements: StockMovement[] = [];
 
 const inFlightOrderLocks = new Set<string>();
 
+// Função de debounce para otimizar performance mobile
+function debounce<T extends (...args: any[]) => any>(func: T, wait: number): T {
+  let timeout: any;
+  return ((...args: any[]) => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func.apply(this, args), wait);
+  }) as T;
+}
+
+// Detectar se está em mobile para ajustar throttling
+const isMobile = typeof window !== 'undefined' && (
+  /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+  window.innerWidth <= 768
+);
+
 // Throttle para pullFromSupabase — evita chamadas paralelas excessivas
-let lastPullTs = 0;
-const PULL_THROTTLE_MS = 20000; // máximo 1 pull a cada 20 segundos
+let pullThrottleTs = 0;
+const PULL_THROTTLE_MS = isMobile ? 30000 : 20000; // Mobile: 30s, Desktop: 20s
 
 export const db = {
   isSameDayString,
@@ -579,6 +594,9 @@ export const db = {
   },
 
   async setSchedules(schedules: Schedule[]) {
+    // Detectar mudanças para enviar notificações
+    const previousSchedules = [...memorySchedules];
+    
     memorySchedules = schedules;
     
     const payload = schedules.map(s => {
@@ -606,7 +624,86 @@ export const db = {
     if (payload.length > 0) {
       await supabase.from('schedules').upsert(payload, { onConflict: 'id' });
     }
+    
+    // Enviar notificações para escalas novas ou modificadas
+    this.checkScheduleChangesAndNotify(previousSchedules, schedules);
+    
     await this.pullFromSupabase();
+  },
+
+  checkScheduleChangesAndNotify(previousSchedules: Schedule[], newSchedules: Schedule[]) {
+    try {
+      // Import dinâmico para evitar dependências circulares
+      import('./realtimeGps').then(({ realtimeGps }) => {
+        if (!realtimeGps) return;
+
+        // Detectar escalas novas
+        const newIds = new Set(newSchedules.map(s => s.id));
+        const prevIds = new Set(previousSchedules.map(s => s.id));
+        
+        newSchedules.forEach(schedule => {
+          const wasNew = !prevIds.has(schedule.id);
+          const previous = previousSchedules.find(s => s.id === schedule.id);
+          
+          let action: 'created' | 'updated' | 'deleted' = 'created';
+          
+          if (previous) {
+            // Verificar se houve mudanças significativas
+            const changed = previous.date !== schedule.date || 
+                           previous.shift !== schedule.shift ||
+                           previous.startTime !== schedule.startTime ||
+                           previous.endTime !== schedule.endTime;
+            
+            if (changed) {
+              action = 'updated';
+            } else {
+              return; // Sem mudanças significativas
+            }
+          }
+          
+          const rider = this.resolveUser(schedule.riderId);
+          const establishment = this.resolveEstablishment(schedule.establishmentId);
+          
+          if (rider && establishment) {
+            realtimeGps.sendScheduleNotification({
+              riderId: rider.id,
+              riderName: rider.name,
+              establishmentId: establishment.id,
+              establishmentName: establishment.name,
+              action,
+              date: schedule.date,
+              shift: schedule.shift,
+              timestamp: Date.now()
+            });
+          }
+        });
+
+        // Detectar escalas removidas
+        previousSchedules.forEach(schedule => {
+          if (!newIds.has(schedule.id)) {
+            const rider = this.resolveUser(schedule.riderId);
+            const establishment = this.resolveEstablishment(schedule.establishmentId);
+            
+            if (rider && establishment) {
+              realtimeGps.sendScheduleNotification({
+                riderId: rider.id,
+                riderName: rider.name,
+                establishmentId: establishment.id,
+                establishmentName: establishment.name,
+                action: 'deleted',
+                date: schedule.date,
+                shift: schedule.shift,
+                timestamp: Date.now()
+              });
+            }
+          }
+        });
+      }).catch(err => {
+        console.warn('Erro ao carregar realtimeGps:', err);
+      });
+    } catch (err) {
+      console.warn('Erro ao enviar notificações de escala:', err);
+    }
   },
 
   async deleteSchedule(id: string) {
@@ -1189,10 +1286,10 @@ export const db = {
   async pullFromSupabase() {
     // EMERGÊNCIA: Removendo throttle temporariamente para forçar recarga completa dos dados
     // const now = Date.now();
-    // if (now - lastPullTs < PULL_THROTTLE_MS) {
+    // if (now - pullThrottleTs < PULL_THROTTLE_MS) {
     //   return;
     // }
-    // lastPullTs = now;
+    // pullThrottleTs = now;
 
     console.log('🔄 EMERGÊNCIA: Forçando recarga COMPLETA dos dados do Supabase...');
 
