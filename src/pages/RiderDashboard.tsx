@@ -48,6 +48,7 @@ import CustomerChatModal from '../components/CustomerChatModal';
 import ScheduleChatModal from '../components/ScheduleChatModal';
 import RiderNavigationMap from '../components/RiderNavigationMap';
 import ChatToastBanner, { ChatToast } from '../components/ChatToastBanner';
+import TermsOfServiceModal from '../components/TermsOfServiceModal';
 import RiderFinancialMetricsCard from '../components/RiderFinancialMetricsCard';
 import { sendDeviceNotification, playNotificationSound, requestNotificationPermission } from '../utils/notifications';
 import { gpsTracker, GpsState } from '../utils/gpsTracker';
@@ -85,6 +86,10 @@ const PAGE_SIZE = 30;
 export default function RiderDashboard() {
   const navigate = useNavigate();
   const [user] = useState(db.getCurrentUser());
+  
+  // Estado do modal de termos de uso
+  const [showTermsModal, setShowTermsModal] = useState(false);
+  
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -269,11 +274,39 @@ export default function RiderDashboard() {
     }
   }, [user]);
 
+  // Função para aceitar os termos de uso
+  const handleAcceptTerms = () => {
+    if (!user) return;
+    const termsKey = `terms_accepted_${user.id}`;
+    const acceptanceData = {
+      acceptedAt: new Date().toISOString(),
+      version: '1.0',
+      userId: user.id,
+      userName: user.name
+    };
+    localStorage.setItem(termsKey, JSON.stringify(acceptanceData));
+    setShowTermsModal(false);
+    
+    // Agora sim, iniciar o sistema
+    requestNotificationPermission();
+    loadData();
+  };
+
   useEffect(() => {
     if (!user || user.role !== 'rider') {
       navigate('/login');
       return;
     }
+    
+    // Verificar se o usuário já aceitou os termos
+    const termsKey = `terms_accepted_${user.id}`;
+    const hasAcceptedTerms = localStorage.getItem(termsKey);
+    
+    if (!hasAcceptedTerms) {
+      setShowTermsModal(true);
+      return; // Não carregar dados até aceitar os termos
+    }
+    
     requestNotificationPermission();
     loadData();
 
@@ -925,6 +958,14 @@ export default function RiderDashboard() {
   return (
     <div className="min-h-screen bg-slate-50 pb-16 relative">
       <ChatToastBanner toast={activeToast} onClose={() => setActiveToast(null)} />
+      
+      {/* Modal de Termos de Uso - Aparece apenas uma vez */}
+      <TermsOfServiceModal
+        isOpen={showTermsModal}
+        onAccept={handleAcceptTerms}
+        userRole="rider"
+        userName={user?.name || ''}
+      />
 
       <header className="bg-indigo-600 text-white shadow-md sticky top-0 z-20">
         <div className="max-w-4xl mx-auto px-4 py-4 flex justify-between items-center">
