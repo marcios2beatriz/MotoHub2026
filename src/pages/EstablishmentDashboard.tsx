@@ -203,7 +203,13 @@ export default function EstablishmentDashboard() {
     setCurrentEst(estFound);
     console.log('✅ Estabelecimento encontrado:', estFound.name);
 
-    const allDeliveries = db.getDeliveries();
+    const rawDeliveries = db.getDeliveries();
+    
+    // 🔧 CORREÇÃO: Deduplicar corridas (evita duplicação por race condition realtime + pull)
+    const allDeliveries = Array.from(
+      new Map(rawDeliveries.map(d => [d.id, d])).values()
+    );
+    
     const allSchedules = db.getSchedules();
     
     console.log('📊 Dados totais:', {
@@ -1794,8 +1800,38 @@ export default function EstablishmentDashboard() {
                         deliveries={riderDeliveries}
                         isPaid={allPaid}
                         showSettleButton={true}
-                        onSettle={() => handleSettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
-                        onUnsettle={() => handleUnsettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
+                        onSettle={() => {
+                          // 🔧 CORREÇÃO: Buscar TODAS as corridas não pagas do motoboy neste estabelecimento
+                          const allUnpaidDeliveries = deliveries.filter(d => 
+                            db.isSameUser(d.riderId, rider.id) && 
+                            db.isSameEstablishment(d.establishmentId, currentEst?.id) &&
+                            d.status === 'active' && 
+                            !d.paid
+                          );
+                          
+                          const hiddenCount = allUnpaidDeliveries.length - riderDeliveries.length;
+                          
+                          if (hiddenCount > 0) {
+                            const confirmMsg = `${rider.name} tem ${riderDeliveries.length} corrida(s) no período selecionado e ${hiddenCount} corrida(s) fora do período.\n\nDeseja dar baixa em TODAS as ${allUnpaidDeliveries.length} corridas não pagas?`;
+                            
+                            if (confirm(confirmMsg)) {
+                              handleSettleRiderDeliveries(rider.id, allUnpaidDeliveries.map(d => d.id));
+                            }
+                          } else {
+                            // Sem corridas ocultas, baixa normalmente
+                            handleSettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id));
+                          }
+                        }}
+                        onUnsettle={() => {
+                          // 🔧 CORREÇÃO: Reverter TODAS as corridas pagas do motoboy
+                          const allPaidDeliveries = deliveries.filter(d => 
+                            db.isSameUser(d.riderId, rider.id) && 
+                            db.isSameEstablishment(d.establishmentId, currentEst?.id) &&
+                            d.status === 'active' && 
+                            d.paid
+                          );
+                          handleUnsettleRiderDeliveries(rider.id, allPaidDeliveries.map(d => d.id));
+                        }}
                         periodLabel={settleBounds.label}
                       />
 

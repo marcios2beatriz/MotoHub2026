@@ -1,0 +1,21 @@
+✅ TAXA ADMINISTRATIVA OCULTADA DO MOTOBOY
+
+ARQUIVO MODIFICADO:
+- src/pages/RiderDashboard.tsx
+
+O QUE MUDOU:
+- Removida menção à "taxa adm R$ 1" do card de ganhos
+- Motoboy agora vê apenas: "Total Faturado Hoje: R$ 56,00"
+- Antes via: "Líquido R$ 56,00 (Bruto: R$ 60,00 - taxa adm R$ 1)"
+
+QUEM VÊ A TAXA:
+✅ Admin - vê tudo discriminado
+✅ Estabelecimento - vê nos relatórios
+❌ Motoboy - vê só o líquido
+
+IMPACTO:
+- Cálculos continuam iguais
+- Apenas visualização mudou
+- Rebuild necessário para APK
+
+STATUS: ✅ Pronto

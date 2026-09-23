@@ -79,22 +79,9 @@ const DAY_KEYS = ['seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom'] as const;
 const DAY_LABELS = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'];
 
 // Taxa padrão do administrador por corrida
-const ADMIN_FEE_PER_DELIVERY = 1.00;
+import { getAdminFeeForDelivery, getRiderNetForDelivery } from '../utils/financialCalculations';
 
-// Corridas de mesmo endereço (R$ 4,00) são 100% isentas da taxa administrativa
-export const getAdminFeeForDelivery = (d: Delivery): number => {
-  const val = Number(d.value || 0);
-  if (d.deliveryType === 'same_address' || val <= 4.00) {
-    return 0;
-  }
-  return ADMIN_FEE_PER_DELIVERY;
-};
-
-export const getRiderNetForDelivery = (d: Delivery): number => {
-  const val = Number(d.value || 0);
-  const fee = getAdminFeeForDelivery(d);
-  return Math.max(0, val - fee);
-};
+const ADMIN_FEE_PER_DELIVERY = 1.00; // Mantido para referência, mas use as funções centralizadas
 
 // Tempo limite para considerar o motoboy online no Admin (3 minutos)
 const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
@@ -260,7 +247,13 @@ export default function AdminDashboard() {
     const currentUsers = db.getUsers();
     const currentEsts = db.getEstablishments();
     const currentSchedules = db.getSchedules();
-    const currentDeliveries = db.getDeliveries();
+    const rawDeliveries = db.getDeliveries();
+    
+    // 🔧 CORREÇÃO: Deduplicar corridas (evita duplicação por race condition realtime + pull)
+    const currentDeliveries = Array.from(
+      new Map(rawDeliveries.map(d => [d.id, d])).values()
+    );
+    
     const rawRequests = db.getPartnerRequests();
     const locations = db.getRiderLocations();
 
@@ -1377,7 +1370,9 @@ export default function AdminDashboard() {
   const totalFinanceGrossRevenue = financeFilteredDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
   const totalFinanceDeliveriesCount = financeFilteredDeliveries.length;
   const totalFinanceAdminCommission = financeFilteredDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
-  const totalFinanceRidersNet = Math.max(0, totalFinanceGrossRevenue - totalFinanceAdminCommission);
+  // ✅ CORREÇÃO: Incluir adicionais no total líquido dos motoboys
+  const totalFinanceAdditionals = financeFilteredDeliveries.reduce((sum, d) => sum + Number(d.additionalValue || 0), 0);
+  const totalFinanceRidersNet = Math.max(0, totalFinanceGrossRevenue - totalFinanceAdminCommission) + totalFinanceAdditionals;
 
   const getFilteredReportData = () => {
     let start = new Date();
@@ -1443,7 +1438,9 @@ export default function AdminDashboard() {
       });
 
       Object.values(summary).forEach((item: any) => {
-        item.net = Math.max(0, item.total - item.adminCut);
+        // ✅ CORREÇÃO: Incluir adicional no cálculo do líquido
+        // Fórmula: (Total corridas - Taxa) + Adicionais
+        item.net = Math.max(0, item.total - item.adminCut) + item.additionalsTotal;
       });
 
       return Object.values(summary);
@@ -3430,8 +3427,36 @@ export default function AdminDashboard() {
                               deliveries={riderDeliveries}
                               isPaid={allPaid}
                               showSettleButton={true}
-                              onSettle={() => handleSettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
-                              onUnsettle={() => handleUnsettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id))}
+                              onSettle={() => {
+                                // 🔧 CORREÇÃO: Buscar TODAS as corridas não pagas do motoboy (não apenas as filtradas)
+                                const allUnpaidDeliveries = deliveries.filter(d => 
+                                  d.riderId === rider.id && 
+                                  d.status === 'active' && 
+                                  !d.paid
+                                );
+                                
+                                const hiddenCount = allUnpaidDeliveries.length - riderDeliveries.length;
+                                
+                                if (hiddenCount > 0) {
+                                  const confirmMsg = `${rider.name} tem ${riderDeliveries.length} corrida(s) no período selecionado e ${hiddenCount} corrida(s) fora do período.\n\nDeseja dar baixa em TODAS as ${allUnpaidDeliveries.length} corridas não pagas?`;
+                                  
+                                  if (confirm(confirmMsg)) {
+                                    handleSettleRiderDeliveries(rider.id, allUnpaidDeliveries.map(d => d.id));
+                                  }
+                                } else {
+                                  // Sem corridas ocultas, baixa normalmente
+                                  handleSettleRiderDeliveries(rider.id, riderDeliveries.map(d => d.id));
+                                }
+                              }}
+                              onUnsettle={() => {
+                                // 🔧 CORREÇÃO: Reverter TODAS as corridas pagas do motoboy
+                                const allPaidDeliveries = deliveries.filter(d => 
+                                  d.riderId === rider.id && 
+                                  d.status === 'active' && 
+                                  d.paid
+                                );
+                                handleUnsettleRiderDeliveries(rider.id, allPaidDeliveries.map(d => d.id));
+                              }}
                               periodLabel={financeBounds.label}
                             />
 
@@ -3481,9 +3506,12 @@ export default function AdminDashboard() {
                       .map(est => {
                         const estDeliveries = financeFilteredDeliveries.filter(d => d.establishmentId === est.id);
                         const count = estDeliveries.length;
-                        const totalCharged = estDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
+                        const totalBase = estDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
+                        const additionalsTotal = estDeliveries.reduce((sum, d) => sum + Number(d.additionalValue || 0), 0);
+                        // ✅ CORREÇÃO CRÍTICA: Total que estabelecimento paga = Base + Adicionais
+                        const totalCharged = totalBase + additionalsTotal;
                         const adminCut = estDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
-                        const ridersCut = Math.max(0, totalCharged - adminCut);
+                        const ridersCut = Math.max(0, totalBase - adminCut) + additionalsTotal;
                         const allSettled = count > 0 && estDeliveries.every(d => d.paid);
 
                         return (

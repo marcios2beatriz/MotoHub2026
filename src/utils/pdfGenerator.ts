@@ -3,7 +3,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Delivery, User, Establishment } from './db';
-import { getAdminFeeForDelivery, getRiderNetForDelivery } from '../pages/AdminDashboard';
+import { getAdminFeeForDelivery, getRiderNetForDelivery } from './financialCalculations';
 
 interface GeneratePdfGeneralOptions {
   riders: User[];
@@ -52,8 +52,9 @@ export const generateGeneralRidersEarningsPdf = ({
   const relevantDeliveries = activeDeliveries.filter(d => targetRiders.some(r => r.id === d.riderId));
   const totalGross = relevantDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
   const totalAdminCut = relevantDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
-  const totalRidersNet = Math.max(0, totalGross - totalAdminCut);
   const totalAdditionals = relevantDeliveries.reduce((sum, d) => sum + Number(d.additionalValue || 0), 0);
+  // ✅ CORREÇÃO: Incluir adicionais no total líquido
+  const totalRidersNet = Math.max(0, totalGross - totalAdminCut) + totalAdditionals;
   
   const totalSameAddressDeliveries = relevantDeliveries.filter(d => d.deliveryType === 'same_address' || Number(d.value) <= 4.00);
   const totalSameAddressCount = totalSameAddressDeliveries.length;
@@ -159,7 +160,8 @@ export const generateGeneralRidersEarningsPdf = ({
     const addsTotal = riderDels.reduce((sum, d) => sum + Number(d.additionalValue || 0), 0);
     const grossTotal = riderDels.reduce((sum, d) => sum + Number(d.value || 0), 0);
     const admCutTotal = riderDels.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
-    const netTotal = Math.max(0, grossTotal - admCutTotal);
+    // ✅ CORREÇÃO: Incluir adicionais no líquido
+    const netTotal = Math.max(0, grossTotal - admCutTotal) + addsTotal;
     const isPaid = count > 0 && riderDels.every(d => d.paid);
 
     const row = [
@@ -283,8 +285,9 @@ export const generateIndividualRiderEarningsPdf = ({
   // Totais do Motoboy
   const totalGross = activeDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
   const totalAdminCut = activeDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
-  const totalRiderNet = Math.max(0, totalGross - totalAdminCut);
   const totalAdditionals = activeDeliveries.reduce((sum, d) => sum + Number(d.additionalValue || 0), 0);
+  // ✅ CORREÇÃO: Incluir adicionais no líquido
+  const totalRiderNet = Math.max(0, totalGross - totalAdminCut) + totalAdditionals;
   
   const sameAddressDeliveries = activeDeliveries.filter(d => d.deliveryType === 'same_address' || Number(d.value) <= 4.00);
   const sameAddressCount = sameAddressDeliveries.length;

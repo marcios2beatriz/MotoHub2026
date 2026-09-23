@@ -4,6 +4,7 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 import { Geolocation } from '@capacitor/geolocation';
 import { db } from './db';
 import { realtimeGps } from './realtimeGps';
+import GpsTracking from '../plugins/gpsTracking';
 
 // Detectar se está em dispositivo mobile
 const isMobile = typeof window !== 'undefined' && (
@@ -11,7 +12,7 @@ const isMobile = typeof window !== 'undefined' && (
   window.innerWidth <= 768
 );
 
-// Interface do plugin Background Geolocation do Capacitor
+// Interface do plugin Background Geolocation do Capacitor (fallback)
 interface BackgroundGeolocationPlugin {
   addWatcher(
     options: {
@@ -370,7 +371,7 @@ class HighPrecisionGpsTracker {
     this.enableWakeLock();
     this.enableAudioKeepAlive();
 
-    // 1. MODO NATIVO ANDROID / CAPACITOR (Foreground Service com Notificação)
+    // 1. MODO NATIVO ANDROID - FOREGROUND SERVICE (GPS 100% Background)
     if (Capacitor.isNativePlatform()) {
       try {
         const perm = await Geolocation.requestPermissions();
@@ -380,7 +381,35 @@ class HighPrecisionGpsTracker {
           return;
         }
 
-        // Tenta iniciar o plugin nativo de Background Geolocation com notificação fixa no Android
+        // ✅ USAR PLUGIN NATIVO GPS TRACKING (Foreground Service)
+        try {
+          console.log('🛰️ Iniciando GPS Tracking nativo (Foreground Service)...');
+          
+          // Inicia o foreground service nativo
+          const result = await GpsTracking.startTracking();
+          console.log('✅ GPS Tracking nativo iniciado:', result.message);
+          
+          // Adiciona listener para receber atualizações do serviço
+          await GpsTracking.addListener('locationUpdate', (location) => {
+            console.log('📍 Location update do serviço nativo:', location);
+            this.handleSuccess(
+              location.latitude,
+              location.longitude,
+              location.accuracy,
+              location.speed,
+              location.bearing
+            );
+          });
+          
+          // Força uma atualização imediata
+          this.forceLocationPoll();
+          
+          return; // GPS nativo configurado com sucesso
+        } catch (nativeErr) {
+          console.warn('⚠️ Plugin GpsTracking não disponível, usando fallback:', nativeErr);
+        }
+
+        // Fallback: Tenta Background Geolocation plugin do Capacitor
         try {
           this.bgWatcherId = await BackgroundGeolocation.addWatcher(
             {
@@ -408,10 +437,10 @@ class HighPrecisionGpsTracker {
           );
           return;
         } catch (bgErr) {
-          console.warn('BackgroundGeolocation plugin fallback:', bgErr);
+          console.warn('⚠️ BackgroundGeolocation plugin fallback:', bgErr);
         }
 
-        // Fallback nativo Geolocation.watchPosition
+        // Fallback final: Geolocation.watchPosition
         this.watchId = await Geolocation.watchPosition(
           { enableHighAccuracy: true },
           (pos, err) => {
@@ -432,7 +461,7 @@ class HighPrecisionGpsTracker {
         );
         return;
       } catch (e) {
-        console.warn('Fallback para Geolocation Web:', e);
+        console.warn('⚠️ Fallback para Geolocation Web:', e);
       }
     }
 
@@ -466,6 +495,20 @@ class HighPrecisionGpsTracker {
   }
 
   public async stopTracking() {
+    // Parar serviço nativo GPS Tracking se estiver rodando
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const status = await GpsTracking.isTracking();
+        if (status.isTracking) {
+          console.log('🛑 Parando GPS Tracking nativo...');
+          await GpsTracking.stopTracking();
+          console.log('✅ GPS Tracking nativo parado');
+        }
+      } catch (err) {
+        console.warn('⚠️ Erro ao parar GPS nativo:', err);
+      }
+    }
+
     if (this.bgWatcherId) {
       try {
         await BackgroundGeolocation.removeWatcher({ id: this.bgWatcherId });

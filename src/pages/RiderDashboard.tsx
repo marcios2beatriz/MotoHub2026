@@ -51,23 +51,11 @@ import ChatToastBanner, { ChatToast } from '../components/ChatToastBanner';
 import TermsOfServiceModal from '../components/TermsOfServiceModal';
 import RiderFinancialMetricsCard from '../components/RiderFinancialMetricsCard';
 import { sendDeviceNotification, playNotificationSound, requestNotificationPermission } from '../utils/notifications';
-import { gpsTracker, GpsState } from '../utils/gpsTracker';
+import { gpsManager, GpsState } from '../utils/gpsManager';
+import GpsTracking, { GpsLocation as NativeGpsLocation } from '../plugins/gpsTracking';
+import { Capacitor } from '@capacitor/core';
 
-const ADMIN_FEE_PER_DELIVERY = 1.00;
-
-export const getAdminFeeForDelivery = (d: Delivery): number => {
-  const val = Number(d.value || 0);
-  if (d.deliveryType === 'same_address' || val <= 4.00) {
-    return 0;
-  }
-  return ADMIN_FEE_PER_DELIVERY;
-};
-
-export const getRiderNetForDelivery = (d: Delivery): number => {
-  const val = Number(d.value || 0);
-  const fee = getAdminFeeForDelivery(d);
-  return Math.max(0, val - fee);
-};
+import { getAdminFeeForDelivery, getRiderNetForDelivery } from '../utils/financialCalculations';
 
 const getThisMonday = (): string => {
   const now = new Date();
@@ -176,8 +164,8 @@ export default function RiderDashboard() {
   };
 
   useEffect(() => {
-    gpsTracker.startTracking();
-    const unsubscribeGps = gpsTracker.subscribe((state) => {
+    gpsManager.startTracking();
+    const unsubscribeGps = gpsManager.subscribe((state) => {
       setGpsState(state);
     });
     return () => unsubscribeGps();
@@ -212,8 +200,13 @@ export default function RiderDashboard() {
       db.isSameUser(s.riderId, freshUser.id)
     );
 
-    const allDeliveries = db.getDeliveries().filter(d => 
+    const rawDeliveries = db.getDeliveries().filter(d => 
       db.isSameUser(d.riderId, freshUser.id)
+    );
+
+    // 🔧 CORREÇÃO: Deduplicar corridas (evita duplicação por race condition realtime + pull)
+    const allDeliveries = Array.from(
+      new Map(rawDeliveries.map(d => [d.id, d])).values()
     );
 
     const allNotifications = db.getNotifications().filter(n => 
@@ -419,7 +412,7 @@ export default function RiderDashboard() {
 
   const handleLogout = async () => {
     if (user) {
-      gpsTracker.stopTracking();
+      await gpsManager.stopTracking();
       await db.clearRiderLocation(user.id);
     }
     db.setCurrentUser(null);
@@ -1105,13 +1098,8 @@ export default function RiderDashboard() {
                   <DollarSign className="h-6 w-6" />
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 font-medium uppercase">Total Faturado Hoje (Líquido)</p>
+                  <p className="text-xs text-slate-500 font-medium uppercase">Total Faturado Hoje</p>
                   <p className="text-2xl font-bold text-slate-800">R$ {todayNetEarnings.toFixed(2)}</p>
-                  {todayGrossEarnings > todayNetEarnings && (
-                    <p className="text-[11px] text-slate-400 font-semibold mt-0.5">
-                      Bruto: R$ {todayGrossEarnings.toFixed(2)} (taxa adm R$ 1 descontada apenas nas corridas padrão)
-                    </p>
-                  )}
                 </div>
               </div>
 

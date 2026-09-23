@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Delivery } from '../utils/db';
-import { getAdminFeeForDelivery, getRiderNetForDelivery } from '../pages/AdminDashboard';
+import { getAdminFeeForDelivery, getRiderNetForDelivery } from '../utils/financialCalculations';
 import { Check } from 'lucide-react';
 
 interface RiderFinancialMetricsCardProps {
@@ -34,9 +34,9 @@ export default function RiderFinancialMetricsCard({
   const sameAddressCount = deliveries.filter(d => d.deliveryType === 'same_address' || Number(d.value) <= 4.00).length;
   const sameAddressTotal = deliveries.filter(d => d.deliveryType === 'same_address' || Number(d.value) <= 4.00).reduce((sum, d) => sum + Number(d.value || 0), 0);
 
-  // Taxa adm R$ 1,00 apenas sobre as corridas padrão
+  // ✅ CORREÇÃO: Usar getRiderNetForDelivery que inclui adicional corretamente
   const adminCut = deliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
-  const riderNet = Math.max(0, grossVal - adminCut);
+  const riderNet = deliveries.reduce((sum, d) => sum + getRiderNetForDelivery(d), 0);
   const allPaid = count > 0 && (isPaid || deliveries.every(d => d.paid));
 
   return (
@@ -70,8 +70,8 @@ export default function RiderFinancialMetricsCard({
         </span>
       </div>
 
-      {/* Grid com as 5 Métricas Obrigatórias */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-3.5 pb-2 text-center mt-2">
+      {/* Grid com as 4 Métricas (Taxa Adm removida para motoboy) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3.5 pb-2 text-center mt-2">
         
         {/* Métrica 1: Corridas */}
         <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-2.5 flex flex-col justify-center">
@@ -93,13 +93,7 @@ export default function RiderFinancialMetricsCard({
           <p className="text-sm font-black text-fuchsia-700 mt-0.5">R$ {totalAdditionals.toFixed(2)}</p>
         </div>
 
-        {/* Métrica 4: Taxa Adm (R$ 1) */}
-        <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-2.5 flex flex-col justify-center">
-          <p className="text-[9px] font-extrabold text-amber-800 uppercase tracking-wider">TAXA ADM (R$1)</p>
-          <p className="text-sm font-black text-amber-700 mt-0.5">R$ {adminCut.toFixed(2)}</p>
-        </div>
-
-        {/* Métrica 5: Líquido Motoboy */}
+        {/* Métrica 4: Líquido Motoboy */}
         <div className="col-span-2 sm:col-span-1 bg-emerald-50 border-2 border-emerald-300 rounded-2xl p-2.5 flex flex-col justify-center shadow-xs">
           <p className="text-[9px] font-extrabold text-emerald-800 uppercase tracking-wider">LÍQUIDO MOTOBOY</p>
           <p className="text-base sm:text-lg font-black text-emerald-700 mt-0.5">R$ {riderNet.toFixed(2)}</p>

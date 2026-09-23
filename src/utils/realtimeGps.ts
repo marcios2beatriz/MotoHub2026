@@ -1,6 +1,8 @@
 import { supabase } from './supabase';
 import { db } from './db';
 import { sendDeviceNotification, playNotificationSound } from './notifications';
+import { Capacitor } from '@capacitor/core';
+import NativeNotification from '../plugins/nativeNotification';
 
 export interface LocationPayload {
   riderId: string;
@@ -116,7 +118,20 @@ class RealtimeGpsManager {
         ? `${payload.message.substring(0, 50)}...` 
         : payload.message;
 
-      sendDeviceNotification(title, body);
+      // Usar notificação nativa no Android/iOS, fallback para web
+      if (Capacitor.isNativePlatform()) {
+        NativeNotification.sendChatNotification({
+          title,
+          message: body,
+          fromUserName: payload.fromUserName
+        }).catch(() => {
+          // Fallback para notificação web
+          sendDeviceNotification(title, body);
+        });
+      } else {
+        sendDeviceNotification(title, body);
+      }
+      
       playNotificationSound();
     }
   }
@@ -143,7 +158,19 @@ class RealtimeGpsManager {
         break;
     }
 
-    sendDeviceNotification(title, body);
+    // Usar notificação nativa no Android/iOS, fallback para web
+    if (Capacitor.isNativePlatform()) {
+      NativeNotification.sendScheduleNotification({
+        title,
+        message: body
+      }).catch(() => {
+        // Fallback para notificação web
+        sendDeviceNotification(title, body);
+      });
+    } else {
+      sendDeviceNotification(title, body);
+    }
+    
     playNotificationSound();
   }
 
