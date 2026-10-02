@@ -6,9 +6,13 @@
 
 ## 📱 **PRÉ-REQUISITOS**
 
-- APK instalado no celular Android
-- Login como motoboy configurado
-- Waze ou Google Maps instalado
+- ✅ Novo APK instalado (versão 2.0 com correções de permissões)
+- ⚠️ **IMPORTANTE:** Desinstalar versão antiga antes de instalar nova!
+- ✅ Waze ou Google Maps instalado (para teste real)
+
+**Por quê desinstalar versão antiga?**
+Nova versão solicita 3 permissões (Location, Background, Notifications).
+Desinstalar garante que todas permissões sejam solicitadas corretamente.
 
 ---
 
@@ -25,14 +29,32 @@ Motoboy usando Waze para navegar enquanto MotoHub rastreia em background.
 ```
 ✅ Abrir MotoHub no celular
 ✅ Login como motoboy
-✅ Clicar em "Iniciar Rastreamento"
+
+🔐 APP VAI PEDIR 3 PERMISSÕES (VERSÃO NOVA):
+
+   1️⃣ "Permitir localização enquanto usa o app?"
+      → Clique: "ENQUANTO USA O APP"
+   
+   2️⃣ "Permitir localização o tempo todo?"
+      → Clique: "PERMITIR O TEMPO TODO" ✅ (ESSENCIAL!)
+   
+   3️⃣ "Permitir notificações?" (Android 13+)
+      → Clique: "PERMITIR" ✅ (ESSENCIAL!)
+
+✅ Após conceder permissões, clicar em "Iniciar Rastreamento"
 ✅ VERIFICAR: Notificação "🏍️ MotoHub - GPS Ativo" aparece na barra
 ```
 
 **Resultado esperado:**
-- Notificação persistente visível
-- Ícone de localização ativo na barra
-- Console mostra: "✅ GPS Tracking nativo iniciado"
+- ✅ 3 permissões solicitadas em sequência
+- ✅ Todas permissões concedidas
+- ✅ Notificação persistente visível na barra
+- ✅ Ícone de localização ativo na barra de status
+- ✅ Console mostra: "✅ GPS Tracking nativo iniciado"
+
+**⚠️ Se não pediu 3 permissões:**
+- Versão antiga ainda instalada (desinstalar e reinstalar)
+- Android < 13 (só pede 2 permissões, tudo bem)
 
 ---
 
@@ -107,12 +129,24 @@ Durante todo o teste:
 
 ### **SE ALGO FALHOU:**
 
-**Cenário A: Notificação sumiu ao abrir Waze**
-❌ **Problema:** Foreground service não iniciou
+**Cenário A: Notificação sumiu ao abrir Waze (ou nunca apareceu)**
+❌ **Problema:** Permissão de notificação negada ou foreground service não iniciou
 🔧 **Solução:** 
-- Verificar logs do Logcat (GpsTrackingService)
-- Verificar se `registerPlugin(GpsTrackingPlugin.class)` está no MainActivity
-- Rebuild completo do projeto
+```
+1. Verificar permissões manualmente:
+   Configurações → Apps → MotoHub → Permissões
+   - Localização: "Permitir o tempo todo" ✅
+   - Notificações: "Permitir" ✅
+
+2. Verificar canal de notificação:
+   Configurações → Apps → MotoHub → Notificações
+   - "Rastreamento GPS": ATIVAR ✅
+
+3. Se ainda falhar:
+   - Desinstalar app completamente
+   - Reinstalar APK novo
+   - Conceder todas 3 permissões quando solicitadas
+```
 
 ---
 
@@ -159,20 +193,41 @@ Build > Build APK(s)
 
 **Filtro:** `GpsTracking`
 
-**Logs de sucesso:**
+**Logs de sucesso (VERSÃO NOVA):**
 ```
-I/GpsTrackingService: onCreate() - Serviço iniciado
-I/GpsTrackingService: onStartCommand() - Foreground iniciado
-I/GpsTrackingService: Notificação criada: GPS Ativo
-I/GpsTrackingService: processLocationUpdate() - distance: 12.5m
-I/GpsTrackingService: Enviando broadcast GPS_LOCATION_UPDATE
+D/GpsTrackingPlugin: startTracking() called
+D/GpsTrackingPlugin: All permissions granted
+D/GpsTrackingPlugin: Starting GPS service...
+D/GpsTrackingService: =====================================
+D/GpsTrackingService: onStartCommand() called
+D/GpsTrackingService: Criando canal de notificação...
+D/GpsTrackingService: ✅ Canal criado: gps_tracking_channel
+D/GpsTrackingService: Criando notificação...
+D/GpsTrackingService: ✅ Notificação construída com sucesso
+D/GpsTrackingService: Chamando startForeground()...
+D/GpsTrackingService: ✅ startForeground() executado com sucesso!
+D/GpsTrackingService: ✅ Serviço completamente inicializado!
+D/GpsTrackingService: =====================================
+D/GpsTrackingPlugin: ✅ GPS tracking started successfully!
 ```
 
-**Logs de erro:**
+**Logs de erro de permissão:**
 ```
-E/GpsTrackingPlugin: Failed to start service: ...
-E/GpsTrackingService: Location permission denied
-E/GpsTrackingService: FusedLocationProvider failed: ...
+D/GpsTrackingPlugin: Location permission missing, requesting...
+E/GpsTrackingPlugin: Location permission denied
+-- OU --
+D/GpsTrackingPlugin: Background location permission missing, requesting...
+E/GpsTrackingPlugin: Background location permission denied
+-- OU --
+D/GpsTrackingPlugin: Notification permission missing, requesting...
+E/GpsTrackingPlugin: Notification permission denied
+```
+
+**Logs de erro de serviço:**
+```
+E/GpsTrackingService: ❌ ERRO: Notification é null!
+E/GpsTrackingService: ❌ NotificationManager é null!
+E/GpsTrackingService: ❌ ERRO no startForeground(): ...
 ```
 
 ---
@@ -215,9 +270,21 @@ Se não tiver Waze ou não quiser dirigir:
 
 ### **Notificação não aparece:**
 ```
-1. Verificar permissões (Localização + Notificações)
-2. Verificar MainActivity.java tem registerPlugin()
-3. Rebuild completo
+1. Verificar se app solicitou 3 permissões:
+   - Se não: Desinstalar e reinstalar APK
+   
+2. Verificar permissões manualmente:
+   Configurações → Apps → MotoHub
+   - Localização: "Permitir o tempo todo" ✅
+   - Notificações: "Permitir" ✅
+   
+3. Verificar canal de notificação:
+   Configurações → Apps → MotoHub → Notificações
+   - "Rastreamento GPS": ATIVAR ✅
+   
+4. Fabricantes específicos (Xiaomi/Samsung):
+   - Desabilitar otimização de bateria
+   - Adicionar na lista de apps protegidos
 ```
 
 ### **GPS para em background:**
@@ -229,10 +296,13 @@ Se não tiver Waze ou não quiser dirigir:
 
 ### **Logs mostram erro de permissão:**
 ```
-1. Desinstalar app
-2. Reinstalar APK
-3. Permitir TODAS as permissões
-4. Escolher "Sempre permitir localização"
+1. Desinstalar app completamente
+2. Reinstalar APK NOVO (versão 2.0)
+3. Ao fazer login, permitir TODAS as 3 permissões:
+   - Localização: "Enquanto usa o app" (primeiro)
+   - Background: "Permitir o tempo todo" (segundo) ✅
+   - Notificações: "Permitir" (terceiro) ✅
+4. Se Android < 13, só vai pedir 2 permissões (OK)
 ```
 
 ---
@@ -290,4 +360,22 @@ Revisar documentação:
 
 ---
 
-_Guia de teste criado: 21 de Setembro de 2026_
+---
+
+## 🆕 **NOVIDADES VERSÃO 2.0**
+
+Esta versão corrige o problema da notificação não aparecer:
+
+✅ **Solicita explicitamente 3 permissões** em sequência  
+✅ **Valida cada permissão** antes de iniciar GPS  
+✅ **Logs detalhados** para diagnóstico (✅/❌)  
+✅ **Canal de notificação** criado e verificado  
+✅ **Notificação garantida** com flags corretas (Android 12+)  
+✅ **Visibilidade pública** na tela de bloqueio  
+
+**Resultado:** Notificação persistente 100% funcional!
+
+---
+
+_Guia de teste criado: 21 de Setembro de 2026_  
+_Atualizado: 27 de Setembro de 2026 - Versão 2.0_

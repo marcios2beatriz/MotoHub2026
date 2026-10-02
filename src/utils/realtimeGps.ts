@@ -52,6 +52,9 @@ class RealtimeGpsManager {
   private chatListeners: Set<ChatNotificationCallback> = new Set();
   private scheduleListeners: Set<ScheduleNotificationCallback> = new Set();
   private isSubscribed = false;
+  private reconnectInterval: number | null = null;
+  private lastActivity = Date.now();
+  private pollingInterval: number | null = null;
 
   public init() {
     if (this.channel) return;
@@ -66,6 +69,7 @@ class RealtimeGpsManager {
       .on('broadcast', { event: 'location-update' }, (response) => {
         const payload = response.payload as LocationPayload;
         if (payload && payload.riderId && payload.lat && payload.lng) {
+          this.lastActivity = Date.now(); // 🔥 Marca última atividade
           db.updateRiderLocation(payload.riderId, payload.riderName, payload.lat, payload.lng);
           this.listeners.forEach((listener) => listener(payload));
         }
@@ -73,6 +77,7 @@ class RealtimeGpsManager {
       .on('broadcast', { event: 'rider-offline' }, (response) => {
         const payload = response.payload as OfflinePayload;
         if (payload && payload.riderId) {
+          this.lastActivity = Date.now(); // 🔥 Marca última atividade
           // Remove localmente do DB mock
           const locations = db.getRiderLocationsRecord();
           if (locations[payload.riderId]) {
@@ -86,6 +91,7 @@ class RealtimeGpsManager {
       .on('broadcast', { event: 'chat-message' }, (response) => {
         const payload = response.payload as ChatNotificationPayload;
         if (payload && payload.fromUserId && payload.toUserId && payload.message) {
+          this.lastActivity = Date.now(); // 🔥 Marca última atividade
           // Processar notificação de chat
           this.handleChatNotification(payload);
           this.chatListeners.forEach((listener) => listener(payload));
@@ -94,6 +100,7 @@ class RealtimeGpsManager {
       .on('broadcast', { event: 'schedule-update' }, (response) => {
         const payload = response.payload as ScheduleNotificationPayload;
         if (payload && payload.riderId) {
+          this.lastActivity = Date.now(); // 🔥 Marca última atividade
           // Processar notificação de escala
           this.handleScheduleNotification(payload);
           this.scheduleListeners.forEach((listener) => listener(payload));
@@ -103,8 +110,22 @@ class RealtimeGpsManager {
         if (status === 'SUBSCRIBED') {
           this.isSubscribed = true;
           console.log('🔄 Realtime conectado: GPS + Notificações ativas');
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          console.warn('⚠️ Realtime desconectado:', status);
+          this.isSubscribed = false;
+          // 🔥 Tentar reconectar após 3 segundos
+          setTimeout(() => this.reconnect(), 3000);
         }
       });
+
+    // 🔥 NOVO: Detectar quando app volta do background e reconectar
+    this.setupVisibilityListener();
+    
+    // 🔥 NOVO: Watchdog para verificar se ainda está recebendo dados
+    this.startConnectionWatchdog();
+    
+    // 🔥 NOVO: Polling de fallback (busca do Supabase a cada 10s caso realtime falhe)
+    this.startPollingFallback();
   }
 
   private handleChatNotification(payload: ChatNotificationPayload) {
@@ -268,6 +289,129 @@ class RealtimeGpsManager {
       }).catch((err) => {
         console.warn('Erro ao enviar notificação de escala:', err);
       });
+    }
+  }
+
+  // 🔥 NOVO: Reconectar canal Realtime
+  private reconnect() {
+    console.log('🔄 Tentando reconectar Realtime...');
+    
+    if (this.channel) {
+      this.channel.unsubscribe();
+      this.channel = null;
+    }
+    
+    this.isSubscribed = false;
+    this.init();
+  }
+
+  // 🔥 NOVO: Detecta quando app volta do background
+  private setupVisibilityListener() {
+    if (typeof document === 'undefined') return;
+
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        console.log('📱 App voltou ao foreground - verificando conexão Realtime');
+        
+        // Se não está subscrito, reconectar
+        if (!this.isSubscribed) {
+          this.reconnect();
+        }
+        
+        // Forçar atualização dos dados do mapa
+        this.listeners.forEach((listener) => {
+          const locations = db.getRiderLocationsRecord();
+          Object.values(locations).forEach((loc: any) => {
+            listener({
+              riderId: loc.riderId,
+              riderName: loc.riderName,
+              lat: loc.lat,
+              lng: loc.lng,
+              timestamp: Date.now()
+            });
+          });
+        });
+      }
+    });
+  }
+
+  // 🔥 NOVO: Watchdog para detectar se conexão está morta
+  private startConnectionWatchdog() {
+    if (this.reconnectInterval) {
+      clearInterval(this.reconnectInterval);
+    }
+
+    this.reconnectInterval = setInterval(() => {
+      const timeSinceActivity = Date.now() - this.lastActivity;
+      
+      // Se não recebe dados há mais de 30 segundos E deveria estar conectado
+      if (timeSinceActivity > 30000 && this.isSubscribed) {
+        console.warn('⚠️ Sem atividade Realtime há 30s - reconectando...');
+        this.reconnect();
+      }
+    }, 15000); // Verifica a cada 15s
+  }
+
+  // 🔥 NOVO: Polling de fallback - busca localizações do Supabase caso Realtime falhe
+  private startPollingFallback() {
+    if (this.pollingInterval) {
+      clearInterval(this.pollingInterval);
+    }
+
+    this.pollingInterval = setInterval(async () => {
+      // Só fazer polling se tiver listeners interessados
+      if (this.listeners.size === 0) return;
+
+      try {
+        // Buscar localizações recentes (últimos 2 minutos)
+        const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+        
+        const { data, error } = await supabase
+          .from('rider_locations')
+          .select('*')
+          .gte('updated_at', twoMinutesAgo);
+
+        if (!error && data && data.length > 0) {
+          // Atualizar localizações locais
+          data.forEach((loc: any) => {
+            if (loc.rider_id && loc.lat && loc.lng) {
+              db.updateRiderLocation(
+                loc.rider_id,
+                loc.rider_name || '',
+                parseFloat(loc.lat),
+                parseFloat(loc.lng)
+              );
+              
+              // Notificar listeners
+              this.listeners.forEach((listener) => {
+                listener({
+                  riderId: loc.rider_id,
+                  riderName: loc.rider_name || '',
+                  lat: parseFloat(loc.lat),
+                  lng: parseFloat(loc.lng),
+                  timestamp: new Date(loc.updated_at).getTime()
+                });
+              });
+            }
+          });
+        }
+      } catch (err) {
+        console.warn('Erro no polling de fallback:', err);
+      }
+    }, 10000); // Polling a cada 10 segundos
+  }
+
+  // 🔥 NOVO: Cleanup ao destruir
+  public destroy() {
+    if (this.reconnectInterval) {
+      clearInterval(this.reconnectInterval);
+    }
+    if (this.pollingInterval) {
+      clearInterval(this.pollingInterval);
+    }
+    if (this.channel) {
+      this.channel.unsubscribe();
+      this.channel = null;
     }
   }
 }

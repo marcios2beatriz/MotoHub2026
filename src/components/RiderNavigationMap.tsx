@@ -39,7 +39,8 @@ import {
   ExternalLink
 } from 'lucide-react';
 import L from 'leaflet';
-import { gpsTracker, GpsState, isPointOffRoute, calculateDistanceMeters, getShortestAngleDiff } from '../utils/gpsTracker';
+import { gpsManager, GpsState } from '../utils/gpsManager';
+import { isPointOffRoute, calculateDistanceMeters, getShortestAngleDiff } from '../utils/gpsTracker';
 import { searchFreeTextAddress, geocodeByPlaceId, fetchAutocompleteSuggestions, parseAddressQuery, AutocompleteSuggestion } from '../utils/geocoding';
 import { computeRouteCached, RouteResult, optimizeAllPointsSequence } from '../utils/googleRoutes';
 import { db, RouteHistoryItem } from '../utils/db';
@@ -266,7 +267,7 @@ export default function RiderNavigationMap({
   }, [navStorageKey, activeDestination, waypoints, isNavigating, routeCoordinates, routeDetails]);
 
   useEffect(() => {
-    gpsTracker.setNavigating(isNavigating);
+    gpsManager.setNavigating(isNavigating);
   }, [isNavigating]);
 
   const [showWaypointsList, setShowWaypointsList] = useState(false);
@@ -369,8 +370,8 @@ export default function RiderNavigationMap({
   };
 
   useEffect(() => {
-    gpsTracker.startTracking();
-    const unsubscribe = gpsTracker.subscribe((state) => {
+    gpsManager.startTracking();
+    const unsubscribe = gpsManager.subscribe((state) => {
       setGpsState(state);
     });
     return () => unsubscribe();
@@ -1150,7 +1151,7 @@ export default function RiderNavigationMap({
         setRotationAngle(targetRot);
       }
     } else {
-      gpsTracker.requestManualPermission();
+      gpsManager.requestManualPermission();
     }
   };
 
@@ -2182,7 +2183,7 @@ export default function RiderNavigationMap({
               }
 
               setIsNavigating(nextState);
-              gpsTracker.setNavigating(nextState);
+              gpsManager.setNavigating(nextState);
               if (nextState) {
                 handleRecenter();
               }

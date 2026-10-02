@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, Schedule, Delivery, Notification, Establishment, RouteHistoryItem, getDeliveryOperationalDate, isSameDayString } from '../utils/db';
 import { realtimeGps } from '../utils/realtimeGps';
+import { screenWakeLock } from '../utils/screenWakeLock';
 import { NEIGHBORHOOD_RATES } from '../utils/neighborhoods';
 import { 
   DollarSign, 
@@ -54,6 +55,7 @@ import { sendDeviceNotification, playNotificationSound, requestNotificationPermi
 import { gpsManager, GpsState } from '../utils/gpsManager';
 import GpsTracking, { GpsLocation as NativeGpsLocation } from '../plugins/gpsTracking';
 import { Capacitor } from '@capacitor/core';
+import BatteryOptimization from '../plugins/batteryOptimization';
 
 import { getAdminFeeForDelivery, getRiderNetForDelivery } from '../utils/financialCalculations';
 
@@ -165,10 +167,19 @@ export default function RiderDashboard() {
 
   useEffect(() => {
     gpsManager.startTracking();
+    
+    // ⚡ ATIVAR WAKE LOCK - Tela não vai descansar
+    screenWakeLock.enableWakeLock();
+    
     const unsubscribeGps = gpsManager.subscribe((state) => {
       setGpsState(state);
     });
-    return () => unsubscribeGps();
+    
+    return () => {
+      unsubscribeGps();
+      // Desativar wake lock ao sair
+      screenWakeLock.disableWakeLock();
+    };
   }, []);
 
   const activePos = gpsState.currentLocation;
@@ -1003,6 +1014,44 @@ export default function RiderDashboard() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 mt-6">
+        {/* ✅ BOTÃO DISCRETO PARA HABILITAR GPS EM BACKGROUND */}
+        <div className="bg-blue-50 border border-blue-200 p-3 rounded-lg mb-4 shadow-sm">
+          <div className="flex items-start gap-2">
+            <ShieldAlert className="h-4 w-4 text-blue-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-xs text-blue-800 mb-2">
+                Para o GPS continuar funcionando em segundo plano, clique abaixo:
+              </p>
+              <button
+                onClick={async () => {
+                  try {
+                    console.log('🔘 Botão clicado - iniciando verificação...');
+                    
+                    const result = await BatteryOptimization.check();
+                    console.log('✅ Check result:', result);
+                    
+                    if (!result.isWhitelisted) {
+                      console.log('⚠️ Não está na whitelist - solicitando...');
+                      await BatteryOptimization.request();
+                      alert('✅ Solicitação enviada! Selecione "Sim" ou "Não otimizar" na próxima tela.');
+                    } else {
+                      console.log('✅ Já está na whitelist');
+                      alert('✅ GPS já está configurado corretamente! Pode usar o app normalmente.');
+                    }
+                  } catch (error: any) {
+                    console.error('❌ Erro ao solicitar whitelist:', error);
+                    alert('Configure manualmente:\nConfigurações → Bateria → Otimização → MotoHub → Não otimizar\n\nErro: ' + (error?.message || 'Desconhecido'));
+                  }
+                }}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium py-2 px-3 rounded transition-colors flex items-center justify-center space-x-1.5"
+              >
+                <Check className="h-3.5 w-3.5" />
+                <span>Habilitar GPS Permanente</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        
         <div className="bg-emerald-50 border-l-4 border-emerald-600 p-4 rounded-xl mb-6 flex items-start gap-3 shadow-sm">
           <ShieldAlert className="h-5 w-5 text-emerald-600 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
