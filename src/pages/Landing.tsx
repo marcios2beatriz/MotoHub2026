@@ -30,17 +30,25 @@ import {
 } from 'lucide-react';
 
 export default function Landing() {
+  console.log('🏠 Landing.tsx: Componente Landing renderizado');
+  
   const navigate = useNavigate();
   const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [showEstModal, setShowEstModal] = useState(false);
   const [activeFeatureTab, setActiveFeatureTab] = useState<'establishments' | 'riders'>('establishments');
   
   useEffect(() => {
+    console.log('🏠 Landing.tsx: useEffect executado');
     const user = db.getCurrentUser();
+    console.log('👤 Usuário atual:', user);
+    
     if (user && user.active) {
+      console.log('✅ Usuário ativo, redirecionando para:', user.role);
       if (user.role === 'admin') navigate('/admin', { replace: true });
       else if (user.role === 'establishment') navigate('/establishment', { replace: true });
       else navigate('/rider', { replace: true });
+    } else {
+      console.log('❌ Nenhum usuário ativo, permanecendo na landing');
     }
   }, [navigate]);
 

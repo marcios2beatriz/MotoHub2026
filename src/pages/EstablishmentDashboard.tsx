@@ -278,6 +278,18 @@ export default function EstablishmentDashboard() {
     const handleDataUpdate = () => loadData();
     window.addEventListener('db-sync-complete', handleDataUpdate);
 
+    // 🔧 CORREÇÃO: Listeners para atualizações de polling e foreground
+    const handlePollingUpdate = () => {
+      console.log('🔄 EstablishmentDashboard: Evento de polling recebido');
+      db.pullFromSupabase().then(() => loadData());
+    };
+    const handleForegroundUpdate = () => {
+      console.log('📱 EstablishmentDashboard: App voltou ao foreground');
+      db.pullFromSupabase().then(() => loadData());
+    };
+    window.addEventListener('gps-polling-update', handlePollingUpdate);
+    window.addEventListener('gps-foreground-update', handleForegroundUpdate);
+
     const unsubscribeLocation = realtimeGps.subscribeToLocations(() => {
       loadData();
     });
@@ -345,6 +357,8 @@ export default function EstablishmentDashboard() {
     return () => {
       clearInterval(interval);
       window.removeEventListener('db-sync-complete', handleDataUpdate);
+      window.removeEventListener('gps-polling-update', handlePollingUpdate);
+      window.removeEventListener('gps-foreground-update', handleForegroundUpdate);
       unsubscribeLocation();
       unsubscribeOffline();
       unsubscribeChat();

@@ -55,6 +55,8 @@ class RealtimeGpsManager {
   private reconnectInterval: number | null = null;
   private lastActivity = Date.now();
   private pollingInterval: number | null = null;
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 3;
 
   public init() {
     if (this.channel) return;
@@ -109,12 +111,20 @@ class RealtimeGpsManager {
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           this.isSubscribed = true;
-          console.log('🔄 Realtime conectado: GPS + Notificações ativas');
+          this.reconnectAttempts = 0; // Reset contador
+          console.log('✅ Realtime conectado: GPS + Notificações ativas');
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
           console.warn('⚠️ Realtime desconectado:', status);
           this.isSubscribed = false;
-          // 🔥 Tentar reconectar após 3 segundos
-          setTimeout(() => this.reconnect(), 3000);
+          
+          // 🔥 Limitar tentativas de reconexão para evitar loop infinito
+          if (this.reconnectAttempts < this.maxReconnectAttempts) {
+            this.reconnectAttempts++;
+            console.log(`🔄 Tentativa de reconexão ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+            setTimeout(() => this.reconnect(), 3000);
+          } else {
+            console.warn('❌ Realtime falhou após 3 tentativas - usando apenas polling');
+          }
         }
       });
 
@@ -311,28 +321,69 @@ class RealtimeGpsManager {
 
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) {
-        console.log('📱 App voltou ao foreground - verificando conexão Realtime');
+        console.log('📱 App voltou ao foreground - sincronizando GPS');
         
-        // Se não está subscrito, reconectar
-        if (!this.isSubscribed) {
+        // ✅ CORREÇÃO: Forçar busca manual do Supabase imediatamente
+        this.fetchLatestLocations();
+        
+        // Se não está subscrito E ainda tem tentativas, reconectar
+        if (!this.isSubscribed && this.reconnectAttempts < this.maxReconnectAttempts) {
           this.reconnect();
         }
-        
-        // Forçar atualização dos dados do mapa
-        this.listeners.forEach((listener) => {
-          const locations = db.getRiderLocationsRecord();
-          Object.values(locations).forEach((loc: any) => {
-            listener({
-              riderId: loc.riderId,
-              riderName: loc.riderName,
-              lat: loc.lat,
-              lng: loc.lng,
-              timestamp: Date.now()
-            });
-          });
-        });
       }
     });
+  }
+  
+  // 🔥 NOVO: Busca manual de localizações (executado ao voltar do background)
+  private async fetchLatestLocations() {
+    try {
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      
+      console.log('🔍 Buscando localizações manuais desde:', fiveMinutesAgo);
+      
+      const { data, error } = await supabase
+        .from('rider_locations')
+        .select('*')
+        .gte('updated_at', fiveMinutesAgo);
+
+      if (error) {
+        console.error('❌ Erro ao buscar localizações:', error);
+        return;
+      }
+
+      console.log(`✅ Encontradas ${data?.length || 0} localizações`);
+
+      if (data && data.length > 0) {
+        data.forEach((loc: any) => {
+          if (loc.rider_id && loc.lat && loc.lng) {
+            db.updateRiderLocation(
+              loc.rider_id,
+              loc.rider_name || '',
+              parseFloat(loc.lat),
+              parseFloat(loc.lng)
+            );
+            
+            // Notificar listeners do mapa
+            this.listeners.forEach((listener) => {
+              listener({
+                riderId: loc.rider_id,
+                riderName: loc.rider_name || '',
+                lat: parseFloat(loc.lat),
+                lng: parseFloat(loc.lng),
+                timestamp: new Date(loc.updated_at).getTime()
+              });
+            });
+          }
+        });
+        
+        // 🔥 Disparar evento customizado para forçar re-render do mapa
+        window.dispatchEvent(new CustomEvent('gps-foreground-update', {
+          detail: { count: data.length, timestamp: Date.now() }
+        }));
+      }
+    } catch (err) {
+      console.error('❌ Exceção ao buscar localizações:', err);
+    }
   }
 
   // 🔥 NOVO: Watchdog para detectar se conexão está morta
@@ -352,26 +403,48 @@ class RealtimeGpsManager {
     }, 15000); // Verifica a cada 15s
   }
 
-  // 🔥 NOVO: Polling de fallback - busca localizações do Supabase caso Realtime falhe
+  // 🔥 MELHORADO: Polling de fallback com proteção contra pausas do navegador
   private startPollingFallback() {
     if (this.pollingInterval) {
       clearInterval(this.pollingInterval);
     }
 
-    this.pollingInterval = setInterval(async () => {
-      // Só fazer polling se tiver listeners interessados
-      if (this.listeners.size === 0) return;
+    console.log('🔄 Iniciando polling de fallback (30s)');
+    
+    let lastPollTime = Date.now();
 
+    this.pollingInterval = setInterval(async () => {
+      const now = Date.now();
+      const timeSinceLastPoll = now - lastPollTime;
+      
+      // 🔥 Detectar se setInterval foi pausado (gap > 35 segundos indica background)
+      if (timeSinceLastPoll > 35000) {
+        console.warn(`⚠️ Polling pausado por ${Math.round(timeSinceLastPoll / 1000)}s (navegador em background)`);
+      }
+      
+      lastPollTime = now;
+      
+      console.log('📊 Polling executando... listeners:', this.listeners.size);
+      
       try {
-        // Buscar localizações recentes (últimos 2 minutos)
-        const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+        // Buscar localizações recentes (últimos 5 minutos)
+        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        
+        console.log('🔍 Buscando localizações desde:', fiveMinutesAgo);
         
         const { data, error } = await supabase
           .from('rider_locations')
           .select('*')
-          .gte('updated_at', twoMinutesAgo);
+          .gte('updated_at', fiveMinutesAgo);
 
-        if (!error && data && data.length > 0) {
+        if (error) {
+          console.error('❌ Erro no polling:', error);
+          return;
+        }
+
+        console.log(`✅ Polling encontrou ${data?.length || 0} localizações`);
+
+        if (data && data.length > 0) {
           // Atualizar localizações locais
           data.forEach((loc: any) => {
             if (loc.rider_id && loc.lat && loc.lng) {
@@ -381,6 +454,8 @@ class RealtimeGpsManager {
                 parseFloat(loc.lat),
                 parseFloat(loc.lng)
               );
+              
+              console.log(`📍 Atualizando ${loc.rider_name}: ${loc.lat}, ${loc.lng}`);
               
               // Notificar listeners
               this.listeners.forEach((listener) => {
@@ -394,11 +469,18 @@ class RealtimeGpsManager {
               });
             }
           });
+          
+          // 🔥 Forçar atualização do mapa
+          window.dispatchEvent(new CustomEvent('gps-polling-update', {
+            detail: { count: data.length, timestamp: Date.now() }
+          }));
         }
       } catch (err) {
-        console.warn('Erro no polling de fallback:', err);
+        console.error('❌ Exceção no polling de fallback:', err);
       }
-    }, 10000); // Polling a cada 10 segundos
+    }, 30000); // Aumentado para 30s (mais eficiente)
+    
+    console.log('✅ Polling de fallback configurado (30s)');
   }
 
   // 🔥 NOVO: Cleanup ao destruir

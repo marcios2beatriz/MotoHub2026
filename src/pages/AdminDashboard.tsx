@@ -284,20 +284,39 @@ export default function AdminDashboard() {
       return;
     }
     requestNotificationPermission();
-    loadData();
+    
+    // 🔧 CORREÇÃO: Busca inicial do Supabase ao montar
+    db.pullFromSupabase().then(() => {
+      console.log('✅ AdminDashboard: Dados iniciais carregados do Supabase');
+      loadData();
+    });
 
     const interval = setInterval(() => {
       db.pullFromSupabase().then(() => loadData());
-    }, 30000); // Reduzido de 2s para 30s — o realtime cobre alterações instantâneas
+    }, 30000); // Polling de backup a cada 30s
 
     const handleSyncComplete = () => loadData();
     window.addEventListener('db-sync-complete', handleSyncComplete);
 
+    // 🔧 CORREÇÃO: Listener para atualizações de polling e foreground
+    const handlePollingUpdate = () => {
+      console.log('🔄 AdminDashboard: Recebido evento de polling, atualizando mapa...');
+      db.pullFromSupabase().then(() => loadData());
+    };
+    const handleForegroundUpdate = () => {
+      console.log('📱 AdminDashboard: App voltou ao foreground, sincronizando...');
+      db.pullFromSupabase().then(() => loadData());
+    };
+    window.addEventListener('gps-polling-update', handlePollingUpdate);
+    window.addEventListener('gps-foreground-update', handleForegroundUpdate);
+
     const unsubscribeLocation = realtimeGps.subscribeToLocations(() => {
+      console.log('📡 AdminDashboard: Recebida atualização Realtime de GPS');
       loadData();
     });
 
     const unsubscribeOffline = realtimeGps.subscribeToOffline((payload) => {
+      console.log('❌ AdminDashboard: Motoboy offline:', payload.riderId);
       if (mapRef.current && markersRef.current[payload.riderId]) {
         mapRef.current.removeLayer(markersRef.current[payload.riderId]);
         delete markersRef.current[payload.riderId];
@@ -356,6 +375,8 @@ export default function AdminDashboard() {
     return () => {
       clearInterval(interval);
       window.removeEventListener('db-sync-complete', handleSyncComplete);
+      window.removeEventListener('gps-polling-update', handlePollingUpdate);
+      window.removeEventListener('gps-foreground-update', handleForegroundUpdate);
       unsubscribeLocation();
       unsubscribeOffline();
       unsubscribeChat();

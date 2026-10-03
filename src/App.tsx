@@ -18,6 +18,10 @@ function AppHandler({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
 
   useEffect(() => {
+    console.log('🚀 App.tsx: AppHandler montado');
+    console.log('📍 Localização atual:', window.location.href);
+    console.log('📍 Hash:', window.location.hash);
+    
     // Puxar dados do Supabase na inicialização
     db.pullFromSupabase();
 
@@ -80,6 +84,8 @@ function EstablishmentRoute({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  console.log('🎯 App.tsx: Componente App renderizado');
+  
   return (
     <Router>
       <AppHandler>

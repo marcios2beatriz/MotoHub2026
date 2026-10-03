@@ -1295,9 +1295,16 @@ export const db = {
 
     try {
       // Otimização: usar SELECT * temporariamente até identificar campos problemáticos
-      const { data: usersData } = await supabase
+      console.log('📥 Puxando users...');
+      const { data: usersData, error: usersError } = await supabase
         .from('users')
         .select('*'); // Voltar ao SELECT * que funcionava
+      
+      if (usersError) {
+        console.error('❌ Erro ao puxar users:', usersError);
+        throw usersError;
+      }
+      
       if (usersData) {
         memoryUsers = usersData.map(u => ({
           id: u.id,
@@ -1313,11 +1320,19 @@ export const db = {
           createdAt: u.created_at,
           updatedAt: u.updated_at
         }));
+        console.log(`✅ Users carregados: ${memoryUsers.length}`);
       }
 
-      const { data: estsData } = await supabase
+      console.log('📥 Puxando establishments...');
+      const { data: estsData, error: estsError } = await supabase
         .from('establishments')
         .select('*'); // Voltar ao SELECT * que funcionava
+      
+      if (estsError) {
+        console.error('❌ Erro ao puxar establishments:', estsError);
+        throw estsError;
+      }
+      
       if (estsData) {
         memoryEstablishments = estsData.map(e => ({
           id: e.id,
@@ -1337,24 +1352,43 @@ export const db = {
           createdAt: e.created_at,
           updatedAt: e.updated_at
         }));
+        console.log(`✅ Establishments carregados: ${memoryEstablishments.length}`);
       }
 
-      const { data: schData } = await supabase
+      console.log('📥 Puxando schedules...');
+      const { data: schData, error: schError } = await supabase
         .from('schedules')
         .select('*')
         .order('date', { ascending: false }); // SELECT * + ordenação
+      
+      if (schError) {
+        console.error('❌ Erro ao puxar schedules:', schError);
+        throw schError;
+      }
+      
       if (schData) {
         memorySchedules = schData.map(s => {
           let chat: string | undefined = undefined;
           let createdBy: string | undefined = undefined;
-          if (s.created_by && s.created_by.startsWith('{')) {
-            try {
-              const parsed = JSON.parse(s.created_by);
-              createdBy = parsed.createdBy || undefined;
-              chat = parsed.chat || undefined;
-            } catch (e) {}
-          } else {
-            createdBy = s.created_by || undefined;
+          
+          // 🔧 CORREÇÃO: Tratamento robusto de created_by malformado
+          if (s.created_by) {
+            if (typeof s.created_by === 'string' && s.created_by.startsWith('{')) {
+              try {
+                const parsed = JSON.parse(s.created_by);
+                createdBy = parsed.createdBy || undefined;
+                chat = parsed.chat || undefined;
+              } catch (e) {
+                console.warn('⚠️ JSON inválido em created_by:', s.created_by.substring(0, 50));
+                createdBy = undefined;
+              }
+            } else if (typeof s.created_by === 'object') {
+              // Já é objeto, não precisa parse
+              createdBy = s.created_by.createdBy || undefined;
+              chat = s.created_by.chat || undefined;
+            } else {
+              createdBy = String(s.created_by);
+            }
           }
 
           const cRider = this.resolveUser(s.rider_id);
@@ -1374,9 +1408,11 @@ export const db = {
             updatedAt: s.updated_at
           };
         });
+        console.log(`✅ Schedules carregados: ${memorySchedules.length}`);
       }
 
       // Puxar entregas com paginação otimizada
+      console.log('📥 Puxando deliveries (paginado)...');
       const allDelData: any[] = [];
       let delFrom = 0;
       const delBatchSize = 500; // reduzido de 1000 para 500
@@ -1389,12 +1425,19 @@ export const db = {
           .range(delFrom, delFrom + delBatchSize - 1)
           .order('date', { ascending: false }); // SELECT * + ordenação por data
 
-        if (error || !data || data.length === 0) {
+        if (error) {
+          console.error(`❌ Erro ao puxar deliveries (offset ${delFrom}):`, error);
+          throw error;
+        }
+
+        if (!data || data.length === 0) {
           hasMore = false;
           break;
         }
 
         allDelData.push(...data);
+        console.log(`  ↳ Batch ${delFrom}-${delFrom + data.length}: ${data.length} entregas`);
+        
         if (data.length < delBatchSize) {
           hasMore = false;
         } else {
@@ -1406,13 +1449,22 @@ export const db = {
 
       if (allDelData.length > 0) {
         memoryDeliveries = allDelData.map(parseDeliveryRow);
+        console.log(`✅ Deliveries carregadas: ${memoryDeliveries.length}`);
       } else {
         memoryDeliveries = [];
+        console.log('✅ Nenhuma delivery encontrada');
       }
 
-      const { data: reqsData } = await supabase
+      console.log('📥 Puxando partner_requests...');
+      const { data: reqsData, error: reqsError } = await supabase
         .from('partner_requests')
         .select('*'); // SELECT * 
+      
+      if (reqsError) {
+        console.error('❌ Erro ao puxar partner_requests:', reqsError);
+        throw reqsError;
+      }
+      
       if (reqsData) {
         memoryRequests = reqsData.map(r => ({
           id: r.id,
@@ -1423,11 +1475,19 @@ export const db = {
           status: r.status,
           createdAt: r.created_at
         }));
+        console.log(`✅ Partner requests carregados: ${memoryRequests.length}`);
       }
 
-      const { data: locData } = await supabase
+      console.log('📥 Puxando rider_locations...');
+      const { data: locData, error: locError } = await supabase
         .from('rider_locations')
         .select('*'); // SELECT *
+      
+      if (locError) {
+        console.error('❌ Erro ao puxar rider_locations:', locError);
+        throw locError;
+      }
+      
       if (locData) {
         const mappedLocs: Record<string, RiderLocation> = {};
         locData.forEach(l => {
@@ -1443,37 +1503,56 @@ export const db = {
           }
         });
         memoryLocations = mappedLocs;
+        console.log(`✅ Rider locations carregadas: ${Object.keys(memoryLocations).length}`);
       }
 
       // Puxar produtos do estoque
-      const { data: prodsData } = await supabase
+      console.log('📥 Puxando products...');
+      const { data: prodsData, error: prodsError } = await supabase
         .from('products')
         .select('*'); // SELECT *
+      
+      if (prodsError) {
+        console.error('❌ Erro ao puxar products:', prodsError);
+        throw prodsError;
+      }
+      
       if (prodsData) {
         memoryProducts = prodsData.map(parseProductRow);
+        console.log(`✅ Products carregados: ${memoryProducts.length}`);
       }
 
       // Puxar histórico de movimentações de estoque (TODAS as movimentações)
-      const { data: movsData } = await supabase
+      console.log('📥 Puxando stock_movements...');
+      const { data: movsData, error: movsError } = await supabase
         .from('stock_movements')
         .select('*')
         .order('created_at', { ascending: false }); // SELECT * + ordenação
+      
+      if (movsError) {
+        console.error('❌ Erro ao puxar stock_movements:', movsError);
+        throw movsError;
+      }
+      
       if (movsData) {
         memoryStockMovements = movsData.map(parseStockMovementRow);
+        console.log(`✅ Stock movements carregados: ${memoryStockMovements.length}`);
       }
 
       window.dispatchEvent(new Event('db-sync-complete'));
       
-      console.log('✅ DADOS CARREGADOS:', {
+      console.log('✅ DADOS CARREGADOS COM SUCESSO:', {
         usuarios: memoryUsers.length,
         estabelecimentos: memoryEstablishments.length, 
         escalas: memorySchedules.length,
         entregas: memoryDeliveries.length,
+        localizacoes: Object.keys(memoryLocations).length,
         produtos: memoryProducts.length,
         movimentacoes: memoryStockMovements.length
       });
     } catch (err) {
-      console.error('🚨 ERRO ao carregar dados do Supabase:', err);
+      console.error('❌ EMERGÊNCIA: EXCEÇÃO no pull do Supabase:', err);
+      // Não propagar erro para evitar quebrar a aplicação
     }
   }
 };
