@@ -9,6 +9,12 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
     
+    // CRÍTICO: Kotlin não suporta JVM target 21
+    // Forçar todos os módulos Kotlin a usar target 17
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+    
     defaultConfig {
         applicationId "com.motohub.delivery"
         minSdkVersion rootProject.ext.minSdkVersion
