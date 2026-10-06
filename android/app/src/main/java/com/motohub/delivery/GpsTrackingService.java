@@ -124,21 +124,41 @@ public class GpsTrackingService extends Service {
      */
     private void initializeSupabase() {
         try {
+            android.util.Log.d("GpsTrackingService", "🔧 Iniciando initializeSupabase()");
+            
             // Pegar credenciais do arquivo de recursos
             supabaseUrl = getString(R.string.supabase_url);
             supabaseKey = getString(R.string.supabase_anon_key);
+            android.util.Log.d("GpsTrackingService", "✅ Credenciais carregadas - URL: " + supabaseUrl.substring(0, 30) + "...");
             
-            // Pegar ID do usuário logado do SharedPreferences
-            SharedPreferences prefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE);
-            String currentUserJson = prefs.getString("currentUser", null);
+            // ✅ NOVO: Tentar pegar userId de GPS_TRACKING_PREFS primeiro (setado pelo plugin)
+            SharedPreferences gpsPrefs = getSharedPreferences("GPS_TRACKING_PREFS", Context.MODE_PRIVATE);
+            currentUserId = gpsPrefs.getString("USER_ID", null);
             
-            if (currentUserJson != null && !currentUserJson.isEmpty()) {
-                JSONObject userObj = new JSONObject(currentUserJson);
-                currentUserId = userObj.getString("id");
-                android.util.Log.d("GpsTrackingService", "✅ Supabase inicializado para usuário: " + currentUserId);
+            if (currentUserId != null && !currentUserId.isEmpty()) {
+                android.util.Log.d("GpsTrackingService", "✅ UserId encontrado em GPS_TRACKING_PREFS: " + currentUserId);
             } else {
-                android.util.Log.e("GpsTrackingService", "❌ Nenhum usuário logado encontrado!");
+                android.util.Log.w("GpsTrackingService", "⚠️ UserId não encontrado em GPS_TRACKING_PREFS, tentando CapacitorStorage...");
+                
+                // Fallback: tentar CapacitorStorage (compatibilidade com código antigo)
+                SharedPreferences capPrefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE);
+                String currentUserJson = capPrefs.getString("currentUser", null);
+                
+                if (currentUserJson != null && !currentUserJson.isEmpty()) {
+                    JSONObject userObj = new JSONObject(currentUserJson);
+                    currentUserId = userObj.getString("id");
+                    android.util.Log.d("GpsTrackingService", "✅ UserId encontrado em CapacitorStorage: " + currentUserId);
+                } else {
+                    android.util.Log.e("GpsTrackingService", "❌ UserId não encontrado em nenhum lugar!");
+                }
             }
+            
+            if (currentUserId != null && !currentUserId.isEmpty()) {
+                android.util.Log.d("GpsTrackingService", "✅ Supabase inicializado com sucesso para usuário: " + currentUserId);
+            } else {
+                android.util.Log.e("GpsTrackingService", "❌ FALHA: Não foi possível obter userId - GPS NÃO SERÁ SALVO NO SUPABASE");
+            }
+            
         } catch (Exception e) {
             android.util.Log.e("GpsTrackingService", "❌ Erro ao inicializar Supabase: " + e.getMessage());
             e.printStackTrace();
@@ -154,9 +174,11 @@ public class GpsTrackingService extends Service {
             HttpURLConnection conn = null;
             try {
                 if (currentUserId == null || currentUserId.isEmpty()) {
-                    android.util.Log.w("GpsTrackingService", "⚠️ Não pode salvar: usuário não identificado");
+                    android.util.Log.w("GpsTrackingService", "⚠️ NÃO SALVANDO: userId está null ou vazio");
                     return;
                 }
+                
+                android.util.Log.d("GpsTrackingService", "💾 Iniciando salvamento no Supabase para userId: " + currentUserId);
                 
                 // Criar timestamp ISO 8601
                 SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
@@ -172,6 +194,8 @@ public class GpsTrackingService extends Service {
                 json.put("speed", location.hasSpeed() ? location.getSpeed() * 3.6 : 0); // m/s para km/h
                 json.put("timestamp", timestamp);
                 json.put("updated_at", timestamp);
+                
+                android.util.Log.d("GpsTrackingService", "📤 JSON preparado: lat=" + location.getLatitude() + ", lng=" + location.getLongitude());
                 
                 // Fazer requisição HTTP POST
                 URL url = new URL(supabaseUrl + "/rest/v1/rider_locations");
