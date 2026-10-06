@@ -203,6 +203,25 @@ class NativeGpsTracker {
     }
 
     try {
+      // CRÍTICO: Obter e salvar userId ANTES de iniciar o tracking
+      const currentUser = db.getCurrentUser();
+      if (!currentUser || !currentUser.id) {
+        console.error('❌ Não pode iniciar GPS: usuário não identificado');
+        this.currentState = {
+          ...this.currentState,
+          quality: 'denied',
+          errorMessage: 'Usuário não identificado'
+        };
+        this.notify();
+        return;
+      }
+      
+      // Salvar userId no SharedPreferences do Android
+      console.log('📝 Salvando userId no Android:', currentUser.id);
+      await GpsTracking.setUserId({ userId: currentUser.id });
+      console.log('✅ UserId salvo com sucesso');
+      
+      // Agora sim iniciar o tracking
       const result = await GpsTracking.startTracking();
       
       if (result.success) {

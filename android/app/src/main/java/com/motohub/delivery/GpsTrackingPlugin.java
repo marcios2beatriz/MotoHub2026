@@ -68,6 +68,30 @@ public class GpsTrackingPlugin extends Plugin {
     }
     
     @PluginMethod
+    public void setUserId(PluginCall call) {
+        String userId = call.getString("userId");
+        
+        if (userId == null || userId.isEmpty()) {
+            android.util.Log.e("GpsTrackingPlugin", "❌ setUserId: userId is null or empty");
+            call.reject("userId is required");
+            return;
+        }
+        
+        // Salvar userId no SharedPreferences para o GpsTrackingService usar
+        Context context = getContext();
+        android.content.SharedPreferences prefs = context.getSharedPreferences("GPS_TRACKING_PREFS", Context.MODE_PRIVATE);
+        android.content.SharedPreferences.Editor editor = prefs.edit();
+        editor.putString("USER_ID", userId);
+        editor.apply();
+        
+        android.util.Log.d("GpsTrackingPlugin", "✅ UserId saved: " + userId);
+        
+        JSObject result = new JSObject();
+        result.put("success", true);
+        call.resolve(result);
+    }
+    
+    @PluginMethod
     public void startTracking(PluginCall call) {
         android.util.Log.d("GpsTrackingPlugin", "startTracking() called");
         

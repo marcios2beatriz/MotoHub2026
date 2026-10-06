@@ -2,6 +2,12 @@ import { registerPlugin } from '@capacitor/core';
 
 export interface GpsTrackingPlugin {
   /**
+   * Define o userId para salvar no Supabase
+   * DEVE ser chamado ANTES de startTracking()
+   */
+  setUserId(options: { userId: string }): Promise<{ success: boolean }>;
+  
+  /**
    * Inicia o foreground service de rastreamento GPS
    * Mantém GPS ativo mesmo com app minimizado ou usando outro app
    */
