@@ -1388,12 +1388,13 @@ export default function AdminDashboard() {
     return null;
   };
 
-  const totalFinanceGrossRevenue = financeFilteredDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
+  const totalFinanceGrossRevenue = financeFilteredDeliveries.reduce((sum, d) => 
+    sum + Number(d.value || 0) + Number(d.additionalValue || 0), 0); // ✅ CORRIGIDO: Inclui adicional
   const totalFinanceDeliveriesCount = financeFilteredDeliveries.length;
   const totalFinanceAdminCommission = financeFilteredDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
   // ✅ CORREÇÃO: Incluir adicionais no total líquido dos motoboys
   const totalFinanceAdditionals = financeFilteredDeliveries.reduce((sum, d) => sum + Number(d.additionalValue || 0), 0);
-  const totalFinanceRidersNet = Math.max(0, totalFinanceGrossRevenue - totalFinanceAdminCommission) + totalFinanceAdditionals;
+  const totalFinanceRidersNet = Math.max(0, totalFinanceGrossRevenue - totalFinanceAdminCommission); // Já inclui adicional no gross
 
   const getFilteredReportData = () => {
     let start = new Date();
@@ -1745,7 +1746,8 @@ export default function AdminDashboard() {
   const pendingDeliveries = deliveries.filter(d => d.status === 'pending');
 
   const activeDeliveriesToday = deliveries.filter(d => d.date === todayStr && d.status === 'active');
-  const totalRevenueToday = activeDeliveriesToday.reduce((sum, d) => sum + d.value, 0);
+  const totalRevenueToday = activeDeliveriesToday.reduce((sum, d) => 
+    sum + Number(d.value || 0) + Number(d.additionalValue || 0), 0); // ✅ CORRIGIDO: Inclui adicional
   const activeRidersCount = users.filter(u => u.role === 'rider' && u.active).length;
   const activeEstsCount = establishments.filter(e => e.active).length;
 

@@ -238,7 +238,19 @@ export default function RiderDashboard() {
 
     // Otimização mobile: só atualizar state se houve mudanças reais
     setSchedules(prev => JSON.stringify(prev) !== JSON.stringify(sortedSchedules) ? sortedSchedules : prev);
-    setDeliveries(prev => JSON.stringify(prev) !== JSON.stringify(sortedDeliveries) ? sortedDeliveries : prev);
+    setDeliveries(prev => {
+      const changed = JSON.stringify(prev) !== JSON.stringify(sortedDeliveries);
+      if (changed) {
+        console.log('📦 RiderDashboard: Deliveries atualizadas', {
+          antes: prev.length,
+          depois: sortedDeliveries.length,
+          active: sortedDeliveries.filter(d => d.status === 'active').length,
+          pending: sortedDeliveries.filter(d => d.status === 'pending').length,
+          cancelled: sortedDeliveries.filter(d => d.status === 'cancelled').length
+        });
+      }
+      return changed ? sortedDeliveries : prev;
+    });
     setNotifications(prev => JSON.stringify(prev) !== JSON.stringify(sortedNotifications) ? sortedNotifications : prev);
     setEstablishments(prev => JSON.stringify(prev) !== JSON.stringify(allEsts) ? allEsts : prev);
     setRouteHistory(prev => JSON.stringify(prev) !== JSON.stringify(myRoutes) ? myRoutes : prev);
@@ -476,7 +488,8 @@ export default function RiderDashboard() {
   }, [deliveries, operationalTodayStr]);
 
   const todayApprovedDeliveries = todayDeliveries.filter(d => d.status === 'active');
-  const todayGrossEarnings = todayApprovedDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
+  const todayGrossEarnings = todayApprovedDeliveries.reduce((sum, d) => 
+    sum + Number(d.value || 0) + Number(d.additionalValue || 0), 0); // ✅ CORRIGIDO: Inclui adicional
   const todayNetEarnings = todayApprovedDeliveries.reduce((sum, d) => sum + getRiderNetForDelivery(d), 0);
 
   const getFutureSchedules = () => {
@@ -811,9 +824,27 @@ export default function RiderDashboard() {
     });
   }, [deliveries, historyEstFilter, historyOrderNumberFilter, deliveryFeatureFilter, filterMode, smartDate, smartPeriod, historyDateFrom, historyDateTo]);
 
+  // ✅ Log de debug para rastrear "sumiço" de corridas
+  useEffect(() => {
+    if (deliveries.length > 0) {
+      const totalActive = deliveries.filter(d => d.status === 'active').length;
+      console.log('🔍 RiderDashboard: Filtros aplicados', {
+        totalDeliveries: deliveries.length,
+        totalActive,
+        filteredShown: historyDeliveries.length,
+        filterMode,
+        smartDate,
+        smartPeriod,
+        estFilter: historyEstFilter || 'all',
+        orderFilter: historyOrderNumberFilter || 'all',
+        featureFilter: deliveryFeatureFilter
+      });
+    }
+  }, [deliveries.length, historyDeliveries.length, filterMode, smartDate, smartPeriod, historyEstFilter, historyOrderNumberFilter, deliveryFeatureFilter]);
+
   const historyTotalEarnings = historyDeliveries
     .filter(d => d.status === 'active')
-    .reduce((sum, d) => sum + Number(d.value || 0), 0);
+    .reduce((sum, d) => sum + getRiderNetForDelivery(d), 0); // ✅ CORRIGIDO: Usa getRiderNet que desconta taxa
 
   // --- LÓGICA DO HISTÓRICO DE GANHOS ---
   const getEarningsDateBounds = (): { start: string; end: string; label: string } => {
