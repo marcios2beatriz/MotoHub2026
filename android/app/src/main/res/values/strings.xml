@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MotoHub Delivery</string>
+    <string name="title_activity_main">MotoHub Delivery</string>
+    <string name="package_name">com.motohub.delivery</string>
+    <string name="custom_url_scheme">com.motohub.delivery</string>
+    
+    <!-- Supabase Configuration -->
+    <string name="supabase_url">https://rqieirvzutdculcdsncb.supabase.co</string>
+    <string name="supabase_anon_key">eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJxaWVpcnZ6dXRkY3VsY2RzbmNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MjAxNzU1MTAsImV4cCI6MjAzNTc1MTUxMH0.jVyQO6zy-fmT_p0HxKg-lmhXTFAIwGOmPH3TQ2KZ59s</string>
+</resources>

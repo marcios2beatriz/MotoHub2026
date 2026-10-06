@@ -3,8 +3,20 @@ node_modules/
 dist/
 .pnpm-store/
 .vscode/
-android/
 ios/
 *.log
 .env.local
 .env.*.local
+
+# Android - ignore apenas os builds, manter código fonte
+android/.gradle/
+android/.idea/
+android/local.properties
+android/build/
+android/app/build/
+android/*/build/
+android/**/.cxx/
+android/**/captures/
+android/**/*.apk
+android/**/*.ap_
+android/**/*.aab
