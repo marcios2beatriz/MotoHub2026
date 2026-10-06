@@ -24,6 +24,14 @@ allprojects {
         google()
         mavenCentral()
     }
+    
+    // CRÍTICO: Força todos os módulos Kotlin a usar JVM target 17
+    // Necessário porque Kotlin não suporta target 21
+    tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+        kotlinOptions {
+            jvmTarget = "17"
+        }
+    }
 }
 
 task clean(type: Delete) {
