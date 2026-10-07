@@ -1157,6 +1157,7 @@ export const db = {
   },
 
   getRiderLocations(): RiderLocation[] {
+    console.log('🔍 getRiderLocations chamado. Dados:', Object.values(memoryLocations));
     return Object.values(memoryLocations);
   },
 
