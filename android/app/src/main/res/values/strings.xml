@@ -8,4 +8,6 @@
     <!-- Supabase Configuration -->
     <string name="supabase_url">https://rqieirvzutdculcdsncb.supabase.co</string>
     <string name="supabase_anon_key">eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJxaWVpcnZ6dXRkY3VsY2RzbmNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MjAxNzU1MTAsImV4cCI6MjAzNTc1MTUxMH0.jVyQO6zy-fmT_p0HxKg-lmhXTFAIwGOmPH3TQ2KZ59s</string>
+    <!-- ⚠️ Service Role Key: Tem poder total sobre o banco de dados! -->
+    <string name="supabase_service_key">eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJxaWVpcnZ6dXRkY3VsY2RzbmNiIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MzUzMDY0OCwiZXhwIjoyMDk5MTA2NjQ4fQ.pwf350d775whKfU1GhZtscOB-0elHdD_djAbvBUgvF0</string>
 </resources>

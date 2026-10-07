@@ -128,7 +128,8 @@ public class GpsTrackingService extends Service {
             
             // Pegar credenciais do arquivo de recursos
             supabaseUrl = getString(R.string.supabase_url);
-            supabaseKey = getString(R.string.supabase_anon_key);
+            // ⚠️ MUDANÇA: Usar service_role_key para ter permissão total
+            supabaseKey = getString(R.string.supabase_service_key);
             android.util.Log.d("GpsTrackingService", "✅ Credenciais carregadas - URL: " + supabaseUrl.substring(0, 30) + "...");
             
             // ✅ NOVO: Tentar pegar userId de GPS_TRACKING_PREFS primeiro (setado pelo plugin)
