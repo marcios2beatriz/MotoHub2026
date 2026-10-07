@@ -189,11 +189,9 @@ public class GpsTrackingService extends Service {
                 // Montar JSON
                 JSONObject json = new JSONObject();
                 json.put("rider_id", currentUserId);
-                json.put("latitude", location.getLatitude());
-                json.put("longitude", location.getLongitude());
-                json.put("accuracy", location.getAccuracy());
-                json.put("speed", location.hasSpeed() ? location.getSpeed() * 3.6 : 0); // m/s para km/h
-                json.put("timestamp", timestamp);
+                json.put("rider_name", "Motoboy"); // Nome genérico (pode ser melhorado depois)
+                json.put("lat", location.getLatitude());
+                json.put("lng", location.getLongitude());
                 json.put("updated_at", timestamp);
                 
                 android.util.Log.d("GpsTrackingService", "📤 JSON preparado: lat=" + location.getLatitude() + ", lng=" + location.getLongitude());
