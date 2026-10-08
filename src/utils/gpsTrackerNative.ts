@@ -37,7 +37,7 @@ class NativeGpsTracker {
   
   // Throttle para evitar excesso de gravações no banco
   private lastDbWriteTs: number = 0;
-  private readonly DB_WRITE_INTERVAL_MS = 12000; // 12 segundos
+  private readonly DB_WRITE_INTERVAL_MS = 6000; // 🔥 6 segundos (update mais frequente)
   
   private currentState: GpsState = {
     currentLocation: null,

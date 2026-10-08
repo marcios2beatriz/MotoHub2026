@@ -59,7 +59,12 @@ class RealtimeGpsManager {
   private maxReconnectAttempts = 3;
 
   public init() {
-    if (this.channel) return;
+    if (this.channel) {
+      console.log('⚠️ RealtimeGps já inicializado');
+      return;
+    }
+
+    console.log('🚀 Inicializando canal Realtime do Supabase...');
 
     this.channel = supabase.channel('motoboy-live-tracking', {
       config: {
@@ -69,6 +74,8 @@ class RealtimeGpsManager {
 
     this.channel
       .on('broadcast', { event: 'location-update' }, (response) => {
+        console.log('📡 [REALTIME] location-update recebido:', response.payload);
+        
         const payload = response.payload as LocationPayload;
         if (payload && payload.riderId && payload.lat && payload.lng) {
           this.lastActivity = Date.now(); // 🔥 Marca última atividade
@@ -217,12 +224,26 @@ class RealtimeGpsManager {
   public sendLocation(payload: LocationPayload) {
     if (!this.channel) this.init();
 
+    console.log('📤 [REALTIME] Enviando location-update:', {
+      riderId: payload.riderId,
+      riderName: payload.riderName,
+      lat: payload.lat,
+      lng: payload.lng,
+      isSubscribed: this.isSubscribed
+    });
+
     if (this.channel && this.isSubscribed) {
       this.channel.send({
         type: 'broadcast',
         event: 'location-update',
         payload
-      }).catch(() => {});
+      }).then(() => {
+        console.log('✅ [REALTIME] location-update enviado com sucesso');
+      }).catch((err) => {
+        console.error('❌ [REALTIME] Erro ao enviar location-update:', err);
+      });
+    } else {
+      console.warn('⚠️ [REALTIME] Canal não subscrito, update ignorado');
     }
 
     db.updateRiderLocation(payload.riderId, payload.riderName, payload.lat, payload.lng);
@@ -403,84 +424,102 @@ class RealtimeGpsManager {
     }, 15000); // Verifica a cada 15s
   }
 
-  // 🔥 MELHORADO: Polling de fallback com proteção contra pausas do navegador
+  // 🔥 MELHORADO: Polling AGRESSIVO (5s) estilo Google Maps - OTIMIZADO
   private startPollingFallback() {
     if (this.pollingInterval) {
       clearInterval(this.pollingInterval);
     }
 
-    console.log('🔄 Iniciando polling de fallback (30s)');
+    console.log('🔄 Iniciando polling AGRESSIVO (5s - estilo Google Maps)');
     
     let lastPollTime = Date.now();
+    let lastKnownPositions = new Map<string, {lat: number, lng: number, timestamp: number}>();
 
     this.pollingInterval = setInterval(async () => {
       const now = Date.now();
       const timeSinceLastPoll = now - lastPollTime;
       
-      // 🔥 Detectar se setInterval foi pausado (gap > 35 segundos indica background)
-      if (timeSinceLastPoll > 35000) {
-        console.warn(`⚠️ Polling pausado por ${Math.round(timeSinceLastPoll / 1000)}s (navegador em background)`);
+      // 🔥 Detectar se setInterval foi pausado (gap > 8 segundos indica background)
+      if (timeSinceLastPoll > 8000) {
+        console.warn(`⚠️ Polling pausado por ${Math.round(timeSinceLastPoll / 1000)}s (app em background)`);
       }
       
       lastPollTime = now;
       
-      console.log('📊 Polling executando... listeners:', this.listeners.size);
+      // Só executar se houver listeners (usuários vendo o mapa)
+      if (this.listeners.size === 0) {
+        return;
+      }
       
       try {
-        // Buscar localizações recentes (últimos 5 minutos)
-        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-        
-        console.log('🔍 Buscando localizações desde:', fiveMinutesAgo);
+        // 🔥 OTIMIZADO: Buscar apenas últimos 30 SEGUNDOS (não 5 minutos!)
+        const thirtySecondsAgo = new Date(Date.now() - 30 * 1000).toISOString();
         
         const { data, error } = await supabase
           .from('rider_locations')
-          .select('*')
-          .gte('updated_at', fiveMinutesAgo);
+          .select('rider_id, rider_name, lat, lng, updated_at')
+          .gte('updated_at', thirtySecondsAgo)
+          .order('updated_at', { ascending: false });
 
         if (error) {
           console.error('❌ Erro no polling:', error);
           return;
         }
 
-        console.log(`✅ Polling encontrou ${data?.length || 0} localizações`);
-
         if (data && data.length > 0) {
-          // Atualizar localizações locais
+          let updatesCount = 0;
+          
+          // Atualizar localizações locais E notificar listeners
           data.forEach((loc: any) => {
             if (loc.rider_id && loc.lat && loc.lng) {
-              db.updateRiderLocation(
-                loc.rider_id,
-                loc.rider_name || '',
-                parseFloat(loc.lat),
-                parseFloat(loc.lng)
-              );
+              const lat = parseFloat(loc.lat);
+              const lng = parseFloat(loc.lng);
+              const timestamp = new Date(loc.updated_at).getTime();
               
-              console.log(`📍 Atualizando ${loc.rider_name}: ${loc.lat}, ${loc.lng}`);
+              // 🔥 Verificar se a posição MUDOU (evitar re-renders desnecessários)
+              const lastKnown = lastKnownPositions.get(loc.rider_id);
+              const hasMoved = !lastKnown || 
+                Math.abs(lastKnown.lat - lat) > 0.00001 || 
+                Math.abs(lastKnown.lng - lng) > 0.00001;
               
-              // Notificar listeners
-              this.listeners.forEach((listener) => {
-                listener({
-                  riderId: loc.rider_id,
-                  riderName: loc.rider_name || '',
-                  lat: parseFloat(loc.lat),
-                  lng: parseFloat(loc.lng),
-                  timestamp: new Date(loc.updated_at).getTime()
+              if (hasMoved) {
+                updatesCount++;
+                
+                // Salvar nova posição
+                lastKnownPositions.set(loc.rider_id, { lat, lng, timestamp });
+                
+                // Atualizar cache local
+                db.updateRiderLocation(loc.rider_id, loc.rider_name || '', lat, lng);
+                
+                // 🔥 Notificar listeners IMEDIATAMENTE
+                this.listeners.forEach((listener) => {
+                  listener({
+                    riderId: loc.rider_id,
+                    riderName: loc.rider_name || '',
+                    lat,
+                    lng,
+                    timestamp
+                  });
                 });
-              });
+              }
             }
           });
           
-          // 🔥 Forçar atualização do mapa
-          window.dispatchEvent(new CustomEvent('gps-polling-update', {
-            detail: { count: data.length, timestamp: Date.now() }
-          }));
+          if (updatesCount > 0) {
+            console.log(`✅ Polling: ${updatesCount} motoboy(s) se moveram`);
+            
+            // 🔥 Forçar atualização visual do mapa
+            window.dispatchEvent(new CustomEvent('gps-polling-update', {
+              detail: { count: updatesCount, timestamp: Date.now() }
+            }));
+          }
         }
       } catch (err) {
-        console.error('❌ Exceção no polling de fallback:', err);
+        console.error('❌ Exceção no polling:', err);
       }
-    }, 30000); // Aumentado para 30s (mais eficiente)
+    }, 5000); // 🔥 5 SEGUNDOS - estilo Google Maps
     
-    console.log('✅ Polling de fallback configurado (30s)');
+    console.log('✅ Polling AGRESSIVO configurado (5s)');
   }
 
   // 🔥 NOVO: Cleanup ao destruir

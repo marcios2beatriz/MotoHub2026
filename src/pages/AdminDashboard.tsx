@@ -304,8 +304,16 @@ export default function AdminDashboard() {
 
     // 🔧 CORREÇÃO: Listener para atualizações de polling e foreground
     const handlePollingUpdate = () => {
-      console.log('🔄 AdminDashboard: Recebido evento de polling, atualizando mapa...');
-      db.pullFromSupabase().then(() => loadData());
+      console.log('🔄 AdminDashboard: Polling encontrou updates - forçando re-render');
+      // ❌ NÃO chamar db.pullFromSupabase() aqui (muito lento!)
+      // O realtimeGps já notificou os listeners via subscribeToLocations
+      
+      // Apenas forçar invalidação do mapa para garantir re-render
+      if (mapRef.current) {
+        setTimeout(() => {
+          mapRef.current?.invalidateSize({ animate: false });
+        }, 100);
+      }
     };
     const handleForegroundUpdate = () => {
       console.log('📱 AdminDashboard: App voltou ao foreground, sincronizando...');
