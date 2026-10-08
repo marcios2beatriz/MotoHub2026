@@ -5,7 +5,7 @@ export interface GpsTrackingPlugin {
    * Define o userId para salvar no Supabase
    * DEVE ser chamado ANTES de startTracking()
    */
-  setUserId(options: { userId: string }): Promise<{ success: boolean }>;
+  setUserId(options: { userId: string; userName?: string }): Promise<{ success: boolean }>;
   
   /**
    * Inicia o foreground service de rastreamento GPS

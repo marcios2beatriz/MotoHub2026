@@ -4,8 +4,8 @@ import type { GpsTrackingPlugin, GpsLocation } from './gpsTracking';
 export class GpsTrackingWeb extends WebPlugin implements GpsTrackingPlugin {
   private watchId: number | null = null;
   
-  async setUserId(options: { userId: string }): Promise<{ success: boolean }> {
-    console.log('GPS Tracking Web: setUserId called with', options.userId);
+  async setUserId(options: { userId: string; userName?: string }): Promise<{ success: boolean }> {
+    console.log('GPS Tracking Web: setUserId called with', options.userId, options.userName);
     // No web não precisa salvar userId porque JavaScript salva diretamente
     return { success: true };
   }

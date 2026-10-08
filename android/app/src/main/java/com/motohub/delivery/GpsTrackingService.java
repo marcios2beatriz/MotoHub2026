@@ -41,8 +41,8 @@ public class GpsTrackingService extends Service {
     
     private static final String CHANNEL_ID = "gps_tracking_channel";
     private static final int NOTIFICATION_ID = 1001;
-    private static final long UPDATE_INTERVAL = 5000; // 5 segundos
-    private static final long FASTEST_INTERVAL = 3000; // 3 segundos
+    private static final long UPDATE_INTERVAL = 3000; // 3 segundos (reduzido de 5s para movimento mais fluido)
+    private static final long FASTEST_INTERVAL = 2000; // 2 segundos (reduzido de 3s para maior responsividade)
     private static final float MIN_DISTANCE = 5; // 5 metros
     private static final long GPS_WATCHDOG_INTERVAL = 20000; // 20 segundos (reduzido para detectar problemas mais rápido)
     private static final long WAKELOCK_RENEWAL_INTERVAL = 8 * 60 * 1000; // 8 minutos (renova antes de expirar)
@@ -61,6 +61,7 @@ public class GpsTrackingService extends Service {
     private String supabaseUrl;
     private String supabaseKey;
     private String currentUserId;
+    private String currentUserName; // ✅ NOVO: Nome do usuário logado
     
     // WakeLock para manter CPU ativa em background
     private android.os.PowerManager.WakeLock wakeLock;
@@ -132,12 +133,18 @@ public class GpsTrackingService extends Service {
             supabaseKey = getString(R.string.supabase_service_key);
             android.util.Log.d("GpsTrackingService", "✅ Credenciais carregadas - URL: " + supabaseUrl.substring(0, 30) + "...");
             
-            // ✅ NOVO: Tentar pegar userId de GPS_TRACKING_PREFS primeiro (setado pelo plugin)
+            // ✅ NOVO: Tentar pegar userId e userName de GPS_TRACKING_PREFS primeiro (setado pelo plugin)
             SharedPreferences gpsPrefs = getSharedPreferences("GPS_TRACKING_PREFS", Context.MODE_PRIVATE);
             currentUserId = gpsPrefs.getString("USER_ID", null);
+            String currentUserName = gpsPrefs.getString("USER_NAME", null);
             
             if (currentUserId != null && !currentUserId.isEmpty()) {
                 android.util.Log.d("GpsTrackingService", "✅ UserId encontrado em GPS_TRACKING_PREFS: " + currentUserId);
+                if (currentUserName != null && !currentUserName.isEmpty()) {
+                    android.util.Log.d("GpsTrackingService", "✅ UserName encontrado: " + currentUserName);
+                    // Salvar nome do usuário em variável de instância
+                    this.currentUserName = currentUserName;
+                }
             } else {
                 android.util.Log.w("GpsTrackingService", "⚠️ UserId não encontrado em GPS_TRACKING_PREFS, tentando CapacitorStorage...");
                 
@@ -148,6 +155,10 @@ public class GpsTrackingService extends Service {
                 if (currentUserJson != null && !currentUserJson.isEmpty()) {
                     JSONObject userObj = new JSONObject(currentUserJson);
                     currentUserId = userObj.getString("id");
+                    currentUserName = userObj.optString("name", null);
+                    if (currentUserName != null && !currentUserName.isEmpty()) {
+                        this.currentUserName = currentUserName;
+                    }
                     android.util.Log.d("GpsTrackingService", "✅ UserId encontrado em CapacitorStorage: " + currentUserId);
                 } else {
                     android.util.Log.e("GpsTrackingService", "❌ UserId não encontrado em nenhum lugar!");
@@ -155,7 +166,7 @@ public class GpsTrackingService extends Service {
             }
             
             if (currentUserId != null && !currentUserId.isEmpty()) {
-                android.util.Log.d("GpsTrackingService", "✅ Supabase inicializado com sucesso para usuário: " + currentUserId);
+                android.util.Log.d("GpsTrackingService", "✅ Supabase inicializado com sucesso para usuário: " + currentUserId + " (" + (this.currentUserName != null ? this.currentUserName : "Nome desconhecido") + ")");
             } else {
                 android.util.Log.e("GpsTrackingService", "❌ FALHA: Não foi possível obter userId - GPS NÃO SERÁ SALVO NO SUPABASE");
             }
@@ -189,12 +200,12 @@ public class GpsTrackingService extends Service {
                 // Montar JSON
                 JSONObject json = new JSONObject();
                 json.put("rider_id", currentUserId);
-                json.put("rider_name", "Motoboy"); // Nome genérico (pode ser melhorado depois)
+                json.put("rider_name", currentUserName != null && !currentUserName.isEmpty() ? currentUserName : "Motoboy"); // ✅ NOVO: Usa nome real ou fallback
                 json.put("lat", location.getLatitude());
                 json.put("lng", location.getLongitude());
                 json.put("updated_at", timestamp);
                 
-                android.util.Log.d("GpsTrackingService", "📤 JSON preparado: lat=" + location.getLatitude() + ", lng=" + location.getLongitude());
+                android.util.Log.d("GpsTrackingService", "📤 JSON preparado: name=" + (currentUserName != null ? currentUserName : "Motoboy") + ", lat=" + location.getLatitude() + ", lng=" + location.getLongitude());
                 
                 // Fazer requisição HTTP POST
                 URL url = new URL(supabaseUrl + "/rest/v1/rider_locations");
@@ -227,6 +238,53 @@ public class GpsTrackingService extends Service {
                 
             } catch (Exception e) {
                 android.util.Log.e("GpsTrackingService", "❌ Erro ao salvar no Supabase: " + e.getMessage());
+                e.printStackTrace();
+            } finally {
+                if (conn != null) {
+                    conn.disconnect();
+                }
+            }
+        }).start();
+    }
+    
+    /**
+     * ✅ NOVO: Deleta localização do Supabase quando motoboy faz logout
+     * Isso remove o ícone do mapa e economiza recursos do banco de dados
+     */
+    private void deleteLocationFromSupabase() {
+        // Executar em thread separada para não bloquear a main thread
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                if (currentUserId == null || currentUserId.isEmpty()) {
+                    android.util.Log.w("GpsTrackingService", "⚠️ NÃO DELETANDO: userId está null ou vazio");
+                    return;
+                }
+                
+                android.util.Log.d("GpsTrackingService", "🗑️ Deletando localização do Supabase para userId: " + currentUserId);
+                
+                // Fazer requisição HTTP DELETE
+                URL url = new URL(supabaseUrl + "/rest/v1/rider_locations?rider_id=eq." + currentUserId);
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("DELETE");
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setRequestProperty("apikey", supabaseKey);
+                conn.setRequestProperty("Authorization", "Bearer " + supabaseKey);
+                conn.setConnectTimeout(10000); // 10s timeout
+                conn.setReadTimeout(10000);
+                
+                // Verificar resposta
+                int responseCode = conn.getResponseCode();
+                if (responseCode >= 200 && responseCode < 300) {
+                    android.util.Log.d("GpsTrackingService", 
+                        "✅ Localização deletada do Supabase - motoboy removido do mapa");
+                } else {
+                    android.util.Log.w("GpsTrackingService", 
+                        "⚠️ Resposta não-OK ao deletar do Supabase: " + responseCode);
+                }
+                
+            } catch (Exception e) {
+                android.util.Log.e("GpsTrackingService", "❌ Erro ao deletar do Supabase: " + e.getMessage());
                 e.printStackTrace();
             } finally {
                 if (conn != null) {
@@ -670,7 +728,7 @@ public class GpsTrackingService extends Service {
             
             // Atualiza se:
             // 1. Moveu mais de 5 metros
-            // 2. OU passou mais de 5 segundos E moveu pelo menos 1 metro (evita drift do GPS)
+            // 2. OU passou mais de 3 segundos E moveu pelo menos 1 metro (evita drift do GPS)
             if (distance > MIN_DISTANCE || (timeDiff > UPDATE_INTERVAL && distance > 1)) {
                 shouldUpdate = true;
                 android.util.Log.d("GpsTrackingService", 
@@ -944,6 +1002,9 @@ public class GpsTrackingService extends Service {
         
         // ✅ CRÍTICO: Resetar flag de serviço rodando
         isServiceRunning = false;
+        
+        // ✅ NOVO: Deletar localização do Supabase quando serviço é destruído (logout)
+        deleteLocationFromSupabase();
         
         // ✅ IMPORTANTE: Agendar restart ANTES de limpar recursos
         scheduleServiceRestart();

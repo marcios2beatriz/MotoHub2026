@@ -249,10 +249,14 @@ export default function AdminDashboard() {
     const currentSchedules = db.getSchedules();
     const rawDeliveries = db.getDeliveries();
     
+    console.log(`📊 AdminDashboard loadData: ${rawDeliveries.length} corridas brutas do db.getDeliveries()`);
+    
     // 🔧 CORREÇÃO: Deduplicar corridas (evita duplicação por race condition realtime + pull)
     const currentDeliveries = Array.from(
       new Map(rawDeliveries.map(d => [d.id, d])).values()
     );
+    
+    console.log(`📊 AdminDashboard loadData: ${currentDeliveries.length} corridas após deduplicação (perdeu ${rawDeliveries.length - currentDeliveries.length} duplicadas)`);
     
     const rawRequests = db.getPartnerRequests();
     const locations = db.getRiderLocations();
@@ -3546,10 +3550,17 @@ export default function AdminDashboard() {
                         const count = estDeliveries.length;
                         const totalBase = estDeliveries.reduce((sum, d) => sum + Number(d.value || 0), 0);
                         const additionalsTotal = estDeliveries.reduce((sum, d) => sum + Number(d.additionalValue || 0), 0);
+                        
                         // ✅ CORREÇÃO CRÍTICA: Total que estabelecimento paga = Base + Adicionais
                         const totalCharged = totalBase + additionalsTotal;
+                        
                         const adminCut = estDeliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
+                        
+                        // 💰 CÁLCULO DO REPASSE AOS MOTOBOYS:
+                        // (Base das corridas - Taxa Admin) + Adicionais 100% para motoboy
+                        // IMPORTANTE: Adicionais NÃO pagam taxa, são 100% do motoboy
                         const ridersCut = Math.max(0, totalBase - adminCut) + additionalsTotal;
+                        
                         const allSettled = count > 0 && estDeliveries.every(d => d.paid);
 
                         return (

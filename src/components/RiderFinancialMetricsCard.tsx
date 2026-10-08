@@ -38,6 +38,17 @@ export default function RiderFinancialMetricsCard({
   const adminCut = deliveries.reduce((sum, d) => sum + getAdminFeeForDelivery(d), 0);
   const riderNet = deliveries.reduce((sum, d) => sum + getRiderNetForDelivery(d), 0);
   const allPaid = count > 0 && (isPaid || deliveries.every(d => d.paid));
+  
+  // 🔍 DEBUG: Log de verificação de cálculo de adicionais
+  if (totalAdditionals > 0) {
+    console.log(`💰 ${riderName}: ${count} corridas, Bruto: R$ ${grossVal.toFixed(2)}, Adicionais: R$ ${totalAdditionals.toFixed(2)}, Taxa: R$ ${adminCut.toFixed(2)}, Líquido: R$ ${riderNet.toFixed(2)}`);
+    
+    // Verificar se cálculo está correto
+    const expectedNet = Math.max(0, grossVal - adminCut) + totalAdditionals;
+    if (Math.abs(riderNet - expectedNet) > 0.01) {
+      console.warn(`⚠️ ATENÇÃO ${riderName}: Divergência no cálculo! Esperado: R$ ${expectedNet.toFixed(2)}, Calculado: R$ ${riderNet.toFixed(2)}`);
+    }
+  }
 
   return (
     <div className={`p-5 rounded-3xl border-2 transition-all ${

@@ -216,10 +216,10 @@ class NativeGpsTracker {
         return;
       }
       
-      // Salvar userId no SharedPreferences do Android
-      console.log('📝 Salvando userId no Android:', currentUser.id);
-      await GpsTracking.setUserId({ userId: currentUser.id });
-      console.log('✅ UserId salvo com sucesso');
+      // Salvar userId e userName no SharedPreferences do Android
+      console.log('📝 Salvando userId e userName no Android:', currentUser.id, currentUser.name);
+      await GpsTracking.setUserId({ userId: currentUser.id, userName: currentUser.name });
+      console.log('✅ UserId e UserName salvos com sucesso');
       
       // Agora sim iniciar o tracking
       const result = await GpsTracking.startTracking();

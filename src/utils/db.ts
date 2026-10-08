@@ -1416,10 +1416,13 @@ export const db = {
       console.log('📥 Puxando deliveries (paginado)...');
       const allDelData: any[] = [];
       let delFrom = 0;
-      const delBatchSize = 500; // reduzido de 1000 para 500
+      const delBatchSize = 1000; // Aumentado para 1000 (máximo do Supabase por query)
       let hasMore = true;
+      const maxIterations = 100; // Proteção: máximo 100 páginas (100.000 corridas)
+      let iterations = 0;
 
-      while (hasMore) {
+      while (hasMore && iterations < maxIterations) {
+        iterations++;
         const { data, error } = await supabase
           .from('deliveries')
           .select('*')
@@ -1437,20 +1440,36 @@ export const db = {
         }
 
         allDelData.push(...data);
-        console.log(`  ↳ Batch ${delFrom}-${delFrom + data.length}: ${data.length} entregas`);
+        console.log(`  ↳ Batch ${iterations}: offset ${delFrom}, recebeu ${data.length} entregas, total acumulado: ${allDelData.length}`);
         
         if (data.length < delBatchSize) {
           hasMore = false;
+          console.log(`  ✅ Última página (recebeu ${data.length} < ${delBatchSize})`);
         } else {
           delFrom += delBatchSize;
         }
-
-        // Remover limite máximo - carregar TODAS as entregas
       }
+      
+      if (iterations >= maxIterations) {
+        console.warn(`⚠️ ATENÇÃO: Atingiu limite de ${maxIterations} páginas! Pode haver mais corridas não carregadas.`);
+      }
+      
+      console.log(`📦 Total de entregas brutas recebidas do Supabase: ${allDelData.length}`);
 
       if (allDelData.length > 0) {
         memoryDeliveries = allDelData.map(parseDeliveryRow);
-        console.log(`✅ Deliveries carregadas: ${memoryDeliveries.length}`);
+        console.log(`✅ Deliveries carregadas: ${memoryDeliveries.length} (total de ${allDelData.length} registros brutos)`);
+        
+        // 🔍 DEBUG: Verificar se há perda de dados
+        if (memoryDeliveries.length !== allDelData.length) {
+          console.warn(`⚠️ ATENÇÃO: Perda de dados detectada! ${allDelData.length} registros brutos -> ${memoryDeliveries.length} deliveries`);
+        }
+        
+        // 🔍 DEBUG: Verificar IDs duplicados
+        const uniqueIds = new Set(memoryDeliveries.map(d => d.id));
+        if (uniqueIds.size !== memoryDeliveries.length) {
+          console.warn(`⚠️ ATENÇÃO: IDs duplicados detectados! ${memoryDeliveries.length} deliveries -> ${uniqueIds.size} IDs únicos`);
+        }
       } else {
         memoryDeliveries = [];
         console.log('✅ Nenhuma delivery encontrada');
