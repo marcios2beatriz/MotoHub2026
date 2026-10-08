@@ -798,28 +798,28 @@ export default function RiderNavigationMap({
     } else {
       const riderIcon = L.divIcon({
         html: `
-          <div style="position: relative; width: 56px; height: 56px; display: flex; align-items: center; justify-content: center;">
-            <div style="position: absolute; width: 48px; height: 48px; border-radius: 50%; background: rgba(26, 115, 232, 0.25); border: 2px solid #1a73e8; animation: pulse 2s infinite;"></div>
+          <div style="position: relative; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center;">
+            <div style="position: absolute; width: 54px; height: 54px; border-radius: 50%; background: rgba(26, 115, 232, 0.2); border: 3px solid #1a73e8; animation: pulse 2s infinite;"></div>
             <div class="rider-heading-rotate" style="
               transform: rotate(${heading}deg);
               transition: transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
-              background: #1a73e8;
-              color: white;
-              width: 40px;
-              height: 40px;
-              border-radius: 50%;
-              border: 3px solid #ffffff;
-              box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+              font-size: 48px;
+              filter: drop-shadow(0 6px 12px rgba(0,0,0,0.6));
               display: flex; align-items: center; justify-content: center; position: relative; z-index: 100;">
-              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                <polygon points="12 2 19 21 12 17 5 21 12 2"></polygon>
-              </svg>
+              🏍️
             </div>
+            <div style="position: absolute; top: -4px; right: -4px; width: 16px; height: 16px; background: #10b981; border: 3px solid white; border-radius: 50%; box-shadow: 0 2px 6px rgba(16,185,129,0.6); animation: pulse 2s infinite;"></div>
           </div>
+          <style>
+            @keyframes pulse {
+              0%, 100% { opacity: 1; transform: scale(1); }
+              50% { opacity: 0.6; transform: scale(1.05); }
+            }
+          </style>
         `,
         className: 'custom-rider-google-nav-icon',
-        iconSize: [56, 56],
-        iconAnchor: [28, 28]
+        iconSize: [60, 60],
+        iconAnchor: [30, 30]
       });
 
       riderMarkerRef.current = L.marker([activePos.lat, activePos.lng], { 
