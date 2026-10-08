@@ -385,9 +385,24 @@ export default function AdminDashboard() {
   }, [adminUser, navigate, activeTab]);
 
   const onlineRiderLocations = riderLocations.filter(loc => {
-    if (!loc.lat || !loc.lng || isNaN(loc.lat) || isNaN(loc.lng)) return false;
+    if (!loc.lat || !loc.lng || isNaN(loc.lat) || isNaN(loc.lng)) {
+      console.log('❌ Localização inválida (lat/lng):', loc);
+      return false;
+    }
     const timeDiff = loc.updatedAt ? Date.now() - new Date(loc.updatedAt).getTime() : Infinity;
-    return timeDiff <= ONLINE_THRESHOLD_MS;
+    const absTimeDiff = Math.abs(timeDiff); // Aceita timestamps futuros (diferença de relógio/timezone)
+    
+    console.log('🔍 Verificando localização:', {
+      riderId: loc.riderId,
+      riderName: loc.riderName,
+      updatedAt: loc.updatedAt,
+      timeDiff: timeDiff,
+      absTimeDiff: absTimeDiff,
+      threshold: ONLINE_THRESHOLD_MS,
+      isOnline: absTimeDiff <= ONLINE_THRESHOLD_MS
+    });
+    
+    return absTimeDiff <= ONLINE_THRESHOLD_MS;
   });
 
   const handleRecenterMap = () => {
