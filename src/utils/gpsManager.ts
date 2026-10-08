@@ -50,8 +50,20 @@ class GpsManager {
    * Adiciona listener para atualizações de estado do GPS
    */
   public subscribe(callback: (state: GpsState | NativeGpsState) => void) {
+    console.log(`🎧 [gpsManager] Subscribe chamado, usando ${this.useNative ? 'NATIVO' : 'WEB'}`);
+    
     if (this.useNative) {
-      return gpsTrackerNative.subscribe(callback);
+      return gpsTrackerNative.subscribe((state) => {
+        console.log('📡 [gpsManager] RECEBEU estado do NATIVO:', {
+          hasLocation: !!state.currentLocation,
+          location: state.currentLocation ? {
+            lat: state.currentLocation.lat,
+            lng: state.currentLocation.lng
+          } : null,
+          quality: state.quality
+        });
+        callback(state);
+      });
     } else {
       return webGpsTracker.subscribe(callback);
     }

@@ -67,6 +67,14 @@ class NativeGpsTracker {
   private handleLocationUpdate(location: NativeGpsLocation) {
     const now = Date.now();
     
+    console.log('📍 [gpsTrackerNative] RECEBEU locationUpdate do Java:', {
+      lat: location.latitude,
+      lng: location.longitude,
+      accuracy: location.accuracy,
+      speed: location.speed,
+      bearing: location.bearing
+    });
+    
     const newLocation: GpsLocation = {
       lat: location.latitude,
       lng: location.longitude,
@@ -92,6 +100,12 @@ class NativeGpsTracker {
       quality,
       errorMessage: null
     };
+
+    console.log('✅ [gpsTrackerNative] Estado atualizado:', {
+      currentLocation: newLocation,
+      quality,
+      listenersCount: this.listeners.size
+    });
 
     // Enviar para Supabase com throttling (otimização de custos)
     const currentUser = db.getCurrentUser();
@@ -164,9 +178,23 @@ class NativeGpsTracker {
    * Adiciona listener para mudanças de estado do GPS
    */
   public subscribe(callback: (state: GpsState) => void) {
+    console.log('🎧 [gpsTrackerNative] Novo subscriber registrado, total:', this.listeners.size + 1);
+    
     this.listeners.add(callback);
+    
+    // Enviar estado atual imediatamente
+    console.log('📤 [gpsTrackerNative] Enviando estado atual para novo subscriber:', {
+      currentLocation: this.currentState.currentLocation ? {
+        lat: this.currentState.currentLocation.lat,
+        lng: this.currentState.currentLocation.lng
+      } : null,
+      quality: this.currentState.quality
+    });
+    
     callback(this.currentState);
+    
     return () => {
+      console.log('🔇 [gpsTrackerNative] Subscriber removido, restantes:', this.listeners.size - 1);
       this.listeners.delete(callback);
     };
   }
@@ -175,6 +203,15 @@ class NativeGpsTracker {
    * Notifica todos os listeners sobre mudança de estado
    */
   private notify() {
+    console.log('🔔 [gpsTrackerNative] Notificando listeners:', {
+      listenersCount: this.listeners.size,
+      currentLocation: this.currentState.currentLocation ? {
+        lat: this.currentState.currentLocation.lat,
+        lng: this.currentState.currentLocation.lng
+      } : null,
+      quality: this.currentState.quality
+    });
+    
     this.listeners.forEach((listener) => listener(this.currentState));
   }
 

@@ -371,9 +371,16 @@ export default function RiderNavigationMap({
 
   useEffect(() => {
     gpsManager.startTracking();
+    
     const unsubscribe = gpsManager.subscribe((state) => {
+      console.log('📡 [RiderNavigationMap] GPS State RECEBIDO:', {
+        hasCurrentLocation: !!state.currentLocation,
+        quality: state.quality
+      });
+      
       setGpsState(state);
     });
+    
     return () => unsubscribe();
   }, []);
 
@@ -768,6 +775,7 @@ export default function RiderNavigationMap({
 
   useEffect(() => {
     const map = mapRef.current;
+    
     if (!map || !activePos) return;
 
     const heading = activePos.heading || 0;
