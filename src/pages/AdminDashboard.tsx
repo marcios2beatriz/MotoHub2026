@@ -297,7 +297,7 @@ export default function AdminDashboard() {
 
     const interval = setInterval(() => {
       db.pullFromSupabase().then(() => loadData());
-    }, 60000); // Polling de backup a cada 60s (reduzido para evitar travamento)
+    }, 300000); // Polling de backup a cada 5 minutos (otimizado - Realtime cobre atualizações instantâneas)
 
     const handleSyncComplete = () => loadData();
     window.addEventListener('db-sync-complete', handleSyncComplete);

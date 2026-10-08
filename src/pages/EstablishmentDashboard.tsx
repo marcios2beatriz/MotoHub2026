@@ -273,7 +273,7 @@ export default function EstablishmentDashboard() {
     loadData();
     const interval = setInterval(() => {
       db.pullFromSupabase().then(() => loadData());
-    }, 30000); // Reduzido de 3s para 30s — o realtime cobre alterações instantâneas
+    }, 180000); // Polling de backup a cada 3 minutos (otimizado - Realtime cobre atualizações instantâneas)
 
     const handleDataUpdate = () => loadData();
     window.addEventListener('db-sync-complete', handleDataUpdate);

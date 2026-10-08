@@ -483,7 +483,7 @@ export const db = {
     if (payload.length > 0) {
       await supabase.from('users').upsert(payload, { onConflict: 'id' });
     }
-    await this.pullFromSupabase();
+    // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
   async fetchUserByEmail(email: string): Promise<User | null> {
@@ -553,7 +553,7 @@ export const db = {
   async deleteUser(id: string) {
     memoryUsers = memoryUsers.filter(u => u.id !== id);
     await supabase.from('users').delete().eq('id', id);
-    await this.pullFromSupabase();
+    // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
   getEstablishments(): Establishment[] {
@@ -580,13 +580,13 @@ export const db = {
     if (payload.length > 0) {
       await supabase.from('establishments').upsert(payload, { onConflict: 'id' });
     }
-    await this.pullFromSupabase();
+    // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
   async deleteEstablishment(id: string) {
     memoryEstablishments = memoryEstablishments.filter(e => e.id !== id);
     await supabase.from('establishments').delete().eq('id', id);
-    await this.pullFromSupabase();
+    // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
   getSchedules(): Schedule[] {
@@ -628,7 +628,7 @@ export const db = {
     // Enviar notificações para escalas novas ou modificadas
     this.checkScheduleChangesAndNotify(previousSchedules, schedules);
     
-    await this.pullFromSupabase();
+    // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
   checkScheduleChangesAndNotify(previousSchedules: Schedule[], newSchedules: Schedule[]) {
@@ -709,7 +709,7 @@ export const db = {
   async deleteSchedule(id: string) {
     memorySchedules = memorySchedules.filter(s => s.id !== id);
     await supabase.from('schedules').delete().eq('id', id);
-    await this.pullFromSupabase();
+    // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
   getDeliveries(): Delivery[] {
@@ -976,7 +976,7 @@ export const db = {
     if (payload.length > 0) {
       await supabase.from('notifications').upsert(payload, { onConflict: 'id' });
     }
-    await this.pullFromSupabase();
+    // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
   getPartnerRequests(): PartnerRequest[] {
@@ -998,13 +998,13 @@ export const db = {
     if (payload.length > 0) {
       await supabase.from('partner_requests').upsert(payload, { onConflict: 'id' });
     }
-    await this.pullFromSupabase();
+    // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
   async deletePartnerRequest(id: string) {
     memoryRequests = memoryRequests.filter(r => r.id !== id);
     await supabase.from('partner_requests').delete().eq('id', id);
-    await this.pullFromSupabase();
+    // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
   getProducts(establishmentId?: string): Product[] {
@@ -1285,14 +1285,15 @@ export const db = {
   },
 
   async pullFromSupabase() {
-    // EMERGÊNCIA: Removendo throttle temporariamente para forçar recarga completa dos dados
-    // const now = Date.now();
-    // if (now - pullThrottleTs < PULL_THROTTLE_MS) {
-    //   return;
-    // }
-    // pullThrottleTs = now;
+    // ✅ THROTTLE: Evita chamadas paralelas excessivas (economia de banco)
+    const now = Date.now();
+    if (now - pullThrottleTs < PULL_THROTTLE_MS) {
+      console.log('⏭️ pullFromSupabase: Throttled (aguardando intervalo mínimo)');
+      return;
+    }
+    pullThrottleTs = now;
 
-    console.log('🔄 EMERGÊNCIA: Forçando recarga COMPLETA dos dados do Supabase...');
+    console.log('🔄 Iniciando pull do Supabase...');
 
     try {
       // Otimização: usar SELECT * temporariamente até identificar campos problemáticos
@@ -1416,7 +1417,7 @@ export const db = {
       console.log('📥 Puxando deliveries (paginado)...');
       const allDelData: any[] = [];
       let delFrom = 0;
-      const delBatchSize = 1000; // Aumentado para 1000 (máximo do Supabase por query)
+      const delBatchSize = 500; // Otimizado: 500 registros por página (maioria não tem 500+ corridas)
       let hasMore = true;
       const maxIterations = 100; // Proteção: máximo 100 páginas (100.000 corridas)
       let iterations = 0;

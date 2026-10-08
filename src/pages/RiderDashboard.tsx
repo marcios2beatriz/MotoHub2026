@@ -333,7 +333,7 @@ export default function RiderDashboard() {
       clearInterval(interval);
       // Polling mais lento no mobile quando na aba de navegação (GPS é tempo real)
       // Polling mais rápido quando lançando corridas (aba operation)
-      const pollInterval = activeTab === 'navigation' ? 60000 : 30000; // 1min vs 30s
+      const pollInterval = activeTab === 'navigation' ? 300000 : 180000; // 5min vs 3min (otimizado - Realtime cobre atualizações)
       
       interval = setInterval(() => {
         // Só fazer pull se a página está visível (economia de bateria mobile)

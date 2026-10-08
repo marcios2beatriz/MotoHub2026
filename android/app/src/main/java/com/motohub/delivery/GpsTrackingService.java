@@ -41,8 +41,8 @@ public class GpsTrackingService extends Service {
     
     private static final String CHANNEL_ID = "gps_tracking_channel";
     private static final int NOTIFICATION_ID = 1001;
-    private static final long UPDATE_INTERVAL = 3000; // 3 segundos (reduzido de 5s para movimento mais fluido)
-    private static final long FASTEST_INTERVAL = 2000; // 2 segundos (reduzido de 3s para maior responsividade)
+    private static final long UPDATE_INTERVAL = 10000; // 10 segundos (otimizado para economizar banco de dados - 70% menos writes)
+    private static final long FASTEST_INTERVAL = 5000; // 5 segundos
     private static final float MIN_DISTANCE = 5; // 5 metros
     private static final long GPS_WATCHDOG_INTERVAL = 20000; // 20 segundos (reduzido para detectar problemas mais rápido)
     private static final long WAKELOCK_RENEWAL_INTERVAL = 8 * 60 * 1000; // 8 minutos (renova antes de expirar)
