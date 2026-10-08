@@ -111,6 +111,14 @@ export default function CustomerTracking() {
     // Escuta atualizações de GPS em tempo real do motoboy
     const unsubscribeLocation = realtimeGps.subscribeToLocations((payload) => {
       if (delivery && payload.riderId === delivery.riderId) {
+        console.log('📡 CustomerTracking: Atualização GPS recebida:', payload.lat, payload.lng);
+        
+        // ✅ CRÍTICO: Atualizar marcador IMEDIATAMENTE
+        if (mapRef.current && riderMarkerRef.current) {
+          riderMarkerRef.current.setLatLng([payload.lat, payload.lng]);
+          console.log('✅ Marcador do motoboy atualizado no mapa');
+        }
+        
         setRiderLocation({
           riderId: payload.riderId,
           riderName: payload.riderName,

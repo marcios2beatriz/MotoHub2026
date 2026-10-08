@@ -290,8 +290,40 @@ export default function EstablishmentDashboard() {
     window.addEventListener('gps-polling-update', handlePollingUpdate);
     window.addEventListener('gps-foreground-update', handleForegroundUpdate);
 
-    const unsubscribeLocation = realtimeGps.subscribeToLocations(() => {
-      loadData();
+    const unsubscribeLocation = realtimeGps.subscribeToLocations((payload) => {
+      console.log('📡 EstablishmentDashboard: Atualização GPS recebida:', payload.riderName, payload.lat, payload.lng);
+      
+      // ✅ CRÍTICO: Atualizar marcador IMEDIATAMENTE sem esperar loadData()
+      const map = mapRef.current;
+      if (map && markersRef.current[payload.riderId]) {
+        const marker = markersRef.current[payload.riderId];
+        marker.setLatLng([payload.lat, payload.lng]);
+        console.log('✅ Marcador atualizado no mapa:', payload.riderName);
+      }
+      
+      // Atualizar state para refletir em outros componentes
+      setRiderLocations((prev) => {
+        const index = prev.findIndex(loc => loc.riderId === payload.riderId);
+        if (index >= 0) {
+          const updated = [...prev];
+          updated[index] = {
+            riderId: payload.riderId,
+            riderName: payload.riderName,
+            lat: payload.lat,
+            lng: payload.lng,
+            updatedAt: new Date().toISOString()
+          };
+          return updated;
+        } else {
+          return [...prev, {
+            riderId: payload.riderId,
+            riderName: payload.riderName,
+            lat: payload.lat,
+            lng: payload.lng,
+            updatedAt: new Date().toISOString()
+          }];
+        }
+      });
     });
 
     const unsubscribeOffline = realtimeGps.subscribeToOffline((payload) => {
