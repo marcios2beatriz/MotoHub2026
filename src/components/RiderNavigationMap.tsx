@@ -768,22 +768,10 @@ export default function RiderNavigationMap({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) {
-      console.log('❌ RiderNavigationMap: map is null');
-      return;
-    }
-    
-    if (!activePos) {
-      console.log('⚠️ RiderNavigationMap: activePos is null, aguardando GPS fixar...');
-      // NÃO retornar - vamos criar marcador no centro do mapa como placeholder
-    } else {
-      console.log('✅ RiderNavigationMap: activePos disponível:', activePos.lat, activePos.lng, 'speed:', activePos.speedKmh);
-    }
+    if (!map || !activePos) return;
 
-    const heading = activePos?.heading || 0;
-    const speed = activePos?.speedKmh || 0;
-    const currentLat = activePos?.lat || map.getCenter().lat;
-    const currentLng = activePos?.lng || map.getCenter().lng;
+    const heading = activePos.heading || 0;
+    const speed = activePos.speedKmh || 0;
 
     if (autoFollow && headsUpMode && !touchStartAngleRef.current) {
       if (speed >= 3) {
@@ -798,7 +786,7 @@ export default function RiderNavigationMap({
     }
 
     if (riderMarkerRef.current) {
-      riderMarkerRef.current.setLatLng([currentLat, currentLng]);
+      riderMarkerRef.current.setLatLng([activePos.lat, activePos.lng]);
 
       const el = riderMarkerRef.current.getElement();
       if (el) {
@@ -808,7 +796,6 @@ export default function RiderNavigationMap({
         }
       }
     } else {
-      console.log('🎯 Criando marcador do motoboy em:', currentLat, currentLng);
       const riderIcon = L.divIcon({
         html: `
           <div style="position: relative; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center;">
@@ -835,23 +822,21 @@ export default function RiderNavigationMap({
         iconAnchor: [30, 30]
       });
 
-      riderMarkerRef.current = L.marker([currentLat, currentLng], { 
+      riderMarkerRef.current = L.marker([activePos.lat, activePos.lng], { 
         icon: riderIcon,
         zIndexOffset: 3000
       }).addTo(map);
-      console.log('✅ Marcador do motoboy criado com sucesso!');
     }
 
-    if (!initialCenterDoneRef.current && activePos) {
+    if (!initialCenterDoneRef.current) {
       map.invalidateSize();
-      map.setView([currentLat, currentLng], NAV_ZOOM_LEVEL);
+      map.setView([activePos.lat, activePos.lng], NAV_ZOOM_LEVEL);
       initialCenterDoneRef.current = true;
-      console.log('📍 Mapa centralizado na posição inicial');
-    } else if (autoFollow && !isPinAdjustmentMode && !pendingConfirmation && activePos) {
-      map.panTo([currentLat, currentLng], { animate: true, duration: 0.6, easeLinearity: 0.2 });
+    } else if (autoFollow && !isPinAdjustmentMode && !pendingConfirmation) {
+      map.panTo([activePos.lat, activePos.lng], { animate: true, duration: 0.6, easeLinearity: 0.2 });
     }
 
-    if (routeCoordinates.length > 0 && map && activePos) {
+    if (routeCoordinates.length > 0 && map) {
       const remainingCoords = getRemainingRoute(activePos, routeCoordinates);
       
       if (routePolylineOuterRef.current) {
@@ -879,7 +864,7 @@ export default function RiderNavigationMap({
       }
     }
 
-    if (routeCoordinates.length > 0 && destCoords && isNavigating && activePos) {
+    if (routeCoordinates.length > 0 && destCoords && isNavigating) {
       const now = Date.now();
       const offRoute = isPointOffRoute({ lat: activePos.lat, lng: activePos.lng }, routeCoordinates, 35);
       

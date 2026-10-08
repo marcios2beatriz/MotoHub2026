@@ -1006,9 +1006,8 @@ public class GpsTrackingService extends Service {
         // ✅ NOVO: Deletar localização do Supabase quando serviço é destruído (logout)
         deleteLocationFromSupabase();
         
-        // ✅ REMOVIDO: scheduleServiceRestart() - não reiniciar automaticamente no logout
-        // Se o usuário parou o serviço (logout), não deve reiniciar sozinho
-        // O restart automático só deve ocorrer se o SISTEMA matar o serviço (onTaskRemoved)
+        // Agendar restart do serviço para garantir continuidade do GPS
+        scheduleServiceRestart();
         
         // Cancelar GPS Watchdog
         if (locationHandler != null && gpsWatchdog != null) {
