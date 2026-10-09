@@ -470,8 +470,7 @@ export const db = {
           .eq('rider_id', previousUser.id)
           .then(() => {
             console.log('✅ Localização removida do Supabase');
-          })
-          .catch((err) => {
+          }, (err) => {
             console.error('❌ Erro ao remover localização:', err);
           });
         

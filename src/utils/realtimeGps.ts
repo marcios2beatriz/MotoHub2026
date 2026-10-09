@@ -80,12 +80,19 @@ class RealtimeGpsManager {
         (payload) => {
           console.log('📡 [REALTIME DATABASE] rider_locations mudou:', payload);
           
-          if (payload.new && payload.new.rider_id) {
+          if (payload.new && typeof payload.new === 'object' && 'rider_id' in payload.new) {
+            const newData = payload.new as { 
+              rider_id: string; 
+              rider_name?: string; 
+              lat: number; 
+              lng: number;
+            };
+            
             const locationPayload: LocationPayload = {
-              riderId: payload.new.rider_id,
-              riderName: payload.new.rider_name || '',
-              lat: parseFloat(payload.new.lat),
-              lng: parseFloat(payload.new.lng),
+              riderId: newData.rider_id,
+              riderName: newData.rider_name || '',
+              lat: parseFloat(String(newData.lat)),
+              lng: parseFloat(String(newData.lng)),
               speedKmh: 0,
               heading: 0,
               timestamp: Date.now()
