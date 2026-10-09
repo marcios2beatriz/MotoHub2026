@@ -59,7 +59,7 @@ import InventoryManager from '../components/InventoryManager';
 import ChatToastBanner, { ChatToast } from '../components/ChatToastBanner';
 import { sendDeviceNotification, playNotificationSound, requestNotificationPermission } from '../utils/notifications';
 
-const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
+const ONLINE_THRESHOLD_MS = 1 * 60 * 1000; // 1 minuto (60 segundos)
 
 const getThisMonday = (): string => {
   const now = new Date();

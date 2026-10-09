@@ -454,9 +454,33 @@ export const db = {
   },
 
   setCurrentUser(user: User | null) {
+    const previousUser = this.getCurrentUser();
+    
     if (user) {
       localStorage.setItem(SESSION_USER_KEY, JSON.stringify(user));
     } else {
+      // 🔥 LOGOUT: Remover localização do motoboy do Supabase
+      if (previousUser && previousUser.role === 'rider') {
+        console.log('🗑️ Logout detectado - removendo localização do motoboy:', previousUser.id);
+        
+        // Deletar do Supabase
+        supabase
+          .from('rider_locations')
+          .delete()
+          .eq('rider_id', previousUser.id)
+          .then(() => {
+            console.log('✅ Localização removida do Supabase');
+          })
+          .catch((err) => {
+            console.error('❌ Erro ao remover localização:', err);
+          });
+        
+        // Enviar evento offline via realtime (para remover marcador imediatamente)
+        import('./realtimeGps').then(({ realtimeGps }) => {
+          realtimeGps.sendOffline(previousUser.id);
+        });
+      }
+      
       localStorage.removeItem(SESSION_USER_KEY);
     }
   },

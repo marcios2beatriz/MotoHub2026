@@ -83,8 +83,8 @@ import { getAdminFeeForDelivery, getRiderNetForDelivery } from '../utils/financi
 
 const ADMIN_FEE_PER_DELIVERY = 1.00; // Mantido para referência, mas use as funções centralizadas
 
-// Tempo limite para considerar o motoboy online no Admin (3 minutos)
-const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
+// Tempo limite para considerar o motoboy online no Admin (1 minuto)
+const ONLINE_THRESHOLD_MS = 1 * 60 * 1000; // 60 segundos
 
 export function getShiftLabel(shift: string): string {
   switch(shift) {

@@ -28,6 +28,19 @@ function AppHandler({ children }: { children: React.ReactNode }) {
     // Solicitar permissão de notificações logo no início
     requestNotificationPermission();
 
+    // 🔥 NOVO: Parar GPS quando app for fechado ou minimizado por muito tempo
+    if (Capacitor.isNativePlatform()) {
+      const handleAppPause = () => {
+        const currentUser = db.getCurrentUser();
+        if (currentUser && currentUser.role === 'rider') {
+          console.log('📱 App foi pausado - motoboy ainda está logado');
+          // Não para o GPS aqui porque o foreground service deve continuar rodando
+        }
+      };
+      
+      CapApp.addListener('pause', handleAppPause);
+    }
+
     // Ouvir retomada do aplicativo em primeiro plano no Android/iOS
     let resumeListener: any = null;
     if (Capacitor.isNativePlatform()) {
