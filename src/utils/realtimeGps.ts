@@ -64,105 +64,14 @@ class RealtimeGpsManager {
       return;
     }
 
-    console.log('🚀 Inicializando canal Realtime do Supabase (DATABASE CHANGES)...');
+    console.log('🚀 Inicializando GPS Manager (APENAS POLLING - Realtime desabilitado)');
 
-    // 🔥 MUDANÇA: Usar postgres_changes ao invés de broadcast
-    // Isso é MUITO mais confiável e NÃO desconecta
-    this.channel = supabase.channel('rider-locations-changes');
-
-    this.channel
-      .on('postgres_changes', 
-        { 
-          event: '*', 
-          schema: 'public', 
-          table: 'rider_locations' 
-        }, 
-        (payload) => {
-          console.log('📡 [REALTIME DATABASE] rider_locations mudou:', payload);
-          
-          if (payload.new && typeof payload.new === 'object' && 'rider_id' in payload.new) {
-            const newData = payload.new as { 
-              rider_id: string; 
-              rider_name?: string; 
-              lat: number; 
-              lng: number;
-            };
-            
-            const locationPayload: LocationPayload = {
-              riderId: newData.rider_id,
-              riderName: newData.rider_name || '',
-              lat: parseFloat(String(newData.lat)),
-              lng: parseFloat(String(newData.lng)),
-              speedKmh: 0,
-              heading: 0,
-              timestamp: Date.now()
-            };
-            
-            this.lastActivity = Date.now();
-            db.updateRiderLocation(locationPayload.riderId, locationPayload.riderName, locationPayload.lat, locationPayload.lng);
-            this.listeners.forEach((listener) => listener(locationPayload));
-          }
-        }
-      )
-      .on('broadcast', { event: 'rider-offline' }, (response) => {
-        const payload = response.payload as OfflinePayload;
-        if (payload && payload.riderId) {
-          this.lastActivity = Date.now(); // 🔥 Marca última atividade
-          // Remove localmente do DB mock
-          const locations = db.getRiderLocationsRecord();
-          if (locations[payload.riderId]) {
-            delete locations[payload.riderId];
-            localStorage.setItem('delivery_system_rider_locations', JSON.stringify(locations));
-          }
-          // Notifica ouvintes (mapas)
-          this.offlineListeners.forEach((listener) => listener(payload));
-        }
-      })
-      .on('broadcast', { event: 'chat-message' }, (response) => {
-        const payload = response.payload as ChatNotificationPayload;
-        if (payload && payload.fromUserId && payload.toUserId && payload.message) {
-          this.lastActivity = Date.now(); // 🔥 Marca última atividade
-          // Processar notificação de chat
-          this.handleChatNotification(payload);
-          this.chatListeners.forEach((listener) => listener(payload));
-        }
-      })
-      .on('broadcast', { event: 'schedule-update' }, (response) => {
-        const payload = response.payload as ScheduleNotificationPayload;
-        if (payload && payload.riderId) {
-          this.lastActivity = Date.now(); // 🔥 Marca última atividade
-          // Processar notificação de escala
-          this.handleScheduleNotification(payload);
-          this.scheduleListeners.forEach((listener) => listener(payload));
-        }
-      })
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          this.isSubscribed = true;
-          this.reconnectAttempts = 0;
-          console.log('✅ Realtime conectado: Database Changes ativo (rider_locations)');
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-          console.warn('⚠️ Realtime desconectado:', status);
-          this.isSubscribed = false;
-          
-          if (this.reconnectAttempts < this.maxReconnectAttempts) {
-            this.reconnectAttempts++;
-            console.log(`🔄 Tentativa de reconexão ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
-            setTimeout(() => this.reconnect(), 5000); // 5s delay antes de reconectar
-          } else {
-            console.warn('❌ Realtime falhou após 3 tentativas - usando apenas polling');
-          }
-        }
-      });
-
-    // 🔥 NOVO: Detectar quando app volta do background e reconectar
-    this.setupVisibilityListener();
-    
-    // 🔥 NOVO: Watchdog para verificar se ainda está recebendo dados
-    this.startConnectionWatchdog();
-    
-    // 🔥 NOVO: Polling de fallback (busca do Supabase a cada 10s caso realtime falhe)
+    // 🔥 DESABILITAR Realtime (instável, desconecta constantemente)
+    // Usar APENAS polling (mais estável e funciona perfeitamente)
     this.startPollingFallback();
+    
+    // Detectar quando app volta do background e reconectar
+    this.setupVisibilityListener();
   }
 
   private handleChatNotification(payload: ChatNotificationPayload) {

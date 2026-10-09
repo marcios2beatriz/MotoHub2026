@@ -94,6 +94,7 @@ export default function EstablishmentDashboard() {
   const [establishmentSchedules, setEstablishmentSchedules] = useState<Schedule[]>([]);
   const [riderLocations, setRiderLocations] = useState<RiderLocation[]>([]);
   const [currentEst, setCurrentEst] = useState<Establishment | null>(null);
+  const [isLoadingEst, setIsLoadingEst] = useState(true);
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -170,6 +171,8 @@ export default function EstablishmentDashboard() {
       userRole: user?.role
     });
 
+    setIsLoadingEst(true);
+
     // 🔥 GARANTIR que dados do Supabase estão carregados
     const allEstablishments = db.getEstablishments();
     if (allEstablishments.length === 0) {
@@ -203,6 +206,7 @@ export default function EstablishmentDashboard() {
     if (!estFound) {
       console.log('❌ ESTABELECIMENTO NÃO ENCONTRADO!');
       setCurrentEst(null);
+      setIsLoadingEst(false);
       return;
     }
 
@@ -265,6 +269,7 @@ export default function EstablishmentDashboard() {
     setAllRiders(riders);
     setEstablishmentSchedules([...schedules].sort((a, b) => b.date.localeCompare(a.date)));
     setRiderLocations(locations);
+    setIsLoadingEst(false);
   };
 
   useEffect(() => {
