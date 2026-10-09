@@ -12,6 +12,7 @@ import EstablishmentDashboard from './pages/EstablishmentDashboard';
 import CustomerTracking from './pages/CustomerTracking';
 import { db } from './utils/db';
 import { requestNotificationPermission } from './utils/notifications';
+import { realtimeGps } from './utils/realtimeGps';
 
 // Componente para gerenciar a sincronização e permissões iniciais
 function AppHandler({ children }: { children: React.ReactNode }) {
@@ -21,6 +22,10 @@ function AppHandler({ children }: { children: React.ReactNode }) {
     console.log('🚀 App.tsx: AppHandler montado');
     console.log('📍 Localização atual:', window.location.href);
     console.log('📍 Hash:', window.location.hash);
+    
+    // 🔥 CRÍTICO: Inicializar Realtime GPS + Polling
+    console.log('🎯 Inicializando RealtimeGPS...');
+    realtimeGps.init();
     
     // Puxar dados do Supabase na inicialização
     db.pullFromSupabase();

@@ -161,7 +161,7 @@ export default function EstablishmentDashboard() {
 
   const todayStr = db.getOperationalDateString();
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!user) return;
 
     console.log('🔍 DEBUG EstablishmentDashboard:', {
@@ -170,7 +170,13 @@ export default function EstablishmentDashboard() {
       userRole: user?.role
     });
 
+    // 🔥 GARANTIR que dados do Supabase estão carregados
     const allEstablishments = db.getEstablishments();
+    if (allEstablishments.length === 0) {
+      console.log('⏳ Aguardando dados do Supabase...');
+      await db.pullFromSupabase();
+    }
+
     console.log('🏪 Estabelecimentos disponíveis:', allEstablishments.map(e => ({ 
       id: e.id, 
       name: e.name, 
