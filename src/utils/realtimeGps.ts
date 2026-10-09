@@ -64,25 +64,39 @@ class RealtimeGpsManager {
       return;
     }
 
-    console.log('🚀 Inicializando canal Realtime do Supabase...');
+    console.log('🚀 Inicializando canal Realtime do Supabase (DATABASE CHANGES)...');
 
-    this.channel = supabase.channel('motoboy-live-tracking', {
-      config: {
-        broadcast: { self: false }
-      }
-    });
+    // 🔥 MUDANÇA: Usar postgres_changes ao invés de broadcast
+    // Isso é MUITO mais confiável e NÃO desconecta
+    this.channel = supabase.channel('rider-locations-changes');
 
     this.channel
-      .on('broadcast', { event: 'location-update' }, (response) => {
-        console.log('📡 [REALTIME] location-update recebido:', response.payload);
-        
-        const payload = response.payload as LocationPayload;
-        if (payload && payload.riderId && payload.lat && payload.lng) {
-          this.lastActivity = Date.now(); // 🔥 Marca última atividade
-          db.updateRiderLocation(payload.riderId, payload.riderName, payload.lat, payload.lng);
-          this.listeners.forEach((listener) => listener(payload));
+      .on('postgres_changes', 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'rider_locations' 
+        }, 
+        (payload) => {
+          console.log('📡 [REALTIME DATABASE] rider_locations mudou:', payload);
+          
+          if (payload.new && payload.new.rider_id) {
+            const locationPayload: LocationPayload = {
+              riderId: payload.new.rider_id,
+              riderName: payload.new.rider_name || '',
+              lat: parseFloat(payload.new.lat),
+              lng: parseFloat(payload.new.lng),
+              speedKmh: 0,
+              heading: 0,
+              timestamp: Date.now()
+            };
+            
+            this.lastActivity = Date.now();
+            db.updateRiderLocation(locationPayload.riderId, locationPayload.riderName, locationPayload.lat, locationPayload.lng);
+            this.listeners.forEach((listener) => listener(locationPayload));
+          }
         }
-      })
+      )
       .on('broadcast', { event: 'rider-offline' }, (response) => {
         const payload = response.payload as OfflinePayload;
         if (payload && payload.riderId) {
@@ -118,17 +132,16 @@ class RealtimeGpsManager {
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           this.isSubscribed = true;
-          this.reconnectAttempts = 0; // Reset contador
-          console.log('✅ Realtime conectado: GPS + Notificações ativas');
+          this.reconnectAttempts = 0;
+          console.log('✅ Realtime conectado: Database Changes ativo (rider_locations)');
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
           console.warn('⚠️ Realtime desconectado:', status);
           this.isSubscribed = false;
           
-          // 🔥 Limitar tentativas de reconexão para evitar loop infinito
           if (this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
             console.log(`🔄 Tentativa de reconexão ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
-            setTimeout(() => this.reconnect(), 3000);
+            setTimeout(() => this.reconnect(), 5000); // 5s delay antes de reconectar
           } else {
             console.warn('❌ Realtime falhou após 3 tentativas - usando apenas polling');
           }
@@ -224,28 +237,16 @@ class RealtimeGpsManager {
   public sendLocation(payload: LocationPayload) {
     if (!this.channel) this.init();
 
-    console.log('📤 [REALTIME] Enviando location-update:', {
+    console.log('📤 [REALTIME] Salvando no banco (database changes vai notificar automaticamente):', {
       riderId: payload.riderId,
       riderName: payload.riderName,
       lat: payload.lat,
-      lng: payload.lng,
-      isSubscribed: this.isSubscribed
+      lng: payload.lng
     });
 
-    if (this.channel && this.isSubscribed) {
-      this.channel.send({
-        type: 'broadcast',
-        event: 'location-update',
-        payload
-      }).then(() => {
-        console.log('✅ [REALTIME] location-update enviado com sucesso');
-      }).catch((err) => {
-        console.error('❌ [REALTIME] Erro ao enviar location-update:', err);
-      });
-    } else {
-      console.warn('⚠️ [REALTIME] Canal não subscrito, update ignorado');
-    }
-
+    // ✅ MUDANÇA: Não precisa mais de broadcast!
+    // O postgres_changes vai detectar automaticamente quando salvamos no banco
+    
     db.updateRiderLocation(payload.riderId, payload.riderName, payload.lat, payload.lng);
   }
 
