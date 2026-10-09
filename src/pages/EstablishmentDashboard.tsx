@@ -473,6 +473,9 @@ export default function EstablishmentDashboard() {
   };
 
   useEffect(() => {
+    // 🚨 IMPORTANTE: Só inicializar mapa se estiver na aba de operação ou em tela cheia
+    if (activeTab !== 'operation' && !isMapExpanded) return;
+    
     if (!mapContainerRef.current) return;
 
     if (!document.getElementById('leaflet-css')) {
