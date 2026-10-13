@@ -652,15 +652,11 @@ export default function AdminDashboard() {
     }
 
     if (confirm(confirmMsg)) {
-      const allDeliveries = db.getDeliveries();
-      const pendingIds = new Set(pendingDels.map(p => p.id));
-      const updated = allDeliveries.map(d => pendingIds.has(d.id) ? {
-        ...d,
-        status: 'active' as const,
-        updatedAt: new Date().toISOString()
-      } : d);
-
-      await db.setDeliveries(updated);
+      // ✅ OTIMIZADO: Usa função de batch update
+      await db.batchUpdateDeliveryStatus(
+        pendingDels.map(d => d.id),
+        'active'
+      );
       loadData();
       alert(`${pendingDels.length} corridas aprovadas com sucesso!`);
     }
@@ -1040,14 +1036,14 @@ export default function AdminDashboard() {
     const isSame = deliveryForm.deliveryType === 'same_address' || Number(finalVal) === 4 || Boolean(deliveryForm.linkedOrderNumber);
 
     if (editingDelivery) {
-      const updated = deliveries.map(d => d.id === editingDelivery.id ? {
-        ...d,
+      // ✅ OTIMIZADO: Atualiza apenas 1 corrida
+      await db.updateSingleDelivery(editingDelivery.id, {
         riderId: deliveryForm.riderId,
         establishmentId: deliveryForm.establishmentId,
         date: deliveryForm.date,
         time: deliveryForm.time,
         value: finalVal,
-        scheduleId: activeSchedule?.id || d.scheduleId,
+        scheduleId: activeSchedule?.id || editingDelivery.scheduleId,
         orderNumber: cleanOrderNumber || undefined,
         notes: deliveryForm.notes.trim() || undefined,
         deliveryType: isSame ? ('same_address' as const) : ('standard' as const),
@@ -1058,9 +1054,9 @@ export default function AdminDashboard() {
         orderCollectionAmount: collectionAmount,
         changeFor: changeForValue,
         updatedAt: nowStr
-      } : d);
-      await db.setDeliveries(updated);
+      });
     } else {
+      // ✅ OTIMIZADO: Insere apenas 1 corrida
       const newDelivery: Delivery = {
         id: 'd_' + Date.now(),
         riderId: deliveryForm.riderId,
@@ -1082,7 +1078,7 @@ export default function AdminDashboard() {
         updatedAt: nowStr,
         paid: false
       };
-      await db.setDeliveries([...deliveries, newDelivery]);
+      await db.addSingleDelivery(newDelivery);
     }
 
     setShowDeliveryModal(false);

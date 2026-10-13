@@ -842,8 +842,8 @@ export default function EstablishmentDashboard() {
       const isSame = deliveryForm.deliveryType === 'same_address' || Number(finalVal) === 4 || Boolean(deliveryForm.linkedOrderNumber);
 
       if (editingDelivery) {
-        const updated = allDeliveries.map(d => d.id === editingDelivery.id ? {
-          ...d,
+        // ✅ OTIMIZADO: Atualiza apenas 1 corrida ao invés de todas
+        await db.updateSingleDelivery(editingDelivery.id, {
           riderId: deliveryForm.riderId,
           date: deliveryForm.date,
           time: deliveryForm.time,
@@ -858,9 +858,9 @@ export default function EstablishmentDashboard() {
           orderCollectionAmount: collectionAmount,
           changeFor: changeForValue,
           updatedAt: nowStr
-        } : d);
-        await db.setDeliveries(updated);
+        });
       } else {
+        // ✅ OTIMIZADO: Insere apenas 1 corrida ao invés de fazer upsert de todas
         const newDelivery: Delivery = {
           id: 'd_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
           riderId: deliveryForm.riderId,
@@ -881,7 +881,7 @@ export default function EstablishmentDashboard() {
           updatedAt: nowStr,
           paid: false
         };
-        await db.setDeliveries([...allDeliveries, newDelivery]);
+        await db.addSingleDelivery(newDelivery);
       }
 
       setShowDeliveryModal(false);
