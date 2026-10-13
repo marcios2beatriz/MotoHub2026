@@ -371,6 +371,10 @@ const isMobile = typeof window !== 'undefined' && (
 let pullThrottleTs = 0;
 const PULL_THROTTLE_MS = isMobile ? 30000 : 20000; // Mobile: 30s, Desktop: 20s
 
+// Flag para indicar se os dados foram carregados pelo menos uma vez
+let dataReady = false;
+let dataReadyCallbacks: (() => void)[] = [];
+
 export const db = {
   isSameDayString,
   getDeliveryOperationalDate,
@@ -1307,6 +1311,28 @@ export const db = {
     return { deliveriesCount: memoryDeliveries.length };
   },
 
+  // 🔥 Aguardar dados estarem carregados (útil para páginas que precisam dos dados imediatamente)
+  async waitForDataReady(timeoutMs = 30000): Promise<boolean> {
+    if (dataReady) {
+      console.log('✅ Dados já estão prontos');
+      return true;
+    }
+
+    console.log('⏳ Aguardando dados serem carregados...');
+    
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        console.warn('⚠️ Timeout aguardando dados');
+        resolve(false);
+      }, timeoutMs);
+
+      dataReadyCallbacks.push(() => {
+        clearTimeout(timeout);
+        resolve(true);
+      });
+    });
+  },
+
   async pullFromSupabase() {
     // ✅ THROTTLE: Evita chamadas paralelas excessivas (economia de banco)
     const now = Date.now();
@@ -1584,6 +1610,11 @@ export const db = {
       }
 
       window.dispatchEvent(new Event('db-sync-complete'));
+      
+      // 🔥 Marcar dados como prontos e executar callbacks
+      dataReady = true;
+      dataReadyCallbacks.forEach(cb => cb());
+      dataReadyCallbacks = [];
       
       console.log('✅ DADOS CARREGADOS COM SUCESSO:', {
         usuarios: memoryUsers.length,
