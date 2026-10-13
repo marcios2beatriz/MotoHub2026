@@ -2,6 +2,7 @@
 
 import { supabase, supabaseWrite } from './supabase';
 import { realtimeGps } from './realtimeGps';
+import { edgeInsert, edgeUpdate, edgeUpsert, edgeDelete } from './edgeFunction';
 
 export { supabase, supabaseWrite };
 
@@ -794,12 +795,13 @@ export const db = {
     // Atualiza memória local instantaneamente
     memoryDeliveries = [normalized, ...memoryDeliveries];
 
-    // Insere apenas 1 registro no Supabase (muito mais rápido)
+    // Insere usando Edge Function (bypassa limitações de RLS)
     const payload = formatDeliveryPayload(normalized);
     try {
-      await supabaseWrite.from('deliveries').insert(payload);
+      await edgeInsert('deliveries', payload);
+      console.log('✅ Corrida inserida via Edge Function');
     } catch (err) {
-      console.warn('Erro ao inserir corrida no Supabase:', err);
+      console.warn('❌ Erro ao inserir corrida via Edge Function:', err);
       // Remove da memória se falhou no banco
       memoryDeliveries = memoryDeliveries.filter(d => d.id !== delivery.id);
       throw err;

@@ -1,0 +1,4 @@
+# Supabase Edge Functions Configuration
+
+[functions.delivery-operations]
+verify_jwt = false  # Permitir chamadas sem autenticação JWT complexa
