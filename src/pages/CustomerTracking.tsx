@@ -67,10 +67,19 @@ export default function CustomerTracking() {
     }
   }, [isFullscreen]);
 
-  const loadTrackingData = () => {
+  const loadTrackingData = async () => {
     if (!deliveryId) return;
     
-    const allDeliveries = db.getDeliveries();
+    // 🔥 OTIMIZAÇÃO: Tentar carregar dos dados locais primeiro
+    let allDeliveries = db.getDeliveries();
+    
+    // Se não tem dados locais, puxar do Supabase
+    if (allDeliveries.length === 0) {
+      console.log('📥 Primeira carga - puxando dados do Supabase...');
+      await db.pullFromSupabase();
+      allDeliveries = db.getDeliveries();
+    }
+    
     const currentDelivery = allDeliveries.find(d => d.id === deliveryId);
     
     if (currentDelivery) {
@@ -102,7 +111,8 @@ export default function CustomerTracking() {
   };
 
   useEffect(() => {
-    db.pullFromSupabase().then(() => loadTrackingData());
+    // 🔥 Carregar imediatamente (usa cache local se disponível)
+    loadTrackingData();
 
     const interval = setInterval(() => {
       db.pullFromSupabase().then(() => loadTrackingData());
@@ -323,6 +333,16 @@ export default function CustomerTracking() {
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
         <RefreshCw className="h-8 w-8 text-indigo-600 animate-spin mb-2" />
         <p className="text-sm text-slate-600 font-medium">Carregando mapa de rastreamento...</p>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-3"></div>
+        <h2 className="text-lg font-bold text-slate-800">Carregando rastreamento...</h2>
+        <p className="text-sm text-slate-500 mt-1 max-w-xs">Aguarde enquanto buscamos as informações da sua entrega.</p>
       </div>
     );
   }
