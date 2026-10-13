@@ -73,11 +73,18 @@ export default function CustomerTracking() {
     // 🔥 OTIMIZAÇÃO: Tentar carregar dos dados locais primeiro
     let allDeliveries = db.getDeliveries();
     
-    // Se não tem dados locais, puxar do Supabase
+    // Se não tem dados locais, puxar do Supabase (forçar, ignorar throttle)
     if (allDeliveries.length === 0) {
       console.log('📥 Primeira carga - puxando dados do Supabase...');
-      await db.pullFromSupabase();
-      allDeliveries = db.getDeliveries();
+      try {
+        // 🔥 CRÍTICO: Esperar dados carregarem antes de continuar
+        await db.pullFromSupabase();
+        allDeliveries = db.getDeliveries();
+      } catch (error) {
+        console.error('❌ Erro ao puxar dados do Supabase:', error);
+        setLoading(false);
+        return;
+      }
     }
     
     const currentDelivery = allDeliveries.find(d => d.id === deliveryId);
@@ -111,8 +118,22 @@ export default function CustomerTracking() {
   };
 
   useEffect(() => {
-    // 🔥 Carregar imediatamente (usa cache local se disponível)
-    loadTrackingData();
+    // 🔥 Aguardar dados carregarem antes de tentar encontrar a entrega
+    const initializeData = async () => {
+      // Se ainda está carregando dados globais, aguardar um pouco
+      const maxRetries = 5;
+      let retries = 0;
+      
+      while (db.getDeliveries().length === 0 && retries < maxRetries) {
+        console.log(`⏳ Aguardando dados carregarem (tentativa ${retries + 1}/${maxRetries})...`);
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Espera 1s
+        retries++;
+      }
+      
+      await loadTrackingData();
+    };
+    
+    initializeData();
 
     const interval = setInterval(() => {
       db.pullFromSupabase().then(() => loadTrackingData());
