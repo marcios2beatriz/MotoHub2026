@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste Supabase Insert</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+    <h1>Teste de Insert no Supabase</h1>
+    <button id="testInsert">Testar INSERT</button>
+    <button id="testSelect">Testar SELECT</button>
+    <button id="testAuth">Testar Auth Status</button>
+    <pre id="result"></pre>
+
+    <script>
+        const SUPABASE_URL = 'https://rqieirvzutdculcdsncb.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJxaWVpcnZ6dXRkY3VsY2RzbmNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM1MzA2NDgsImV4cCI6MjA5OTEwNjY0OH0.7-6uGuRhdtSnu5dHzTCJ7OgakHXhZmYPG1qVvCApdR4';
+
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        
+        const result = document.getElementById('result');
+
+        document.getElementById('testSelect').addEventListener('click', async () => {
+            result.textContent = 'Testando SELECT...';
+            try {
+                const { data, error } = await supabase
+                    .from('deliveries')
+                    .select('*')
+                    .limit(1);
+                
+                result.textContent = JSON.stringify({ success: true, data, error }, null, 2);
+            } catch (err) {
+                result.textContent = JSON.stringify({ success: false, error: err.message }, null, 2);
+            }
+        });
+
+        document.getElementById('testAuth').addEventListener('click', async () => {
+            result.textContent = 'Verificando Auth...';
+            try {
+                const { data: { session } } = await supabase.auth.getSession();
+                const headers = {
+                    'apikey': SUPABASE_ANON_KEY,
+                    'Authorization': session ? `Bearer ${session.access_token}` : `Bearer ${SUPABASE_ANON_KEY}`
+                };
+                
+                result.textContent = JSON.stringify({
+                    session: session ? 'Authenticated' : 'Anonymous',
+                    user: session?.user,
+                    headers
+                }, null, 2);
+            } catch (err) {
+                result.textContent = JSON.stringify({ error: err.message }, null, 2);
+            }
+        });
+
+        document.getElementById('testInsert').addEventListener('click', async () => {
+            result.textContent = 'Testando INSERT...';
+            
+            const testPayload = {
+                id: 'test-' + Date.now(),
+                rider_id: 'test-rider',
+                establishment_id: 'test-establishment',
+                date: '2026-09-29',
+                time: '12:00',
+                value: 10,
+                status: 'pending',
+                schedule_id: null,
+                order_number: null
+            };
+
+            console.log('Payload:', testPayload);
+            
+            try {
+                const { data, error, status, statusText } = await supabase
+                    .from('deliveries')
+                    .insert(testPayload)
+                    .select();
+                
+                result.textContent = JSON.stringify({
+                    success: !error,
+                    status,
+                    statusText,
+                    data,
+                    error: error ? {
+                        message: error.message,
+                        details: error.details,
+                        hint: error.hint,
+                        code: error.code
+                    } : null
+                }, null, 2);
+            } catch (err) {
+                result.textContent = JSON.stringify({
+                    success: false,
+                    error: err.message,
+                    stack: err.stack
+                }, null, 2);
+            }
+        });
+    </script>
+</body>
+</html>

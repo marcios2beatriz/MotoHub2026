@@ -1,9 +1,9 @@
 "use client";
 
-import { supabase } from './supabase';
+import { supabase, supabaseWrite } from './supabase';
 import { realtimeGps } from './realtimeGps';
 
-export { supabase };
+export { supabase, supabaseWrite };
 
 export type PaymentMethodType = 'already_paid' | 'money' | 'card_debit' | 'card_credit' | 'pix_delivery';
 
@@ -508,7 +508,7 @@ export const db = {
     }));
 
     if (payload.length > 0) {
-      await supabase.from('users').upsert(payload, { onConflict: 'id' });
+      await supabaseWrite.from('users').upsert(payload, { onConflict: 'id' });
     }
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
@@ -560,7 +560,7 @@ export const db = {
         passwordHash: 'D24180417c*'
       };
 
-      await supabase.from('users').upsert({
+      await supabaseWrite.from('users').upsert({
         id: adminDefault.id,
         name: adminDefault.name,
         email: adminDefault.email,
@@ -579,7 +579,7 @@ export const db = {
 
   async deleteUser(id: string) {
     memoryUsers = memoryUsers.filter(u => u.id !== id);
-    await supabase.from('users').delete().eq('id', id);
+    await supabaseWrite.from('users').delete().eq('id', id);
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
@@ -605,14 +605,14 @@ export const db = {
     }));
 
     if (payload.length > 0) {
-      await supabase.from('establishments').upsert(payload, { onConflict: 'id' });
+      await supabaseWrite.from('establishments').upsert(payload, { onConflict: 'id' });
     }
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
   async deleteEstablishment(id: string) {
     memoryEstablishments = memoryEstablishments.filter(e => e.id !== id);
-    await supabase.from('establishments').delete().eq('id', id);
+    await supabaseWrite.from('establishments').delete().eq('id', id);
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
@@ -649,7 +649,7 @@ export const db = {
     });
 
     if (payload.length > 0) {
-      await supabase.from('schedules').upsert(payload, { onConflict: 'id' });
+      await supabaseWrite.from('schedules').upsert(payload, { onConflict: 'id' });
     }
     
     // Enviar notificações para escalas novas ou modificadas
@@ -735,7 +735,7 @@ export const db = {
 
   async deleteSchedule(id: string) {
     memorySchedules = memorySchedules.filter(s => s.id !== id);
-    await supabase.from('schedules').delete().eq('id', id);
+    await supabaseWrite.from('schedules').delete().eq('id', id);
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
@@ -767,7 +767,7 @@ export const db = {
         const chunkSize = 100;
         for (let i = 0; i < payload.length; i += chunkSize) {
           const chunk = payload.slice(i, i + chunkSize);
-          await supabase.from('deliveries').upsert(chunk, { onConflict: 'id' });
+          await supabaseWrite.from('deliveries').upsert(chunk, { onConflict: 'id' });
         }
       } catch (err) {
         console.warn('Aviso no envio de entregas ao Supabase:', err);
@@ -797,7 +797,7 @@ export const db = {
     // Insere apenas 1 registro no Supabase (muito mais rápido)
     const payload = formatDeliveryPayload(normalized);
     try {
-      await supabase.from('deliveries').insert(payload);
+      await supabaseWrite.from('deliveries').insert(payload);
     } catch (err) {
       console.warn('Erro ao inserir corrida no Supabase:', err);
       // Remove da memória se falhou no banco
@@ -834,7 +834,7 @@ export const db = {
     // Atualiza apenas 1 registro no Supabase
     const payload = formatDeliveryPayload(normalized);
     try {
-      await supabase.from('deliveries').update(payload).eq('id', deliveryId);
+      await supabaseWrite.from('deliveries').update(payload).eq('id', deliveryId);
     } catch (err) {
       console.warn('Erro ao atualizar corrida no Supabase:', err);
       // Reverte a memória se falhou no banco
@@ -878,7 +878,7 @@ export const db = {
     // Batch update no Supabase
     try {
       const payloads = updatedDeliveries.map(formatDeliveryPayload);
-      await supabase.from('deliveries').upsert(payloads, { onConflict: 'id' });
+      await supabaseWrite.from('deliveries').upsert(payloads, { onConflict: 'id' });
     } catch (err) {
       console.warn('Erro no batch update:', err);
       // Reverte todas as mudanças na memória
@@ -913,7 +913,7 @@ export const db = {
     // Batch insert no Supabase
     try {
       const payloads = normalized.map(formatDeliveryPayload);
-      await supabase.from('deliveries').insert(payloads);
+      await supabaseWrite.from('deliveries').insert(payloads);
     } catch (err) {
       console.warn('Erro no batch insert:', err);
       // Remove da memória se falhou no banco
@@ -930,7 +930,7 @@ export const db = {
     memoryDeliveries = memoryDeliveries.filter(d => d.id !== id);
 
     try {
-      const { error } = await supabase.from('deliveries').delete().eq('id', id);
+      const { error } = await supabaseWrite.from('deliveries').delete().eq('id', id);
       if (error) {
         console.error('Erro ao deletar entrega no Supabase:', error);
         throw error;
@@ -968,7 +968,7 @@ export const db = {
     if (idsToDelete.length > 0) {
       memoryDeliveries = memoryDeliveries.filter(d => !idsToDelete.includes(d.id));
       for (const id of idsToDelete) {
-        await supabase.from('deliveries').delete().eq('id', id);
+        await supabaseWrite.from('deliveries').delete().eq('id', id);
       }
       window.dispatchEvent(new Event('db-sync-complete'));
     }
@@ -979,7 +979,7 @@ export const db = {
   async clearAllDeliveries() {
     memoryDeliveries = [];
     try {
-      await supabase.from('deliveries').delete().neq('id', '');
+      await supabaseWrite.from('deliveries').delete().neq('id', '');
     } catch (e) {}
 
     window.dispatchEvent(new Event('db-sync-complete'));
@@ -1001,7 +1001,7 @@ export const db = {
     }));
 
     if (payload.length > 0) {
-      await supabase.from('notifications').upsert(payload, { onConflict: 'id' });
+      await supabaseWrite.from('notifications').upsert(payload, { onConflict: 'id' });
     }
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
@@ -1023,14 +1023,14 @@ export const db = {
     }));
 
     if (payload.length > 0) {
-      await supabase.from('partner_requests').upsert(payload, { onConflict: 'id' });
+      await supabaseWrite.from('partner_requests').upsert(payload, { onConflict: 'id' });
     }
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
   async deletePartnerRequest(id: string) {
     memoryRequests = memoryRequests.filter(r => r.id !== id);
-    await supabase.from('partner_requests').delete().eq('id', id);
+    await supabaseWrite.from('partner_requests').delete().eq('id', id);
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
@@ -1055,7 +1055,7 @@ export const db = {
     }
 
     try {
-      await supabase.from('products').upsert({
+      await supabaseWrite.from('products').upsert({
         id: updatedProd.id,
         establishment_id: updatedProd.establishmentId,
         name: updatedProd.name,
@@ -1079,8 +1079,8 @@ export const db = {
   async deleteProduct(id: string): Promise<void> {
     memoryProducts = memoryProducts.filter(p => p.id !== id);
     try {
-      await supabase.from('products').delete().eq('id', id);
-      await supabase.from('stock_movements').delete().eq('product_id', id);
+      await supabaseWrite.from('products').delete().eq('id', id);
+      await supabaseWrite.from('stock_movements').delete().eq('product_id', id);
     } catch (err) {
       console.warn('Erro ao excluir produto no Supabase:', err);
     }
@@ -1134,7 +1134,7 @@ export const db = {
         product.costPrice = movement.costPrice;
       }
       try {
-        await supabase.from('products').update({
+        await supabaseWrite.from('products').update({
           current_stock: newStock,
           cost_price: product.costPrice,
           updated_at: nowStr
@@ -1145,7 +1145,7 @@ export const db = {
     }
 
     try {
-      await supabase.from('stock_movements').insert({
+      await supabaseWrite.from('stock_movements').insert({
         id: newMov.id,
         establishment_id: newMov.establishmentId,
         product_id: newMov.productId,
@@ -1200,7 +1200,7 @@ export const db = {
     memoryLocations[canonicalId] = { riderId: canonicalId, riderName, lat, lng, updatedAt };
 
     try {
-      await supabase.from('rider_locations').upsert({
+      await supabaseWrite.from('rider_locations').upsert({
         rider_id: canonicalId,
         rider_name: riderName,
         lat: lat,
@@ -1217,7 +1217,7 @@ export const db = {
     realtimeGps.sendOffline(canonicalId);
     delete memoryLocations[canonicalId];
     try {
-      await supabase.from('rider_locations').delete().eq('rider_id', canonicalId);
+      await supabaseWrite.from('rider_locations').delete().eq('rider_id', canonicalId);
     } catch (e) {}
   },
 
