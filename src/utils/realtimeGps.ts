@@ -59,8 +59,9 @@ class RealtimeGpsManager {
   private maxReconnectAttempts = 3;
 
   public init() {
-    if (this.channel) {
-      console.log('⚠️ RealtimeGps já inicializado');
+    // 🔥 IMPORTANTE: Prevenir inicialização múltipla
+    if (this.pollingInterval !== null) {
+      console.log('⚠️ RealtimeGps já inicializado - ignorando chamada duplicada');
       return;
     }
 
