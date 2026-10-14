@@ -57,7 +57,8 @@ import {
   FileSpreadsheet,
   CheckSquare,
   Square,
-  X
+  X,
+  AlertCircle
 } from 'lucide-react';
 
 import L from 'leaflet';
@@ -2829,6 +2830,14 @@ export default function AdminDashboard() {
                     <span>Registro e Controle de Corridas ({filteredAndSortedDeliveries.length})</span>
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">Visualize, filtre e gerencie todas as entregas do sistema</p>
+                  {deliveries.length > filteredAndSortedDeliveries.length && (
+                    <div className="mt-2 flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg">
+                      <AlertCircle className="h-4 w-4 text-amber-600 flex-shrink-0" />
+                      <span className="text-xs text-amber-700 font-medium">
+                        {deliveries.length - filteredAndSortedDeliveries.length} {deliveries.length - filteredAndSortedDeliveries.length === 1 ? 'entrega oculta' : 'entregas ocultas'} pelos filtros ativos
+                      </span>
+                    </div>
+                  )}
                 </div>
                 
                 <div className="flex flex-wrap items-center gap-2">
