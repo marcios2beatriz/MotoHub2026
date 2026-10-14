@@ -654,7 +654,7 @@ export default function AdminDashboard() {
     if (confirm(confirmMsg)) {
       // ✅ Atualiza cada entrega individualmente
       for (const delivery of pendingDels) {
-        await db.updateSingleDelivery({ ...delivery, status: 'active' });
+        await db.updateSingleDelivery(delivery.id, { status: 'active' });
       }
       loadData();
       alert(`${pendingDels.length} corridas aprovadas com sucesso!`);
