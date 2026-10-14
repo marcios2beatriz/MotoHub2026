@@ -1517,12 +1517,10 @@ export const db = {
           console.warn(`⚠️ ATENÇÃO: Perda de dados detectada! ${allDelData.length} registros brutos -> ${memoryDeliveries.length} deliveries`);
         }
         
-        // 🔍 DEBUG: Verificar IDs duplicados (normal se forem entregas diferentes)
+        // 🔍 DEBUG: Verificar IDs duplicados
         const uniqueIds = new Set(memoryDeliveries.map(d => d.id));
         if (uniqueIds.size !== memoryDeliveries.length) {
-          const duplicateCount = memoryDeliveries.length - uniqueIds.size;
-          console.warn(`⚠️ INFORMAÇÃO: ${duplicateCount} IDs duplicados detectados no banco (${memoryDeliveries.length} deliveries -> ${uniqueIds.size} IDs únicos)`);
-          console.warn(`ℹ️ Isso é normal se forem entregas diferentes com mesmo ID. A deduplicação usa chave composta para mantê-las.`);
+          console.warn(`⚠️ ATENÇÃO: IDs duplicados detectados! ${memoryDeliveries.length} deliveries -> ${uniqueIds.size} IDs únicos`);
         }
       } else {
         memoryDeliveries = [];
