@@ -256,16 +256,9 @@ export default function AdminDashboard() {
     const currentUsers = db.getUsers();
     const currentEsts = db.getEstablishments();
     const currentSchedules = db.getSchedules();
-    const rawDeliveries = db.getDeliveries();
+    const currentDeliveries = db.getDeliveries();
     
-    console.log(`📊 AdminDashboard loadData: ${rawDeliveries.length} corridas brutas do db.getDeliveries()`);
-    
-    // 🔧 CORREÇÃO: Deduplicar corridas (evita duplicação por race condition realtime + pull)
-    const currentDeliveries = Array.from(
-      new Map(rawDeliveries.map(d => [d.id, d])).values()
-    );
-    
-    console.log(`📊 AdminDashboard loadData: ${currentDeliveries.length} corridas após deduplicação (perdeu ${rawDeliveries.length - currentDeliveries.length} duplicadas)`);
+    console.log(`📊 AdminDashboard loadData: ${currentDeliveries.length} corridas carregadas do db.getDeliveries()`);
     
     const rawRequests = db.getPartnerRequests();
     const locations = db.getRiderLocations();
@@ -1928,32 +1921,6 @@ export default function AdminDashboard() {
       if (d.id === 'd_1791414849315_ii12') console.log('✅ Entrega #6 PASSOU por todos os filtros!');
       return true;
     });
-
-  // 🔍 DEBUG: Conta entregas do Andrey no dia 07/10
-  const andreyDeliveriesFiltered = filteredAndSortedDeliveries.filter(d => 
-    d.riderId === 'u_1785187359677' && d.date === '2026-10-07'
-  );
-  if (andreyDeliveriesFiltered.length > 0) {
-    console.log(`📊 CONTADOR: ${andreyDeliveriesFiltered.length} entregas do Andrey no dia 07/10/2026 após filtros`);
-    const ids = andreyDeliveriesFiltered.map(d => d.id);
-    console.log('📋 IDs após filtros:', ids);
-    const hasDelivery6 = ids.includes('d_1791414849315_ii12');
-    console.log(`🎯 Entrega #6 após filtros? ${hasDelivery6 ? 'SIM ✅' : 'NÃO ❌'}`);
-  }
-  
-  // 🔍 DEBUG: Verificar entregas BRUTAS (antes da deduplicação que acontece no loadData)
-  const rawAndreyDeliveries = deliveries.filter(d => 
-    d.riderId === 'u_1785187359677' && d.date === '2026-10-07'
-  );
-  if (rawAndreyDeliveries.length > 0) {
-    console.log(`🔎 BRUTO: ${rawAndreyDeliveries.length} entregas do Andrey no dia 07/10/2026 (antes dos filtros)`);
-    const rawIds = rawAndreyDeliveries.map(d => d.id);
-    const hasRawDelivery6 = rawIds.includes('d_1791414849315_ii12');
-    console.log(`🎯 Entrega #6 nas entregas brutas? ${hasRawDelivery6 ? 'SIM ✅' : 'NÃO ❌'}`);
-    if (hasRawDelivery6 && !andreyDeliveriesFiltered.some(d => d.id === 'd_1791414849315_ii12')) {
-      console.log('❌ CONFIRMADO: Entrega #6 foi REMOVIDA pelos filtros!');
-    }
-  }
 
   const sortedDeliveries = filteredAndSortedDeliveries.sort((a, b) => {
       if (delSortOrder === 'order_number_grouped') {
