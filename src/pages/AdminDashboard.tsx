@@ -1756,6 +1756,21 @@ export default function AdminDashboard() {
       const rider = users.find(u => u.id === d.riderId);
       const est = establishments.find(e => e.id === d.establishmentId);
 
+      // 🔍 DEBUG: Log da entrega #6
+      if (d.id === 'd_1791414849315_ii12') {
+        console.log('🔍 DEBUG ENTREGA #6:', {
+          id: d.id,
+          date: d.date,
+          time: d.time,
+          riderId: d.riderId,
+          riderName: rider?.name,
+          delRiderFilter,
+          dateMatch: d.date === delSmartDate,
+          smartDate: delSmartDate,
+          filterMode: delFilterMode
+        });
+      }
+
       const hasNotes = Boolean(d.notes && d.notes.trim().length > 0);
       if (delNotesFilter === 'with_notes' && !hasNotes) return false;
       if (delNotesFilter === 'without_notes' && hasNotes) return false;
