@@ -1765,15 +1765,32 @@ export default function AdminDashboard() {
           riderId: d.riderId,
           riderName: rider?.name,
           delRiderFilter,
+          riderMatch: delRiderFilter === 'all' || d.riderId === delRiderFilter,
           dateMatch: d.date === delSmartDate,
           smartDate: delSmartDate,
-          filterMode: delFilterMode
+          filterMode: delFilterMode,
+          delSmartPeriod,
+          allFilters: {
+            delNotesFilter,
+            delFeatureFilter,
+            delPaymentFilter,
+            delOrderNumberFilter,
+            delSearchQuery,
+            delEstFilter,
+            delStatusFilter
+          }
         });
       }
 
       const hasNotes = Boolean(d.notes && d.notes.trim().length > 0);
-      if (delNotesFilter === 'with_notes' && !hasNotes) return false;
-      if (delNotesFilter === 'without_notes' && hasNotes) return false;
+      if (delNotesFilter === 'with_notes' && !hasNotes) {
+        if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delNotesFilter with_notes');
+        return false;
+      }
+      if (delNotesFilter === 'without_notes' && hasNotes) {
+        if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delNotesFilter without_notes');
+        return false;
+      }
 
       const isSame = d.deliveryType === 'same_address' || Number(d.value) === 4 || Boolean(d.linkedOrderNumber);
 
@@ -1820,24 +1837,46 @@ export default function AdminDashboard() {
         if (!matchNum && !rName.includes(q) && !eName.includes(q)) return false;
       }
 
-      if (delRiderFilter !== 'all' && d.riderId !== delRiderFilter) return false;
-      if (delEstFilter !== 'all' && d.establishmentId !== delEstFilter) return false;
-      if (delStatusFilter !== 'all' && d.status !== delStatusFilter) return false;
+      if (delRiderFilter !== 'all' && d.riderId !== delRiderFilter) {
+        if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delRiderFilter', { delRiderFilter, riderId: d.riderId });
+        return false;
+      }
+      if (delEstFilter !== 'all' && d.establishmentId !== delEstFilter) {
+        if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delEstFilter');
+        return false;
+      }
+      if (delStatusFilter !== 'all' && d.status !== delStatusFilter) {
+        if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delStatusFilter');
+        return false;
+      }
 
       if (delFilterMode === 'smart_shift') {
         if (!delSmartDate) return true;
         const opDate = getDeliveryOperationalDate(d.date, d.time);
         const isDateMatch = isSameDayString(opDate, delSmartDate);
-        if (!isDateMatch) return false;
+        if (d.id === 'd_1791414849315_ii12') {
+          console.log('🔍 SMART_SHIFT check:', { opDate, delSmartDate, isDateMatch });
+        }
+        if (!isDateMatch) {
+          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: smart_shift date mismatch');
+          return false;
+        }
 
         const [h] = (d.time || '12:00').split(':').map(Number);
         if (delSmartPeriod === 'night_shift') {
-          return h >= 18 || h < 3;
+          const pass = h >= 18 || h < 3;
+          if (d.id === 'd_1791414849315_ii12') console.log('🔍 night_shift check:', { h, pass });
+          return pass;
         } else if (delSmartPeriod === 'morning_shift') {
-          return h >= 6 && h < 12;
+          const pass = h >= 6 && h < 12;
+          if (d.id === 'd_1791414849315_ii12') console.log('🔍 morning_shift check:', { h, pass });
+          return pass;
         } else if (delSmartPeriod === 'afternoon_shift') {
-          return h >= 12 && h < 18;
+          const pass = h >= 12 && h < 18;
+          if (d.id === 'd_1791414849315_ii12') console.log('🔍 afternoon_shift check:', { h, pass });
+          return pass;
         }
+        if (d.id === 'd_1791414849315_ii12') console.log('✅ Passou smart_shift (all_shifts)');
         return true;
       } else if (delFilterMode === 'date_range') {
         if (delDateFrom && d.date < delDateFrom) return false;
