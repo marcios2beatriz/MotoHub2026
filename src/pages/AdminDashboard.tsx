@@ -1883,9 +1883,19 @@ export default function AdminDashboard() {
         if (delDateTo && d.date > delDateTo) return false;
       }
 
+      if (d.id === 'd_1791414849315_ii12') console.log('✅ Entrega #6 PASSOU por todos os filtros!');
       return true;
-    })
-    .sort((a, b) => {
+    });
+
+  // 🔍 DEBUG: Conta entregas do Andrey no dia 07/10
+  const andreyDeliveriesCount = filteredAndSortedDeliveries.filter(d => 
+    d.riderId === 'u_1785187359677' && d.date === '2026-10-07'
+  ).length;
+  if (andreyDeliveriesCount > 0) {
+    console.log(`📊 CONTADOR: ${andreyDeliveriesCount} entregas do Andrey no dia 07/10/2026 após filtros`);
+  }
+
+  const sortedDeliveries = filteredAndSortedDeliveries.sort((a, b) => {
       if (delSortOrder === 'order_number_grouped') {
         const numA = parseInt((a.orderNumber || '0').replace(/\D/g, '') || '0', 10);
         const numB = parseInt((b.orderNumber || '0').replace(/\D/g, '') || '0', 10);
