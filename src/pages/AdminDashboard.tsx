@@ -652,11 +652,10 @@ export default function AdminDashboard() {
     }
 
     if (confirm(confirmMsg)) {
-      // ✅ OTIMIZADO: Usa função de batch update
-      await db.batchUpdateDeliveryStatus(
-        pendingDels.map(d => d.id),
-        'active'
-      );
+      // ✅ Atualiza cada entrega individualmente
+      for (const delivery of pendingDels) {
+        await db.updateSingleDelivery({ ...delivery, status: 'active' });
+      }
       loadData();
       alert(`${pendingDels.length} corridas aprovadas com sucesso!`);
     }
