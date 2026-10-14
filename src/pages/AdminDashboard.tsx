@@ -260,27 +260,41 @@ export default function AdminDashboard() {
     
     console.log(`📊 AdminDashboard loadData: ${rawDeliveries.length} corridas brutas do db.getDeliveries()`);
     
-    // 🔧 Deduplicar corridas (evita duplicação por race condition realtime + pull)
-    // IMPORTANTE: Mantém a PRIMEIRA ocorrência de cada ID
+    // 🔧 Deduplicar corridas usando chave composta (id + orderNumber + time + date + riderId)
+    // Isso permite que entregas com IDs duplicados sejam mantidas se forem diferentes
+    // MOTIVO: IDs duplicados podem existir no banco por race conditions ou bugs antigos
+    // SOLUÇÃO: Usar chave composta garante que apenas duplicatas REAIS sejam removidas
     const deliveryMap = new Map();
     const removed = [];
     
     for (const delivery of rawDeliveries) {
-      if (deliveryMap.has(delivery.id)) {
+      // Cria uma chave composta única baseada em múltiplos campos
+      const compositeKey = `${delivery.id}|${delivery.orderNumber || 'none'}|${delivery.date}|${delivery.time}|${delivery.riderId}`;
+      
+      if (deliveryMap.has(compositeKey)) {
+        // Esta é uma duplicata REAL (mesmos dados em todos os campos)
         removed.push(delivery.id);
       } else {
-        deliveryMap.set(delivery.id, delivery);
+        deliveryMap.set(compositeKey, delivery);
       }
     }
     
     const currentDeliveries = Array.from(deliveryMap.values());
     
-    console.log(`📊 AdminDashboard loadData: ${currentDeliveries.length} corridas após deduplicação (perdeu ${removed.length} duplicadas)`);
+    console.log(`📊 AdminDashboard loadData: ${currentDeliveries.length} corridas após deduplicação (removeu ${removed.length} duplicatas reais)`);
+    if (removed.length === 0) {
+      console.log(`✅ Nenhuma duplicata real encontrada - todas as entregas foram mantidas!`);
+    }
     
-    // 🔍 DEBUG: Verificar se entrega #6 foi removida
-    if (removed.includes('d_1791414849315_ii12')) {
-      console.log('❌ BUG: Entrega #6 foi removida como duplicada!');
-      console.log('🔍 Entregas com mesmo ID:', rawDeliveries.filter(d => d.id === 'd_1791414849315_ii12'));
+    // 🔍 DEBUG: Verificar entregas com ID duplicado mas dados diferentes
+    const duplicateIds = rawDeliveries.reduce((acc, d) => {
+      acc[d.id] = (acc[d.id] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    const idsWithDuplicates = Object.entries(duplicateIds).filter(([_, count]) => count > 1);
+    if (idsWithDuplicates.length > 0) {
+      console.log(`ℹ️ ${idsWithDuplicates.length} IDs aparecem múltiplas vezes, mas são entregas DIFERENTES (mantidas pela chave composta)`);
+      console.log(`📋 Primeiros 5 IDs duplicados:`, idsWithDuplicates.slice(0, 5).map(([id, count]) => `${id} (${count}x)`));
     }
     
     const rawRequests = db.getPartnerRequests();
@@ -1082,7 +1096,7 @@ export default function AdminDashboard() {
     } else {
       // ✅ OTIMIZADO: Insere apenas 1 corrida
       const newDelivery: Delivery = {
-        id: 'd_' + Date.now(),
+        id: 'd_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
         riderId: deliveryForm.riderId,
         establishmentId: deliveryForm.establishmentId,
         date: deliveryForm.date,
