@@ -267,14 +267,12 @@ export default function AdminDashboard() {
     const deliveryMap = new Map();
     const removed = [];
     
-    for (let i = 0; i < rawDeliveries.length; i++) {
-      const delivery = rawDeliveries[i];
-      // Cria uma chave composta única baseada em múltiplos campos + índice para garantir unicidade
-      // Isso garante que TODAS as entregas sejam mantidas, mesmo com dados idênticos
-      const compositeKey = `${delivery.id}|${delivery.orderNumber || 'none'}|${delivery.date}|${delivery.time}|${delivery.riderId}|${i}`;
+    for (const delivery of rawDeliveries) {
+      // Cria uma chave composta única baseada em múltiplos campos
+      const compositeKey = `${delivery.id}|${delivery.orderNumber || 'none'}|${delivery.date}|${delivery.time}|${delivery.riderId}`;
       
       if (deliveryMap.has(compositeKey)) {
-        // Esta é uma duplicata REAL (mesmos dados em todos os campos E mesmo índice - impossível)
+        // Esta é uma duplicata REAL (mesmos dados em todos os campos)
         removed.push(delivery.id);
       } else {
         deliveryMap.set(compositeKey, delivery);
