@@ -283,6 +283,27 @@ export default function AdminDashboard() {
       console.log('🔍 Entregas com mesmo ID:', rawDeliveries.filter(d => d.id === 'd_1791414849315_ii12'));
     }
     
+    // 🔍 DEBUG: Rastrear corrida #4300
+    const delivery4300 = currentDeliveries.find(d => d.orderNumber === '4300');
+    if (delivery4300) {
+      console.log('✅ Corrida #4300 ENCONTRADA após deduplicação:', {
+        id: delivery4300.id,
+        orderNumber: delivery4300.orderNumber,
+        riderId: delivery4300.riderId,
+        riderName: users.find(u => u.id === delivery4300.riderId)?.name || 'Unknown',
+        date: delivery4300.date,
+        time: delivery4300.time,
+        value: delivery4300.value
+      });
+    } else {
+      console.log('❌ Corrida #4300 NÃO ENCONTRADA após deduplicação');
+      const in4300Raw = rawDeliveries.find(d => d.orderNumber === '4300');
+      if (in4300Raw) {
+        console.log('🔍 Corrida #4300 existe no RAW:', in4300Raw);
+        console.log('🔍 Foi removida? ', removed.includes(in4300Raw.id) ? 'SIM' : 'NÃO');
+      }
+    }
+    
     const rawRequests = db.getPartnerRequests();
     const locations = db.getRiderLocations();
 
@@ -1781,6 +1802,28 @@ export default function AdminDashboard() {
       const rider = users.find(u => u.id === d.riderId);
       const est = establishments.find(e => e.id === d.establishmentId);
 
+      // 🔍 DEBUG: Log da corrida #4300 antes de qualquer filtro
+      if (d.orderNumber === '4300') {
+        console.log('🔍 DEBUG CORRIDA #4300 ANTES DOS FILTROS:', {
+          id: d.id,
+          orderNumber: d.orderNumber,
+          date: d.date,
+          time: d.time,
+          riderId: d.riderId,
+          riderName: rider?.name,
+          establishmentId: d.establishmentId,
+          establishmentName: est?.name,
+          status: d.status,
+          value: d.value,
+          delSmartDate,
+          delRiderFilter,
+          delEstFilter,
+          delStatusFilter,
+          delFilterMode,
+          delSmartPeriod
+        });
+      }
+
       // 🔍 DEBUG: Log da entrega #6
       if (d.id === 'd_1791414849315_ii12') {
         console.log('🔍 DEBUG ENTREGA #6:', {
@@ -1897,14 +1940,17 @@ export default function AdminDashboard() {
 
       if (delRiderFilter !== 'all' && d.riderId !== delRiderFilter) {
         if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delRiderFilter', { delRiderFilter, riderId: d.riderId });
+        if (d.orderNumber === '4300') console.log('❌ Corrida #4300 Rejeitada: delRiderFilter', { delRiderFilter, riderId: d.riderId, riderName: rider?.name });
         return false;
       }
       if (delEstFilter !== 'all' && d.establishmentId !== delEstFilter) {
         if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delEstFilter');
+        if (d.orderNumber === '4300') console.log('❌ Corrida #4300 Rejeitada: delEstFilter', { delEstFilter, establishmentId: d.establishmentId });
         return false;
       }
       if (delStatusFilter !== 'all' && d.status !== delStatusFilter) {
         if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delStatusFilter');
+        if (d.orderNumber === '4300') console.log('❌ Corrida #4300 Rejeitada: delStatusFilter', { delStatusFilter, status: d.status });
         return false;
       }
 
@@ -1915,8 +1961,12 @@ export default function AdminDashboard() {
         if (d.id === 'd_1791414849315_ii12') {
           console.log('🔍 SMART_SHIFT check:', { opDate, delSmartDate, isDateMatch });
         }
+        if (d.orderNumber === '4300') {
+          console.log('🔍 Corrida #4300 SMART_SHIFT check:', { opDate, delSmartDate, isDateMatch, deliveryDate: d.date, deliveryTime: d.time });
+        }
         if (!isDateMatch) {
           if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: smart_shift date mismatch');
+          if (d.orderNumber === '4300') console.log('❌ Corrida #4300 Rejeitada: smart_shift date mismatch');
           return false;
         }
 
@@ -1942,8 +1992,22 @@ export default function AdminDashboard() {
       }
 
       if (d.id === 'd_1791414849315_ii12') console.log('✅ Entrega #6 PASSOU por todos os filtros!');
+      if (d.orderNumber === '4300') console.log('✅ Corrida #4300 PASSOU por todos os filtros!');
       return true;
     });
+
+  // 🔍 DEBUG: Verificar resultado da filtragem
+  console.log(`📊 Após filtragem: ${filteredAndSortedDeliveries.length} corridas`);
+  const has4300 = filteredAndSortedDeliveries.find(d => d.orderNumber === '4300');
+  if (has4300) {
+    console.log('✅ Corrida #4300 PRESENTE após filtragem');
+  } else {
+    console.log('❌ Corrida #4300 AUSENTE após filtragem');
+    const in4300Source = deliveries.find(d => d.orderNumber === '4300');
+    if (in4300Source) {
+      console.log('🔍 Corrida #4300 existe no array source (deliveries):', in4300Source);
+    }
+  }
 
   const sortedDeliveries = filteredAndSortedDeliveries.sort((a, b) => {
       if (delSortOrder === 'order_number_grouped') {
