@@ -137,8 +137,17 @@ export default function AdminDashboard() {
 
   // Filtros de Corridas
   const [delFilterMode, setDelFilterMode] = useState<'smart_shift' | 'date_range' | 'all'>('smart_shift');
-  const [delSmartDate, setDelSmartDate] = useState<string>(db.getOperationalDateString());
+  const [delSmartDate, setDelSmartDate] = useState<string>(() => {
+    const date = db.getOperationalDateString();
+    console.log('🗓️ INIT delSmartDate:', date);
+    return date;
+  });
   const [delSmartPeriod, setDelSmartPeriod] = useState<'all_shifts' | 'night_shift' | 'morning_shift' | 'afternoon_shift'>('all_shifts');
+
+  // 🔍 DEBUG: Monitor delSmartDate changes
+  useEffect(() => {
+    console.log('🔄 delSmartDate CHANGED:', delSmartDate);
+  }, [delSmartDate]);
 
   const [delRiderFilter, setDelRiderFilter] = useState<string>('all');
   const [delEstFilter, setDelEstFilter] = useState<string>('all');
