@@ -1445,7 +1445,7 @@ export default function AdminDashboard() {
     }
 
     // Filtro de cobrança no fechamento
-    if (financePaymentFilter === 'to_collect' && (!d.paymentMethod || d.paymentMethod === 'already_paid')) return false;
+    if (financePaymentFilter === 'to_collect' && d.paymentMethod === 'already_paid') return false;
     if (financePaymentFilter === 'money' && d.paymentMethod !== 'money') return false;
     if (financePaymentFilter === 'card' && d.paymentMethod !== 'card_debit' && d.paymentMethod !== 'card_credit') return false;
     if (financePaymentFilter === 'pix' && d.paymentMethod !== 'pix_delivery') return false;
