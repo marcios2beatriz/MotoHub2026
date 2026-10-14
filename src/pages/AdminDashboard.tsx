@@ -1796,36 +1796,66 @@ export default function AdminDashboard() {
 
       if (delFeatureFilter === 'same_order_number') {
         const repeats = getOrderRepeatCount(d);
-        if (repeats <= 1) return false;
+        if (repeats <= 1) {
+          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delFeatureFilter same_order_number, repeats:', repeats);
+          return false;
+        }
       } else if (delFeatureFilter === 'with_additional') {
         const hasAdd = Number(d.additionalValue || 0) > 0;
-        if (!hasAdd) return false;
+        if (!hasAdd) {
+          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delFeatureFilter with_additional, additionalValue:', d.additionalValue);
+          return false;
+        }
       } else if (delFeatureFilter === 'linked') {
-        if (!isSame) return false;
+        if (!isSame) {
+          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delFeatureFilter linked, isSame:', isSame);
+          return false;
+        }
       } else if (delFeatureFilter === 'standard') {
-        if (isSame || (d.additionalValue && Number(d.additionalValue) > 0)) return false;
+        if (isSame || (d.additionalValue && Number(d.additionalValue) > 0)) {
+          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delFeatureFilter standard, isSame:', isSame, 'additionalValue:', d.additionalValue);
+          return false;
+        }
       }
 
       if (delPaymentFilter === 'to_collect') {
         // Mostra todas as entregas EXCETO as já pagas online
         // Inclui: sem paymentMethod (legado), money, card, pix
         const isAlreadyPaid = d.paymentMethod === 'already_paid';
-        if (isAlreadyPaid) return false;
+        if (isAlreadyPaid) {
+          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delPaymentFilter to_collect, paymentMethod:', d.paymentMethod);
+          return false;
+        }
       } else if (delPaymentFilter === 'money') {
-        if (d.paymentMethod !== 'money') return false;
+        if (d.paymentMethod !== 'money') {
+          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delPaymentFilter money, paymentMethod:', d.paymentMethod);
+          return false;
+        }
       } else if (delPaymentFilter === 'card') {
-        if (d.paymentMethod !== 'card_debit' && d.paymentMethod !== 'card_credit') return false;
+        if (d.paymentMethod !== 'card_debit' && d.paymentMethod !== 'card_credit') {
+          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delPaymentFilter card, paymentMethod:', d.paymentMethod);
+          return false;
+        }
       } else if (delPaymentFilter === 'pix') {
-        if (d.paymentMethod !== 'pix_delivery') return false;
+        if (d.paymentMethod !== 'pix_delivery') {
+          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delPaymentFilter pix, paymentMethod:', d.paymentMethod);
+          return false;
+        }
       } else if (delPaymentFilter === 'already_paid') {
-        if (d.paymentMethod && d.paymentMethod !== 'already_paid') return false;
+        if (d.paymentMethod && d.paymentMethod !== 'already_paid') {
+          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delPaymentFilter already_paid, paymentMethod:', d.paymentMethod);
+          return false;
+        }
       }
 
       if (delOrderNumberFilter.trim()) {
         const cleanTarget = delOrderNumberFilter.trim().toLowerCase().replace('#', '');
         const orderNum = (d.orderNumber || '').toLowerCase().replace('#', '');
         const delId = d.id.toLowerCase();
-        if (!orderNum.includes(cleanTarget) && !delId.includes(cleanTarget)) return false;
+        if (!orderNum.includes(cleanTarget) && !delId.includes(cleanTarget)) {
+          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delOrderNumberFilter, target:', cleanTarget, 'orderNum:', orderNum);
+          return false;
+        }
       }
 
       if (delSearchQuery) {
@@ -1834,7 +1864,10 @@ export default function AdminDashboard() {
         const rName = (rider?.name || '').toLowerCase();
         const eName = (est?.name || '').toLowerCase();
         const matchNum = orderNum.includes(q.replace('#', ''));
-        if (!matchNum && !rName.includes(q) && !eName.includes(q)) return false;
+        if (!matchNum && !rName.includes(q) && !eName.includes(q)) {
+          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delSearchQuery, query:', q);
+          return false;
+        }
       }
 
       if (delRiderFilter !== 'all' && d.riderId !== delRiderFilter) {
