@@ -256,9 +256,32 @@ export default function AdminDashboard() {
     const currentUsers = db.getUsers();
     const currentEsts = db.getEstablishments();
     const currentSchedules = db.getSchedules();
-    const currentDeliveries = db.getDeliveries();
+    const rawDeliveries = db.getDeliveries();
     
-    console.log(`📊 AdminDashboard loadData: ${currentDeliveries.length} corridas carregadas do db.getDeliveries()`);
+    console.log(`📊 AdminDashboard loadData: ${rawDeliveries.length} corridas brutas do db.getDeliveries()`);
+    
+    // 🔧 Deduplicar corridas (evita duplicação por race condition realtime + pull)
+    // IMPORTANTE: Mantém a PRIMEIRA ocorrência de cada ID
+    const deliveryMap = new Map();
+    const removed = [];
+    
+    for (const delivery of rawDeliveries) {
+      if (deliveryMap.has(delivery.id)) {
+        removed.push(delivery.id);
+      } else {
+        deliveryMap.set(delivery.id, delivery);
+      }
+    }
+    
+    const currentDeliveries = Array.from(deliveryMap.values());
+    
+    console.log(`📊 AdminDashboard loadData: ${currentDeliveries.length} corridas após deduplicação (perdeu ${removed.length} duplicadas)`);
+    
+    // 🔍 DEBUG: Verificar se entrega #6 foi removida
+    if (removed.includes('d_1791414849315_ii12')) {
+      console.log('❌ BUG: Entrega #6 foi removida como duplicada!');
+      console.log('🔍 Entregas com mesmo ID:', rawDeliveries.filter(d => d.id === 'd_1791414849315_ii12'));
+    }
     
     const rawRequests = db.getPartnerRequests();
     const locations = db.getRiderLocations();
