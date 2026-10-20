@@ -260,49 +260,11 @@ export default function AdminDashboard() {
     
     console.log(`📊 AdminDashboard loadData: ${rawDeliveries.length} corridas brutas do db.getDeliveries()`);
     
-    // 🔧 Deduplicar corridas (evita duplicação por race condition realtime + pull)
-    // IMPORTANTE: Mantém a PRIMEIRA ocorrência de cada ID
-    const deliveryMap = new Map();
-    const removed = [];
+    // 🔧 CORREÇÃO: Não deduplicar - todas as entregas devem aparecer mesmo com IDs duplicados
+    // (O problema de IDs duplicados deve ser corrigido no banco de dados ou na geração de IDs)
+    const currentDeliveries = rawDeliveries;
     
-    for (const delivery of rawDeliveries) {
-      if (deliveryMap.has(delivery.id)) {
-        removed.push(delivery.id);
-      } else {
-        deliveryMap.set(delivery.id, delivery);
-      }
-    }
-    
-    const currentDeliveries = Array.from(deliveryMap.values());
-    
-    console.log(`📊 AdminDashboard loadData: ${currentDeliveries.length} corridas após deduplicação (perdeu ${removed.length} duplicadas)`);
-    
-    // 🔍 DEBUG: Verificar se entrega #6 foi removida
-    if (removed.includes('d_1791414849315_ii12')) {
-      console.log('❌ BUG: Entrega #6 foi removida como duplicada!');
-      console.log('🔍 Entregas com mesmo ID:', rawDeliveries.filter(d => d.id === 'd_1791414849315_ii12'));
-    }
-    
-    // 🔍 DEBUG: Rastrear corrida #4300
-    const delivery4300 = currentDeliveries.find(d => d.orderNumber === '4300');
-    if (delivery4300) {
-      console.log('✅ Corrida #4300 ENCONTRADA após deduplicação:', {
-        id: delivery4300.id,
-        orderNumber: delivery4300.orderNumber,
-        riderId: delivery4300.riderId,
-        riderName: users.find(u => u.id === delivery4300.riderId)?.name || 'Unknown',
-        date: delivery4300.date,
-        time: delivery4300.time,
-        value: delivery4300.value
-      });
-    } else {
-      console.log('❌ Corrida #4300 NÃO ENCONTRADA após deduplicação');
-      const in4300Raw = rawDeliveries.find(d => d.orderNumber === '4300');
-      if (in4300Raw) {
-        console.log('🔍 Corrida #4300 existe no RAW:', in4300Raw);
-        console.log('🔍 Foi removida? ', removed.includes(in4300Raw.id) ? 'SIM' : 'NÃO');
-      }
-    }
+    console.log(`📊 AdminDashboard loadData: ${currentDeliveries.length} corridas carregadas (sem deduplicação)`);
     
     const rawRequests = db.getPartnerRequests();
     const locations = db.getRiderLocations();
@@ -855,7 +817,9 @@ export default function AdminDashboard() {
           state: estForm.state,
           zipCode: estForm.zipCode
         },
-        updatedAt: nowStr
+        updatedAt: nowStr,
+        // 🔧 CORREÇÃO: Preservar createdAt existente
+        createdAt: es.createdAt || nowStr
       } : es);
       await db.setEstablishments(updated);
     } else {
@@ -874,6 +838,8 @@ export default function AdminDashboard() {
           state: estForm.state,
           zipCode: estForm.zipCode
         },
+        // 🔧 CORREÇÃO: Adicionar timestamps obrigatórios
+        createdAt: nowStr,
         updatedAt: nowStr
       };
       await db.setEstablishments([...allEst, newEst]);
@@ -893,7 +859,13 @@ export default function AdminDashboard() {
 
   const toggleEstStatus = async (id: string) => {
     const allEst = db.getEstablishments();
-    const updated = allEst.map(es => es.id === id ? { ...es, active: !es.active, updatedAt: new Date().toISOString() } : es);
+    const updated = allEst.map(es => es.id === id ? { 
+      ...es, 
+      active: !es.active, 
+      updatedAt: new Date().toISOString(),
+      // 🔧 CORREÇÃO: Preservar createdAt existente
+      createdAt: es.createdAt || new Date().toISOString()
+    } : es);
     await db.setEstablishments(updated);
     loadData();
   };
@@ -1228,7 +1200,13 @@ export default function AdminDashboard() {
     const allEsts = db.getEstablishments();
     const est = allEsts.find(e => e.name.toLowerCase().trim() === req.establishmentName.toLowerCase().trim());
     if (est) {
-      const updatedEsts = allEsts.map(e => e.id === est.id ? { ...e, active: true, updatedAt: new Date().toISOString() } : e);
+      const updatedEsts = allEsts.map(e => e.id === est.id ? { 
+        ...e, 
+        active: true, 
+        updatedAt: new Date().toISOString(),
+        // 🔧 CORREÇÃO: Preservar createdAt existente
+        createdAt: e.createdAt || new Date().toISOString()
+      } : e);
       await db.setEstablishments(updatedEsts);
       loadData();
       alert('Solicitação aprovada com sucesso!');
