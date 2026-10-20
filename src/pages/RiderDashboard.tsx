@@ -47,7 +47,6 @@ import {
 import DeliveryNotesModal from '../components/DeliveryNotesModal';
 import CustomerChatModal from '../components/CustomerChatModal';
 import ScheduleChatModal from '../components/ScheduleChatModal';
-import RiderNavigationMap from '../components/RiderNavigationMap';
 import ChatToastBanner, { ChatToast } from '../components/ChatToastBanner';
 import TermsOfServiceModal from '../components/TermsOfServiceModal';
 import RiderFinancialMetricsCard from '../components/RiderFinancialMetricsCard';
@@ -86,8 +85,24 @@ export default function RiderDashboard() {
   const [establishments, setEstablishments] = useState<Establishment[]>([]);
   const [routeHistory, setRouteHistory] = useState<RouteHistoryItem[]>([]);
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'navigation' | 'schedules' | 'history' | 'earnings' | 'rates' | 'notifications'>('dashboard');
-  const [historySubTab, setHistorySubTab] = useState<'deliveries' | 'routes'>('deliveries');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'confirmation' | 'schedules' | 'history' | 'earnings' | 'rates' | 'game'>('dashboard');
+  
+  // 🆕 Estados para a aba de Confirmação de Pedidos
+  const IFOOD_CONFIRMATION_URL = 'https://confirmacao-entrega-propria.ifood.com.br/';
+  const [iframeKey, setIframeKey] = useState(0);
+
+  // 🎮 Estados para o jogo 2048
+  const [gameStarted, setGameStarted] = useState(false);
+  const [gameScore, setGameScore] = useState(0);
+  const [gameBestScore, setGameBestScore] = useState(0);
+  const [gameBoard, setGameBoard] = useState<(number | null)[][]>([]);
+  const [gameOver, setGameOver] = useState(false);
+  const [gameWon, setGameWon] = useState(false);
+  const [highScores, setHighScores] = useState<Array<{rider_name: string, score: number, date: string}>>([]);
+  const [animatingCells, setAnimatingCells] = useState<Set<string>>(new Set());
+  const [mergingCells, setMergingCells] = useState<Set<string>>(new Set());
+  const gameIntervalRef = useRef<number | null>(null);
+  const touchStartRef = useRef<{x: number, y: number} | null>(null);
 
   const [historyDisplayLimit, setHistoryDisplayLimit] = useState(PAGE_SIZE);
 
@@ -104,15 +119,6 @@ export default function RiderDashboard() {
     errorMessage: null,
     isNavigating: false
   });
-
-  const [navDestination, setNavDestination] = useState<{
-    name: string;
-    addressText: string;
-    lat?: number;
-    lng?: number;
-  } | null>(null);
-  
-  const hasInitializedDestRef = useRef(false);
 
   const [showLaunchModal, setShowLaunchModal] = useState(false);
   const [isSubmittingDelivery, setIsSubmittingDelivery] = useState(false);
@@ -215,10 +221,21 @@ export default function RiderDashboard() {
       db.isSameUser(d.riderId, freshUser.id)
     );
 
-    // 🔧 CORREÇÃO: Deduplicar corridas (evita duplicação por race condition realtime + pull)
-    const allDeliveries = Array.from(
-      new Map(rawDeliveries.map(d => [d.id, d])).values()
-    );
+    // 🔧 CORREÇÃO: Não deduplicar - todas as entregas devem aparecer mesmo com IDs duplicados
+    // (O problema de IDs duplicados deve ser corrigido no banco de dados ou na geração de IDs)
+    const allDeliveries = rawDeliveries;
+
+    // 🔍 DEBUG: Log detalhado para rastrear perdas
+    const today = new Date().toISOString().split('T')[0];
+    const oct12Deliveries = allDeliveries.filter(d => d.date === '2026-10-12');
+    if (oct12Deliveries.length > 0 && freshUser.name === 'Andrey keveny Martins Alves') {
+      console.log('🔍 DEBUG: Entregas de 2026-10-12 para Andrey:', {
+        total: oct12Deliveries.length,
+        orderNumbers: oct12Deliveries.map(d => d.orderNumber).sort(),
+        ids: oct12Deliveries.map(d => d.id),
+        times: oct12Deliveries.map(d => d.time).sort()
+      });
+    }
 
     const allNotifications = db.getNotifications().filter(n => 
       db.isSameUser(n.riderId, freshUser.id)
@@ -254,40 +271,6 @@ export default function RiderDashboard() {
     setNotifications(prev => JSON.stringify(prev) !== JSON.stringify(sortedNotifications) ? sortedNotifications : prev);
     setEstablishments(prev => JSON.stringify(prev) !== JSON.stringify(allEsts) ? allEsts : prev);
     setRouteHistory(prev => JSON.stringify(prev) !== JSON.stringify(myRoutes) ? myRoutes : prev);
-
-    if (!hasInitializedDestRef.current) {
-      let restoredFromStorage = false;
-      try {
-        const navKey = `motoboy_active_nav_${freshUser.id}`;
-        const savedNav = localStorage.getItem(navKey);
-        if (savedNav) {
-          const parsed = JSON.parse(savedNav);
-          if (parsed.activeDestination) {
-            setNavDestination(parsed.activeDestination);
-            restoredFromStorage = true;
-          }
-          if (parsed.isNavigating) {
-            setActiveTab('navigation');
-          }
-        }
-      } catch (e) {}
-
-      if (!restoredFromStorage) {
-        const operationalTodayStr = db.getOperationalDateString();
-        const todaySch = sortedSchedules.find(s => isSameDayString(s.date, operationalTodayStr));
-        if (todaySch) {
-          const est = db.resolveEstablishment(todaySch.establishmentId);
-          if (est && est.address) {
-            const addrText = `${est.address.street}, ${est.address.number} - ${est.address.neighborhood}, ${est.address.city}/${est.address.state}`;
-            setNavDestination({
-              name: est.name,
-              addressText: addrText
-            });
-          }
-        }
-      }
-      hasInitializedDestRef.current = true;
-    }
   }, [user]);
 
   // Função para aceitar os termos de uso
@@ -331,9 +314,8 @@ export default function RiderDashboard() {
     
     const setupPolling = () => {
       clearInterval(interval);
-      // Polling mais lento no mobile quando na aba de navegação (GPS é tempo real)
-      // Polling mais rápido quando lançando corridas (aba operation)
-      const pollInterval = activeTab === 'navigation' ? 300000 : 180000; // 5min vs 3min (otimizado - Realtime cobre atualizações)
+      // 🔥 OTIMIZADO: Polling reduzido - Realtime cobre atualizações em tempo real
+      const pollInterval = 300000; // 5 minutos
       
       interval = setInterval(() => {
         // Só fazer pull se a página está visível (economia de bateria mobile)
@@ -456,25 +438,6 @@ export default function RiderDashboard() {
     } else {
       prompt('Copie o link de rastreio para o cliente:', link);
     }
-  };
-
-  const handleNavigateToEst = (est: Establishment) => {
-    const addrText = `${est.address.street}, ${est.address.number} - ${est.address.neighborhood}, ${est.address.city}/${est.address.state}`;
-    setNavDestination({
-      name: est.name,
-      addressText: addrText
-    });
-    setActiveTab('navigation');
-  };
-
-  const handleReNavigateFromHistory = (item: RouteHistoryItem) => {
-    setNavDestination({
-      name: item.destinationName,
-      addressText: item.destinationAddress,
-      lat: item.destinationLat,
-      lng: item.destinationLng
-    });
-    setActiveTab('navigation');
   };
 
   const operationalTodayStr = db.getOperationalDateString();
@@ -842,6 +805,220 @@ export default function RiderDashboard() {
     }
   }, [deliveries.length, historyDeliveries.length, filterMode, smartDate, smartPeriod, historyEstFilter, historyOrderNumberFilter, deliveryFeatureFilter]);
 
+  // 🎮 Carregar melhor pontuação do 2048 ao montar
+  useEffect(() => {
+    const savedScores = localStorage.getItem('game_2048_scores');
+    if (savedScores) {
+      const scores = JSON.parse(savedScores);
+      setHighScores(scores);
+      if (scores.length > 0) {
+        setGameBestScore(scores[0].score);
+      }
+    }
+  }, []);
+
+  // 🎮 FUNÇÕES DO JOGO 2048
+  const initGame = () => {
+    const newBoard: (number | null)[][] = Array(4).fill(null).map(() => Array(4).fill(null));
+    addRandomTile(newBoard);
+    addRandomTile(newBoard);
+    setGameBoard(newBoard);
+    setGameScore(0);
+    setGameOver(false);
+    setGameWon(false);
+    setGameStarted(true);
+    setAnimatingCells(new Set());
+    setMergingCells(new Set());
+  };
+
+  const addRandomTile = (board: (number | null)[][]) => {
+    const emptyCells: [number, number][] = [];
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 4; j++) {
+        if (board[i][j] === null) emptyCells.push([i, j]);
+      }
+    }
+    if (emptyCells.length > 0) {
+      const [row, col] = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+      board[row][col] = Math.random() < 0.9 ? 2 : 4;
+      // Adicionar animação de "pop" para nova célula
+      setAnimatingCells(prev => new Set(prev).add(`${row}-${col}`));
+      setTimeout(() => {
+        setAnimatingCells(prev => {
+          const next = new Set(prev);
+          next.delete(`${row}-${col}`);
+          return next;
+        });
+      }, 200);
+    }
+  };
+
+  const moveLeft = (board: (number | null)[][]) => {
+    let moved = false;
+    let points = 0;
+    const newMerging = new Set<string>();
+    
+    const newBoard = board.map((row, rowIndex) => {
+      const filtered = row.filter(cell => cell !== null);
+      const merged: (number | null)[] = [];
+      let i = 0;
+      while (i < filtered.length) {
+        if (i + 1 < filtered.length && filtered[i] === filtered[i + 1]) {
+          const value = filtered[i]! * 2;
+          merged.push(value);
+          points += value;
+          // Marcar célula como fundindo
+          newMerging.add(`${rowIndex}-${merged.length - 1}`);
+          if (value === 2048 && !gameWon) setGameWon(true);
+          i += 2;
+          moved = true;
+        } else {
+          merged.push(filtered[i]);
+          i++;
+        }
+      }
+      while (merged.length < 4) merged.push(null);
+      if (JSON.stringify(row) !== JSON.stringify(merged)) moved = true;
+      return merged;
+    });
+    
+    if (newMerging.size > 0) {
+      setMergingCells(newMerging);
+      setTimeout(() => setMergingCells(new Set()), 300);
+    }
+    
+    return { board: newBoard, moved, points };
+  };
+
+  const rotateBoard = (board: (number | null)[][]) => {
+    const newBoard: (number | null)[][] = Array(4).fill(null).map(() => Array(4).fill(null));
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 4; j++) {
+        newBoard[j][3 - i] = board[i][j];
+      }
+    }
+    return newBoard;
+  };
+
+  const move = (direction: 'left' | 'right' | 'up' | 'down') => {
+    if (gameOver) return;
+    
+    let currentBoard = gameBoard.map(row => [...row]);
+    let rotations = 0;
+
+    if (direction === 'right') rotations = 2;
+    else if (direction === 'up') rotations = 3;
+    else if (direction === 'down') rotations = 1;
+
+    for (let i = 0; i < rotations; i++) {
+      currentBoard = rotateBoard(currentBoard);
+    }
+
+    const { board: movedBoard, moved, points } = moveLeft(currentBoard);
+
+    for (let i = 0; i < (4 - rotations) % 4; i++) {
+      currentBoard = rotateBoard(movedBoard);
+    }
+
+    if (moved) {
+      addRandomTile(currentBoard);
+      setGameBoard(currentBoard);
+      const newScore = gameScore + points;
+      setGameScore(newScore);
+      
+      if (newScore > gameBestScore) {
+        setGameBestScore(newScore);
+      }
+
+      if (isGameOver(currentBoard)) {
+        setGameOver(true);
+        saveScore(newScore);
+      }
+    }
+  };
+
+  const isGameOver = (board: (number | null)[][]) => {
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 4; j++) {
+        if (board[i][j] === null) return false;
+        if (j < 3 && board[i][j] === board[i][j + 1]) return false;
+        if (i < 3 && board[i][j] === board[i + 1][j]) return false;
+      }
+    }
+    return true;
+  };
+
+  const saveScore = (finalScore: number) => {
+    if (finalScore === 0) return;
+    const newScore = {
+      rider_name: user?.name || 'Anônimo',
+      score: finalScore,
+      date: new Date().toISOString()
+    };
+    const updatedScores = [...highScores, newScore]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
+    setHighScores(updatedScores);
+    localStorage.setItem('game_2048_scores', JSON.stringify(updatedScores));
+  };
+
+  const getTileColor = (value: number | null) => {
+    if (!value) return 'bg-slate-200/50 border-2 border-slate-300';
+    const colors: Record<number, string> = {
+      2: 'bg-gradient-to-br from-amber-100 to-amber-200 text-slate-800 border-2 border-amber-300 shadow-amber-200',
+      4: 'bg-gradient-to-br from-amber-200 to-amber-300 text-slate-800 border-2 border-amber-400 shadow-amber-300',
+      8: 'bg-gradient-to-br from-orange-300 to-orange-400 text-white border-2 border-orange-500 shadow-orange-400',
+      16: 'bg-gradient-to-br from-orange-400 to-orange-500 text-white border-2 border-orange-600 shadow-orange-500',
+      32: 'bg-gradient-to-br from-red-400 to-red-500 text-white border-2 border-red-600 shadow-red-500',
+      64: 'bg-gradient-to-br from-red-500 to-red-600 text-white border-2 border-red-700 shadow-red-600',
+      128: 'bg-gradient-to-br from-yellow-300 to-yellow-400 text-white border-2 border-yellow-500 shadow-yellow-400 animate-pulse',
+      256: 'bg-gradient-to-br from-yellow-400 to-yellow-500 text-white border-2 border-yellow-600 shadow-yellow-500 animate-pulse',
+      512: 'bg-gradient-to-br from-yellow-500 to-amber-600 text-white border-2 border-yellow-700 shadow-yellow-600 animate-pulse',
+      1024: 'bg-gradient-to-br from-emerald-400 to-emerald-500 text-white border-2 border-emerald-600 shadow-emerald-500 animate-pulse',
+      2048: 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white border-2 border-emerald-700 shadow-emerald-600 animate-pulse',
+      4096: 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white border-2 border-indigo-700 shadow-indigo-600 animate-pulse',
+      8192: 'bg-gradient-to-br from-purple-500 to-pink-600 text-white border-2 border-purple-700 shadow-purple-600 animate-pulse'
+    };
+    return colors[value] || 'bg-gradient-to-br from-purple-600 to-pink-700 text-white border-2 border-purple-800 animate-pulse';
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartRef.current = {
+      x: e.touches[0].clientX,
+      y: e.touches[0].clientY
+    };
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (!touchStartRef.current) return;
+    
+    const deltaX = e.changedTouches[0].clientX - touchStartRef.current.x;
+    const deltaY = e.changedTouches[0].clientY - touchStartRef.current.y;
+    
+    if (Math.abs(deltaX) > Math.abs(deltaY)) {
+      if (deltaX > 30) move('right');
+      else if (deltaX < -30) move('left');
+    } else {
+      if (deltaY > 30) move('down');
+      else if (deltaY < -30) move('up');
+    }
+    
+    touchStartRef.current = null;
+  };
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (!gameStarted || gameOver) return;
+    if (e.key === 'ArrowLeft') move('left');
+    else if (e.key === 'ArrowRight') move('right');
+    else if (e.key === 'ArrowUp') move('up');
+    else if (e.key === 'ArrowDown') move('down');
+  };
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [gameStarted, gameOver, gameBoard, gameScore]);
+
   const historyTotalEarnings = historyDeliveries
     .filter(d => d.status === 'active')
     .reduce((sum, d) => sum + getRiderNetForDelivery(d), 0); // ✅ CORRIGIDO: Usa getRiderNet que desconta taxa
@@ -1105,13 +1282,13 @@ export default function RiderDashboard() {
           </button>
           
           <button
-            onClick={() => setActiveTab('navigation')}
+            onClick={() => setActiveTab('confirmation')}
             className={`py-2.5 font-bold rounded-lg flex items-center justify-center space-x-1 transition-colors ${
-              activeTab === 'navigation' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+              activeTab === 'confirmation' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            <Compass className="h-4 w-4 text-emerald-400" />
-            <span>GPS App</span>
+            <CheckCircle2 className="h-4 w-4" />
+            <span>Confirmação</span>
           </button>
 
           <button
@@ -1155,18 +1332,13 @@ export default function RiderDashboard() {
           </button>
 
           <button
-            onClick={() => setActiveTab('notifications')}
+            onClick={() => setActiveTab('game')}
             className={`py-2.5 font-bold rounded-lg flex items-center justify-center space-x-1 relative ${
-              activeTab === 'notifications' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+              activeTab === 'game' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            <Bell className="h-4 w-4" />
-            <span>Avisos</span>
-            {unreadCount > 0 && (
-              <span className="absolute top-1.5 right-2 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-                {unreadCount}
-              </span>
-            )}
+            <Sparkles className="h-4 w-4" />
+            <span>Passa Tempo</span>
           </button>
         </div>
 
@@ -1231,14 +1403,6 @@ export default function RiderDashboard() {
                             <p>{est.address.neighborhood} • {est.address.city}/{est.address.state}</p>
                           </div>
                         </div>
-
-                        <button
-                          onClick={() => handleNavigateToEst(est)}
-                          className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-2 shadow-md transition-all w-full sm:w-auto"
-                        >
-                          <Compass className="h-4 w-4" />
-                          <span>Navegar para o Estabelecimento</span>
-                        </button>
                       </div>
                     )}
                   </div>
@@ -1436,13 +1600,61 @@ export default function RiderDashboard() {
           </div>
         )}
 
-        <div className={activeTab === 'navigation' ? 'space-y-4' : 'hidden'}>
-          <RiderNavigationMap
-            currentLocation={activePos}
-            destination={navDestination}
-            defaultFullscreen={false}
-          />
-        </div>
+        {/* 🆕 ABA: CONFIRMAÇÃO DE PEDIDOS iFood */}
+        {activeTab === 'confirmation' && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+              {/* Header com título e botão de recarregar */}
+              <div className="bg-gradient-to-r from-red-600 to-red-700 px-6 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="bg-white rounded-lg p-2">
+                    <CheckCircle2 className="h-6 w-6 text-red-600" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-white">
+                      Confirmação de Pedidos iFood
+                    </h2>
+                    <p className="text-xs text-red-100 mt-0.5">
+                      Confirme entregas de forma rápida e prática
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIframeKey(prev => prev + 1)}
+                  className="px-4 py-2.5 bg-white hover:bg-red-50 text-red-600 rounded-lg font-bold transition-colors flex items-center gap-2 shadow-lg"
+                  title="Recarregar página"
+                >
+                  <RotateCw className="h-4 w-4" />
+                  <span>Recarregar</span>
+                </button>
+              </div>
+
+              {/* Container do iFrame */}
+              <div className="relative bg-white">
+                <iframe
+                  key={iframeKey}
+                  src={IFOOD_CONFIRMATION_URL}
+                  className="w-full h-[calc(100vh-280px)] min-h-[600px] bg-white border-0"
+                  title="Confirmação de Pedidos iFood"
+                  sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+                  allow="clipboard-read; clipboard-write"
+                />
+              </div>
+            </div>
+
+            {/* Info rápida */}
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <div className="flex items-center gap-2">
+                <div className="bg-red-100 rounded-full p-1.5">
+                  <CheckCircle2 className="h-4 w-4 text-red-600" />
+                </div>
+                <p className="text-xs text-red-800 font-medium">
+                  Use o botão <strong>"Recarregar"</strong> para atualizar a lista de pedidos pendentes
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {activeTab === 'schedules' && (
           <div className="space-y-6">
@@ -1526,16 +1738,6 @@ export default function RiderDashboard() {
                           </div>
 
                           <div className="flex items-center gap-2 flex-wrap self-start sm:self-center">
-                            {est && (
-                              <button
-                                onClick={() => handleNavigateToEst(est)}
-                                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 transition-colors shadow-sm"
-                                title="Abrir no Mapa Integrado do MotoHub"
-                              >
-                                <Compass className="h-4 w-4" />
-                                <span>Navegar GPS</span>
-                              </button>
-                            )}
                             <button
                               onClick={() => setActiveScheduleChatId(sch.id)}
                               className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors"
@@ -1555,7 +1757,7 @@ export default function RiderDashboard() {
           </div>
         )}
 
-        {/* ABA: HISTÓRICO DE CORRIDAS & ROTAS GPS */}
+        {/* ABA: HISTÓRICO DE CORRIDAS */}
         {activeTab === 'history' && (
           <div className="space-y-6">
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-5">
@@ -1564,32 +1766,9 @@ export default function RiderDashboard() {
                   <History className="h-5 w-5 text-indigo-600" />
                   <span>Histórico de Corridas ({deliveries.length})</span>
                 </h2>
-
-                <div className="flex items-center gap-2">
-                  <div className="flex bg-slate-100 p-1 rounded-xl">
-                    <button
-                      onClick={() => setHistorySubTab('deliveries')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all ${
-                        historySubTab === 'deliveries' ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      Corridas ({historyDeliveries.length})
-                    </button>
-                    <button
-                      onClick={() => setHistorySubTab('routes')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1 ${
-                        historySubTab === 'routes' ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      <Compass className="h-3.5 w-3.5" />
-                      <span>Rotas GPS ({routeHistory.length})</span>
-                    </button>
-                  </div>
-                </div>
               </div>
 
-              {historySubTab === 'deliveries' ? (
-                <>
+              <>
                   <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-3">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/70 pb-2.5">
                       <p className="text-xs font-black uppercase text-indigo-900 flex items-center gap-1.5 tracking-wider">
@@ -1868,43 +2047,6 @@ export default function RiderDashboard() {
                     </div>
                   )}
                 </>
-              ) : (
-                <div className="space-y-3">
-                  {routeHistory.length === 0 ? (
-                    <div className="text-center py-12 text-slate-400">
-                      <Compass className="h-10 w-10 mx-auto mb-2 text-slate-300" />
-                      <p className="text-sm font-medium">Nenhuma rota gravada no histórico até o momento.</p>
-                    </div>
-                  ) : (
-                    routeHistory.map((item) => (
-                      <div key={item.id} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-indigo-300 transition-all">
-                        <div className="space-y-1 min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <MapPin className="h-4 w-4 text-emerald-600 flex-shrink-0" />
-                            <h4 className="font-extrabold text-slate-800 text-sm truncate">{item.destinationName}</h4>
-                          </div>
-                          <p className="text-xs text-slate-500 truncate">{item.destinationAddress}</p>
-                          <div className="flex items-center gap-2 text-xs text-indigo-700 font-semibold pt-1">
-                            <span>{item.date} às {item.time}</span>
-                            <span>•</span>
-                            <span>{(item.distanceMeters / 1000).toFixed(1)} km</span>
-                            <span>•</span>
-                            <span>{Math.ceil(item.durationSeconds / 60)} min de trajeto</span>
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={() => handleReNavigateFromHistory(item)}
-                          className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold px-4 py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all"
-                        >
-                          <RotateCw className="h-3.5 w-3.5" />
-                          <span>Navegar Novamente</span>
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -2277,59 +2419,340 @@ export default function RiderDashboard() {
           </div>
         )}
 
-        {activeTab === 'notifications' && (
+        {/* 🎮 ABA: PASSA TEMPO - JOGO 2048 */}
+        {activeTab === 'game' && (
           <div className="space-y-6">
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
-              <div className="flex justify-between items-center">
-                <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                  <Bell className="h-5 w-5 text-indigo-600" />
-                  <span>Central de Avisos e Notificações</span>
-                </h2>
-                {unreadCount > 0 && (
-                  <span className="bg-red-100 text-red-700 text-xs font-bold px-2.5 py-1 rounded-full">
-                    {unreadCount} não lida(s)
-                  </span>
-                )}
-              </div>
-
-              {notifications.length === 0 ? (
-                <div className="text-center py-12 text-slate-400">
-                  <Bell className="h-10 w-10 mx-auto mb-2 text-slate-300" />
-                  <p className="text-sm font-medium">Nenhum aviso recebido até o momento.</p>
+            {/* Header do Jogo */}
+            <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 p-6 rounded-xl shadow-lg text-white animate-pulse">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="bg-white/30 p-3 rounded-lg backdrop-blur-sm">
+                  <Sparkles className="h-8 w-8 animate-spin" style={{animationDuration: '3s'}} />
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  {notifications.map((notif) => (
-                    <div 
-                      key={notif.id}
-                      className={`p-4 rounded-xl border transition-all ${
-                        !notif.read ? 'bg-indigo-50/70 border-indigo-200 shadow-sm' : 'bg-white border-slate-200'
-                      }`}
-                    >
-                      <div className="flex justify-between items-start gap-3">
-                        <div className="space-y-1">
-                          <h4 className="text-sm font-bold text-slate-800">{notif.title}</h4>
-                          <p className="text-xs text-slate-600 leading-relaxed">{notif.message}</p>
-                          <p className="text-[10px] text-slate-400 mt-1">
-                            {new Date(notif.date).toLocaleString('pt-BR')}
-                          </p>
-                        </div>
-                        {!notif.read && (
-                          <button
-                            onClick={() => handleMarkAsRead(notif.id)}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white p-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 flex-shrink-0"
-                            title="Marcar como lida"
-                          >
-                            <Check className="h-3.5 w-3.5" />
-                            <span>Lida</span>
-                          </button>
-                        )}
+                <div>
+                  <h2 className="text-3xl font-black">🎮 2048 Delivery</h2>
+                  <p className="text-white/90 text-sm font-bold">Junte os números e chegue no 2048!</p>
+                </div>
+              </div>
+              
+              {/* Placar e Melhor Pontuação */}
+              <div className="flex gap-3 mt-4">
+                <div className="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-lg flex-1">
+                  <p className="text-xs font-bold uppercase text-white/80">Pontuação</p>
+                  <p className="text-2xl font-black">{gameScore}</p>
+                </div>
+                <div className="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-lg flex-1">
+                  <p className="text-xs font-bold uppercase text-white/80">Recorde</p>
+                  <p className="text-2xl font-black">{gameBestScore}</p>
+                </div>
+              </div>
+            </div>
+
+            {!gameStarted ? (
+              <>
+                {/* Instruções */}
+                <div className="bg-white p-6 rounded-xl shadow-sm border-2 border-orange-200">
+                  <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                    <span className="text-2xl">📱</span>
+                    <span>Como Jogar:</span>
+                  </h3>
+                  <div className="space-y-3 mb-6">
+                    <div className="flex items-start gap-3 bg-amber-50 p-3 rounded-lg">
+                      <div className="bg-amber-200 p-2 rounded-lg">
+                        <span className="text-xl">👆</span>
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-700">Deslize para Mover</p>
+                        <p className="text-sm text-slate-600">Use as setas do teclado ou deslize na tela para mover as peças</p>
                       </div>
                     </div>
-                  ))}
+                    <div className="flex items-start gap-3 bg-orange-50 p-3 rounded-lg">
+                      <div className="bg-orange-200 p-2 rounded-lg">
+                        <span className="text-xl">🔢</span>
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-700">Junte Números Iguais</p>
+                        <p className="text-sm text-slate-600">Quando dois números iguais se encontram, eles se somam!</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3 bg-red-50 p-3 rounded-lg">
+                      <div className="bg-red-200 p-2 rounded-lg">
+                        <span className="text-xl">🏆</span>
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-700">Objetivo: 2048</p>
+                        <p className="text-sm text-slate-600">Continue juntando até formar o bloco 2048!</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={initGame}
+                    className="w-full bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 hover:from-amber-600 hover:via-orange-600 hover:to-red-600 text-white py-4 rounded-xl font-black text-xl shadow-xl transition-all transform hover:scale-105 animate-pulse"
+                  >
+                    🚀 JOGAR AGORA
+                  </button>
                 </div>
-              )}
-            </div>
+
+                {/* Ranking */}
+                <div className="bg-white p-6 rounded-xl shadow-sm border-2 border-orange-200">
+                  <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                    <TrendingUp className="h-5 w-5 text-orange-600" />
+                    <span>🏆 Hall da Fama</span>
+                  </h3>
+                  
+                  {highScores.length === 0 ? (
+                    <div className="text-center py-8 text-slate-400">
+                      <Sparkles className="h-12 w-12 mx-auto mb-3 text-slate-300 animate-bounce" />
+                      <p className="text-sm font-bold">Nenhum recorde ainda!</p>
+                      <p className="text-xs">Seja o primeiro campeão!</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {highScores.map((score, index) => (
+                        <div 
+                          key={index}
+                          className={`flex items-center gap-3 p-3 rounded-lg transition-all hover:scale-105 ${
+                            score.rider_name === user?.name 
+                              ? 'bg-gradient-to-r from-amber-100 to-orange-100 border-2 border-orange-400 shadow-md' 
+                              : 'bg-slate-50 border border-slate-200'
+                          }`}
+                        >
+                          <div className={`w-12 h-12 rounded-full flex items-center justify-center font-black text-xl shadow-lg ${
+                            index === 0 ? 'bg-gradient-to-br from-yellow-300 to-yellow-500 text-yellow-900 animate-pulse' :
+                            index === 1 ? 'bg-gradient-to-br from-slate-300 to-slate-400 text-slate-700' :
+                            index === 2 ? 'bg-gradient-to-br from-amber-600 to-amber-700 text-white' :
+                            'bg-slate-200 text-slate-600'
+                          }`}>
+                            {index === 0 && '🥇'}
+                            {index === 1 && '🥈'}
+                            {index === 2 && '🥉'}
+                            {index > 2 && (index + 1)}
+                          </div>
+                          <div className="flex-1">
+                            <p className="font-black text-slate-800">{score.rider_name}</p>
+                            <p className="text-xs text-slate-500 font-medium">
+                              {new Date(score.date).toLocaleDateString('pt-BR', {day: '2-digit', month: 'short'})}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-3xl font-black bg-gradient-to-r from-orange-600 to-red-600 bg-clip-text text-transparent">
+                              {score.score}
+                            </p>
+                            <p className="text-xs text-slate-500 font-bold uppercase">pontos</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              /* Tela do Jogo */
+              <div className="bg-white p-4 sm:p-6 rounded-xl shadow-lg border-4 border-orange-300">
+                
+                {/* Botões de Controle */}
+                <div className="flex justify-between items-center mb-4">
+                  <button
+                    onClick={() => {
+                      setGameStarted(false);
+                      setGameBoard([]);
+                    }}
+                    className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg font-bold text-sm transition-all"
+                  >
+                    ← Voltar
+                  </button>
+                  <button
+                    onClick={initGame}
+                    className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white px-6 py-2 rounded-lg font-bold text-sm shadow-md transition-all transform hover:scale-105"
+                  >
+                    🔄 Novo Jogo
+                  </button>
+                </div>
+
+                {/* Tabuleiro do Jogo */}
+                <div 
+                  className="bg-gradient-to-br from-amber-200 via-orange-200 to-red-200 p-3 sm:p-4 rounded-xl shadow-inner"
+                  onTouchStart={handleTouchStart}
+                  onTouchEnd={handleTouchEnd}
+                >
+                  <style>{`
+                    @keyframes slideIn {
+                      from {
+                        opacity: 0;
+                        transform: scale(0);
+                      }
+                      to {
+                        opacity: 1;
+                        transform: scale(1);
+                      }
+                    }
+                    
+                    @keyframes merge {
+                      0% {
+                        transform: scale(1);
+                      }
+                      50% {
+                        transform: scale(1.2);
+                      }
+                      100% {
+                        transform: scale(1);
+                      }
+                    }
+                    
+                    @keyframes pop {
+                      0% {
+                        transform: scale(0);
+                      }
+                      50% {
+                        transform: scale(1.15);
+                      }
+                      100% {
+                        transform: scale(1);
+                      }
+                    }
+                    
+                    .tile-appear {
+                      animation: pop 0.2s ease-out;
+                    }
+                    
+                    .tile-merge {
+                      animation: merge 0.3s ease-out;
+                    }
+                    
+                    .tile-slide {
+                      transition: all 0.15s ease-out;
+                    }
+                  `}</style>
+                  
+                  <div className="grid grid-cols-4 gap-2 sm:gap-3">
+                    {gameBoard.map((row, i) =>
+                      row.map((cell, j) => {
+                        const cellKey = `${i}-${j}`;
+                        const isAnimating = animatingCells.has(cellKey);
+                        const isMerging = mergingCells.has(cellKey);
+                        
+                        return (
+                          <div
+                            key={cellKey}
+                            className={`
+                              aspect-square rounded-lg flex items-center justify-center font-black text-lg sm:text-2xl
+                              shadow-lg tile-slide
+                              ${getTileColor(cell)}
+                              ${cell ? 'scale-100' : 'scale-95 opacity-50'}
+                              ${isAnimating ? 'tile-appear' : ''}
+                              ${isMerging ? 'tile-merge' : ''}
+                            `}
+                            style={{
+                              transition: 'all 0.15s cubic-bezier(0.4, 0, 0.2, 1)',
+                              transformOrigin: 'center'
+                            }}
+                          >
+                            {cell || ''}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                {/* Instruções de Controle Mobile */}
+                <div className="mt-4 text-center">
+                  <p className="text-xs text-slate-500 font-medium mb-3">
+                    💡 Deslize na tela ou use as setas do teclado
+                  </p>
+                  
+                  {/* Botões direcionais para mobile */}
+                  <div className="inline-grid grid-cols-3 gap-2 max-w-[200px]">
+                    <div></div>
+                    <button
+                      onClick={() => move('up')}
+                      className="bg-slate-200 hover:bg-slate-300 active:bg-slate-400 p-3 rounded-lg transition-all"
+                    >
+                      ⬆️
+                    </button>
+                    <div></div>
+                    
+                    <button
+                      onClick={() => move('left')}
+                      className="bg-slate-200 hover:bg-slate-300 active:bg-slate-400 p-3 rounded-lg transition-all"
+                    >
+                      ⬅️
+                    </button>
+                    <div></div>
+                    <button
+                      onClick={() => move('right')}
+                      className="bg-slate-200 hover:bg-slate-300 active:bg-slate-400 p-3 rounded-lg transition-all"
+                    >
+                      ➡️
+                    </button>
+                    
+                    <div></div>
+                    <button
+                      onClick={() => move('down')}
+                      className="bg-slate-200 hover:bg-slate-300 active:bg-slate-400 p-3 rounded-lg transition-all"
+                    >
+                      ⬇️
+                    </button>
+                    <div></div>
+                  </div>
+                </div>
+
+                {/* Modal de Game Over */}
+                {gameOver && (
+                  <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 animate-fadeIn">
+                    <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl animate-bounce">
+                      <div className="text-center">
+                        <div className="text-6xl mb-4">😢</div>
+                        <h3 className="text-2xl font-black text-slate-800 mb-2">Game Over!</h3>
+                        <p className="text-slate-600 mb-4">Sua pontuação final:</p>
+                        <p className="text-5xl font-black bg-gradient-to-r from-orange-600 to-red-600 bg-clip-text text-transparent mb-6">
+                          {gameScore}
+                        </p>
+                        <button
+                          onClick={() => {
+                            initGame();
+                          }}
+                          className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white py-3 rounded-xl font-black text-lg shadow-lg transition-all transform hover:scale-105"
+                        >
+                          🔄 Jogar Novamente
+                        </button>
+                        <button
+                          onClick={() => {
+                            setGameStarted(false);
+                            setGameOver(false);
+                          }}
+                          className="w-full mt-3 bg-slate-200 hover:bg-slate-300 text-slate-700 py-3 rounded-xl font-bold transition-all"
+                        >
+                          Ver Ranking
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Modal de Vitória */}
+                {gameWon && !gameOver && (
+                  <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 animate-fadeIn">
+                    <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+                      <div className="text-center">
+                        <div className="text-6xl mb-4 animate-bounce">🎉</div>
+                        <h3 className="text-3xl font-black text-transparent bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 bg-clip-text mb-2">
+                          VOCÊ VENCEU!
+                        </h3>
+                        <p className="text-slate-600 mb-4">Chegou no 2048!</p>
+                        <p className="text-4xl font-black text-orange-600 mb-6">{gameScore} pontos</p>
+                        <button
+                          onClick={() => setGameWon(false)}
+                          className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white py-3 rounded-xl font-black text-lg shadow-lg transition-all transform hover:scale-105"
+                        >
+                          ✨ Continuar Jogando
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </main>
