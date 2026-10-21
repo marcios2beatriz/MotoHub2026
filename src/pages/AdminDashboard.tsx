@@ -1041,6 +1041,7 @@ export default function AdminDashboard() {
     e.preventDefault();
     const baseVal = parseFloat(deliveryForm.value);
     const addVal = parseFloat(deliveryForm.additionalValue || '0') || 0;
+    // ✅ finalVal usado apenas para validação, value deve ser só baseVal
     const finalVal = baseVal + addVal;
 
     if (isNaN(finalVal) || finalVal <= 0) {
@@ -1069,7 +1070,7 @@ export default function AdminDashboard() {
     const collectionAmount = deliveryForm.orderCollectionAmount ? parseFloat(deliveryForm.orderCollectionAmount.replace(',', '.')) : undefined;
     const changeForValue = deliveryForm.changeFor ? parseFloat(deliveryForm.changeFor.replace(',', '.')) : undefined;
 
-    const isSame = deliveryForm.deliveryType === 'same_address' || Number(finalVal) === 4 || Boolean(deliveryForm.linkedOrderNumber);
+    const isSame = deliveryForm.deliveryType === 'same_address' || Number(baseVal) === 4 || Boolean(deliveryForm.linkedOrderNumber);
 
     if (editingDelivery) {
       // ✅ OTIMIZADO: Atualiza apenas 1 corrida
@@ -1078,7 +1079,7 @@ export default function AdminDashboard() {
         establishmentId: deliveryForm.establishmentId,
         date: deliveryForm.date,
         time: deliveryForm.time,
-        value: finalVal,
+        value: baseVal, // ✅ CORRIGIDO: apenas valor base, sem adicional
         scheduleId: activeSchedule?.id || editingDelivery.scheduleId,
         orderNumber: cleanOrderNumber || undefined,
         notes: deliveryForm.notes.trim() || undefined,
@@ -1099,7 +1100,7 @@ export default function AdminDashboard() {
         establishmentId: deliveryForm.establishmentId,
         date: deliveryForm.date,
         time: deliveryForm.time,
-        value: finalVal,
+        value: baseVal, // ✅ CORRIGIDO: apenas valor base, sem adicional
         status: 'active',
         scheduleId: activeSchedule?.id,
         orderNumber: cleanOrderNumber || undefined,

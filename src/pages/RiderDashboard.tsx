@@ -574,13 +574,13 @@ export default function RiderDashboard() {
       const activeSchedule = schedules.find(s => db.isSameEstablishment(s.establishmentId, launchForm.establishmentId) && isSameDayString(s.date, operationalTodayStr));
       const nowStr = new Date().toISOString();
 
-      const isSame = launchForm.deliveryType === 'same_address' || Number(finalVal) === 4 || Boolean(launchForm.linkedOrderNumber);
+      const isSame = launchForm.deliveryType === 'same_address' || Number(baseVal) === 4 || Boolean(launchForm.linkedOrderNumber);
 
       if (editingDelivery) {
         // Edição: usar função otimizada para atualizar apenas 1 registro
         const updates: Partial<Delivery> = {
           establishmentId: launchForm.establishmentId,
-          value: finalVal,
+          value: baseVal, // ✅ CORRIGIDO: apenas valor base, sem adicional
           orderNumber: cleanOrderNumber,
           notes: launchForm.notes.trim() || undefined,
           deliveryType: isSame ? ('same_address' as const) : ('standard' as const),
@@ -604,7 +604,7 @@ export default function RiderDashboard() {
           establishmentId: launchForm.establishmentId,
           date: operationalTodayStr,
           time: new Date().toTimeString().slice(0, 5),
-          value: finalVal,
+          value: baseVal, // ✅ CORRIGIDO: apenas valor base, sem adicional
           status: 'pending',
           scheduleId: activeSchedule?.id,
           orderNumber: cleanOrderNumber,
@@ -791,6 +791,19 @@ export default function RiderDashboard() {
   useEffect(() => {
     if (deliveries.length > 0) {
       const totalActive = deliveries.filter(d => d.status === 'active').length;
+      
+      // 🔍 DEBUG ESPECÍFICO: Rastrear corridas sumidas do dia 12/10/2026
+      const missingOrders = ['1339', '1226', '4765', '9042'];
+      const dateFilter = '2026-10-12';
+      const allMissing = deliveries.filter(d => 
+        d.date.startsWith(dateFilter) && 
+        missingOrders.includes(d.orderNumber || '')
+      );
+      const filteredMissing = historyDeliveries.filter(d => 
+        d.date.startsWith(dateFilter) && 
+        missingOrders.includes(d.orderNumber || '')
+      );
+      
       console.log('🔍 RiderDashboard: Filtros aplicados', {
         totalDeliveries: deliveries.length,
         totalActive,
@@ -800,7 +813,11 @@ export default function RiderDashboard() {
         smartPeriod,
         estFilter: historyEstFilter || 'all',
         orderFilter: historyOrderNumberFilter || 'all',
-        featureFilter: deliveryFeatureFilter
+        featureFilter: deliveryFeatureFilter,
+        // DEBUG corridas sumidas
+        missingInAll: allMissing.map(d => d.orderNumber),
+        missingInFiltered: filteredMissing.map(d => d.orderNumber),
+        removedByFilter: allMissing.length - filteredMissing.length
       });
     }
   }, [deliveries.length, historyDeliveries.length, filterMode, smartDate, smartPeriod, historyEstFilter, historyOrderNumberFilter, deliveryFeatureFilter]);

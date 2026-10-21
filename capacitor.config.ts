@@ -5,6 +5,11 @@ const config: CapacitorConfig = {
   appName: 'MotoHub Delivery',
   webDir: 'dist',
   server: {
+    // 🔧 DEV MODE: Descomente as linhas abaixo para usar localhost
+    // url: 'http://192.168.1.8:5173',
+    // cleartext: true,
+    
+    // 🚀 PRODUCTION MODE: Linhas ativas para produção
     androidScheme: 'https',
     cleartext: true,
     allowNavigation: [

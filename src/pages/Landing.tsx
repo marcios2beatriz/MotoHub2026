@@ -168,7 +168,10 @@ export default function Landing() {
         zipCode: estForm.zipCode
       },
       phone: estForm.phone,
-      active: false
+      active: false,
+      // 🔧 CORREÇÃO: Adicionar timestamps obrigatórios
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
 
     const newEstUser: User = {

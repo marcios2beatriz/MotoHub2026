@@ -204,7 +204,12 @@ export default function EstablishmentDashboard() {
     }
 
     if (!estFound) {
-      console.log('❌ ESTABELECIMENTO NÃO ENCONTRADO!');
+      // 🔧 CORREÇÃO: Só registrar erro se dados já estiverem carregados
+      if (db.getEstablishments().length > 0) {
+        console.log('❌ ESTABELECIMENTO NÃO ENCONTRADO!');
+      } else {
+        console.log('⏳ Estabelecimentos ainda não carregados do Supabase');
+      }
       setCurrentEst(null);
       setIsLoadingEst(false);
       return;
@@ -284,7 +289,7 @@ export default function EstablishmentDashboard() {
     loadData();
     const interval = setInterval(() => {
       db.pullFromSupabase().then(() => loadData());
-    }, 180000); // Polling de backup a cada 3 minutos (otimizado - Realtime cobre atualizações instantâneas)
+    }, 300000); // 🔥 OTIMIZADO: Polling de backup a cada 5 minutos (era 3min) - Realtime cobre atualizações instantâneas
 
     const handleDataUpdate = () => loadData();
     window.addEventListener('db-sync-complete', handleDataUpdate);
@@ -847,7 +852,7 @@ export default function EstablishmentDashboard() {
           riderId: deliveryForm.riderId,
           date: deliveryForm.date,
           time: deliveryForm.time,
-          value: finalVal,
+          value: baseVal, // ✅ CORRIGIDO: apenas valor base, sem adicional
           orderNumber: cleanOrderNumber || undefined,
           notes: deliveryForm.notes.trim() || undefined,
           deliveryType: isSame ? ('same_address' as const) : ('standard' as const),
@@ -867,7 +872,7 @@ export default function EstablishmentDashboard() {
           establishmentId: currentEst.id,
           date: deliveryForm.date,
           time: deliveryForm.time,
-          value: finalVal,
+          value: baseVal, // ✅ CORRIGIDO: apenas valor base, sem adicional
           status: 'active',
           orderNumber: cleanOrderNumber || undefined,
           notes: deliveryForm.notes.trim() || undefined,
@@ -1128,7 +1133,8 @@ export default function EstablishmentDashboard() {
     return null;
   };
 
-  if (user && !currentEst && db.getEstablishments().length > 0) {
+  // 🔧 CORREÇÃO: Só mostrar erro de estabelecimento após terminar o carregamento
+  if (user && !currentEst && !isLoadingEst && db.getEstablishments().length > 0) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
         <div className="bg-white p-8 rounded-2xl shadow-lg border border-slate-200 max-w-md space-y-4">
@@ -1136,6 +1142,19 @@ export default function EstablishmentDashboard() {
           <h2 className="text-xl font-black text-slate-800">Estabelecimento não localizado</h2>
           <p className="text-sm text-slate-600">Seu usuário de gerente ainda não possui um estabelecimento vinculado. Fale com o administrador do sistema.</p>
           <button onClick={handleLogout} className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold">Voltar para Login</button>
+        </div>
+      </div>
+    );
+  }
+
+  // 🔄 Estado de loading enquanto carrega dados do estabelecimento
+  if (isLoadingEst) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6">
+        <div className="bg-white p-8 rounded-2xl shadow-lg border border-slate-200 max-w-md space-y-4 text-center">
+          <Loader2 className="h-12 w-12 text-indigo-600 mx-auto animate-spin" />
+          <h2 className="text-lg font-bold text-slate-800">Carregando estabelecimento...</h2>
+          <p className="text-sm text-slate-600">Aguarde enquanto verificamos seus dados.</p>
         </div>
       </div>
     );

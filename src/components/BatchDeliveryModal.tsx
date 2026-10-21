@@ -402,6 +402,7 @@ export default function BatchDeliveryModal({
       const newDeliveries: Delivery[] = validRows.map((r, idx) => {
         const baseVal = parseFloat(r.value.replace(',', '.')) || 0;
         const addVal = parseFloat((r.additionalValue || '0').replace(',', '.')) || 0;
+        // ✅ CORREÇÃO: totalVal usado apenas para exibição, value deve ser só baseVal
         const totalVal = baseVal + addVal;
         const operationalDate = r.date || db.getOperationalDateString();
 
@@ -420,7 +421,7 @@ export default function BatchDeliveryModal({
           establishmentId: r.establishmentId,
           date: operationalDate,
           time: r.time || '18:00',
-          value: totalVal,
+          value: baseVal, // ✅ CORRIGIDO: apenas valor base, sem adicional
           status: globalStatus,
           scheduleId: matchSchedule?.id,
           orderNumber: r.orderNumber.trim() ? r.orderNumber.trim().replace('#', '') : undefined,

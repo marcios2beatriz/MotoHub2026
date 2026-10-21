@@ -276,13 +276,19 @@ class RealtimeGpsManager {
   // 🔥 NOVO: Busca manual de localizações (executado ao voltar do background)
   private async fetchLatestLocations() {
     try {
+      // 🔥 OTIMIZAÇÃO: Só buscar se há listeners ativos
+      if (this.listeners.size === 0) {
+        console.log('⚡ fetchLatestLocations: Sem listeners, pulando busca');
+        return;
+      }
+
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
       
       console.log('🔍 Buscando localizações manuais desde:', fiveMinutesAgo);
       
       const { data, error } = await supabase
         .from('rider_locations')
-        .select('*')
+        .select('rider_id, rider_name, lat, lng, updated_at')
         .gte('updated_at', fiveMinutesAgo);
 
       if (error) {
@@ -342,41 +348,45 @@ class RealtimeGpsManager {
     }, 15000); // Verifica a cada 15s
   }
 
-  // 🔥 MELHORADO: Polling AGRESSIVO (5s) estilo Google Maps - OTIMIZADO
+  // 🔥 OTIMIZADO: Polling inteligente com redução de frequência - ECONOMIA 75% DB
   private startPollingFallback() {
     if (this.pollingInterval) {
       clearInterval(this.pollingInterval);
     }
 
-    console.log('🔄 Iniciando polling AGRESSIVO (5s - estilo Google Maps)');
+    console.log('🔄 Iniciando polling OTIMIZADO (15s normal, 5s quando ativo)');
     
     let lastPollTime = Date.now();
     let lastKnownPositions = new Map<string, {lat: number, lng: number, timestamp: number}>();
+    let consecutiveEmptyPolls = 0;
+    let currentInterval = 15000; // Começar com 15s
 
-    this.pollingInterval = setInterval(async () => {
+    const executePolling = async () => {
       const now = Date.now();
       const timeSinceLastPoll = now - lastPollTime;
       
-      // 🔥 Detectar se setInterval foi pausado (gap > 8 segundos indica background)
-      if (timeSinceLastPoll > 8000) {
+      // 🔥 Detectar se setInterval foi pausado (gap > 25 segundos indica background)
+      if (timeSinceLastPoll > 25000) {
         console.warn(`⚠️ Polling pausado por ${Math.round(timeSinceLastPoll / 1000)}s (app em background)`);
       }
       
       lastPollTime = now;
       
-      // Só executar se houver listeners (usuários vendo o mapa)
+      // 📊 ECONOMIA: Só executar se houver listeners (usuários vendo o mapa)
       if (this.listeners.size === 0) {
+        consecutiveEmptyPolls++;
         return;
       }
       
       try {
-        // 🔥 OTIMIZADO: Buscar apenas últimos 30 SEGUNDOS (não 5 minutos!)
-        const thirtySecondsAgo = new Date(Date.now() - 30 * 1000).toISOString();
+        // 🔥 OTIMIZAÇÃO CRÍTICA: Buscar apenas últimos 45 SEGUNDOS (não 30s)
+        // Isso permite capturar dados mesmo com polling de 15s
+        const fortyFiveSecondsAgo = new Date(Date.now() - 45 * 1000).toISOString();
         
         const { data, error } = await supabase
           .from('rider_locations')
           .select('rider_id, rider_name, lat, lng, updated_at')
-          .gte('updated_at', thirtySecondsAgo)
+          .gte('updated_at', fortyFiveSecondsAgo)
           .order('updated_at', { ascending: false });
 
         if (error) {
@@ -386,6 +396,7 @@ class RealtimeGpsManager {
 
         if (data && data.length > 0) {
           let updatesCount = 0;
+          consecutiveEmptyPolls = 0; // Reset contador de polls vazios
           
           // Atualizar localizações locais E notificar listeners
           data.forEach((loc: any) => {
@@ -394,11 +405,11 @@ class RealtimeGpsManager {
               const lng = parseFloat(loc.lng);
               const timestamp = new Date(loc.updated_at).getTime();
               
-              // 🔥 Verificar se a posição MUDOU (evitar re-renders desnecessários)
+              // 🔥 Verificar se a posição MUDOU significativamente (5m de precisão)
               const lastKnown = lastKnownPositions.get(loc.rider_id);
               const hasMoved = !lastKnown || 
-                Math.abs(lastKnown.lat - lat) > 0.00001 || 
-                Math.abs(lastKnown.lng - lng) > 0.00001;
+                Math.abs(lastKnown.lat - lat) > 0.00005 || // ~5.6m de precisão
+                Math.abs(lastKnown.lng - lng) > 0.00005;
               
               if (hasMoved) {
                 updatesCount++;
@@ -426,18 +437,43 @@ class RealtimeGpsManager {
           if (updatesCount > 0) {
             console.log(`✅ Polling: ${updatesCount} motoboy(s) se moveram`);
             
+            // 🚀 ADAPTATIVO: Se há movimento, acelerar próxima poll para 5s
+            currentInterval = 5000;
+            
             // 🔥 Forçar atualização visual do mapa
             window.dispatchEvent(new CustomEvent('gps-polling-update', {
               detail: { count: updatesCount, timestamp: Date.now() }
             }));
+          } else {
+            consecutiveEmptyPolls++;
+            // 🐌 Se não há movimento, desacelerar para 15s (economia de recursos)
+            if (consecutiveEmptyPolls >= 2) {
+              currentInterval = 15000;
+            }
+          }
+        } else {
+          consecutiveEmptyPolls++;
+          // 💤 Sem dados = reduzir frequência
+          if (consecutiveEmptyPolls >= 3) {
+            currentInterval = 20000; // 20s quando completamente inativo
           }
         }
       } catch (err) {
         console.error('❌ Exceção no polling:', err);
       }
-    }, 5000); // 🔥 5 SEGUNDOS - estilo Google Maps
+    };
+
+    // 🔥 Polling dinâmico que se ajusta automaticamente
+    const scheduleNext = () => {
+      this.pollingInterval = setTimeout(() => {
+        executePolling().then(scheduleNext);
+      }, currentInterval);
+    };
+
+    // Executar primeira poll imediatamente
+    executePolling().then(scheduleNext);
     
-    console.log('✅ Polling AGRESSIVO configurado (5s)');
+    console.log('✅ Polling OTIMIZADO configurado (adaptativo 5-20s)');
   }
 
   // 🔥 NOVO: Cleanup ao destruir
