@@ -260,6 +260,25 @@ export default function AdminDashboard() {
     
     console.log(`📊 AdminDashboard loadData: ${rawDeliveries.length} corridas brutas do db.getDeliveries()`);
     
+    // 🔍 DEBUG ESPECÍFICO: Rastrear corridas sumidas do dia 12/10/2026
+    const missingOrders = ['1339', '1226', '4765', '9042'];
+    const dateFilter = '2026-10-12';
+    const foundMissing = rawDeliveries.filter(d => 
+      d.date.startsWith(dateFilter) && 
+      missingOrders.includes(d.orderNumber || '')
+    );
+    console.log(`🔍 DEBUG AdminDashboard (12/10):`, {
+      buscando: missingOrders,
+      encontradas: foundMissing.map(d => ({
+        orderNumber: d.orderNumber,
+        time: d.time,
+        value: d.value,
+        status: d.status,
+        riderId: d.riderId
+      })),
+      total_dia: rawDeliveries.filter(d => d.date.startsWith(dateFilter)).length
+    });
+    
     // 🔧 CORREÇÃO: Não deduplicar - todas as entregas devem aparecer mesmo com IDs duplicados
     // (O problema de IDs duplicados deve ser corrigido no banco de dados ou na geração de IDs)
     const currentDeliveries = rawDeliveries;
@@ -1329,11 +1348,48 @@ export default function AdminDashboard() {
     setDelSmartDate(db.getOperationalDateString(d));
   };
 
-  // Mapa de contagem de repetições por data e número de pedido
+  // Mapa de contagem de repetições APENAS para corridas filtradas visíveis
+  // Isso garante que "Repetido (2x)" apareça apenas quando há duplicatas no contexto atual
   const orderNumberCountMap = React.useMemo(() => {
     const map = new Map<string, number>();
-    deliveries.forEach(d => {
-      if (d.status === 'cancelled') return;
+    
+    // Filtra primeiro para considerar apenas o contexto visível
+    let contextDeliveries = deliveries.filter(d => d.status !== 'cancelled');
+    
+    console.log('🔍 orderNumberCountMap: delFilterMode=', delFilterMode, 'delSmartDate=', delSmartDate);
+    console.log('🔍 orderNumberCountMap: ANTES filtro =', contextDeliveries.length, 'corridas');
+    
+    // Se estiver no modo smart_shift com data específica, conta apenas corridas desse dia operacional
+    if (delFilterMode === 'smart_shift' && delSmartDate) {
+      contextDeliveries = contextDeliveries.filter(d => {
+        const opDate = getDeliveryOperationalDate(d.date, d.time);
+        return opDate === delSmartDate;
+      });
+      console.log('🔍 orderNumberCountMap: DEPOIS filtro smart_shift =', contextDeliveries.length, 'corridas para', delSmartDate);
+    }
+    // Se estiver em modo de intervalo, conta apenas corridas do intervalo
+    else if (delFilterMode === 'date_range' && delDateFrom && delDateTo) {
+      contextDeliveries = contextDeliveries.filter(d => d.date >= delDateFrom && d.date <= delDateTo);
+      console.log('🔍 orderNumberCountMap: DEPOIS filtro date_range =', contextDeliveries.length, 'corridas');
+    }
+    
+    // 🔥 DEDUPLICAÇÃO POR ID - Remove corridas duplicadas ANTES de contar
+    const seenIds = new Set<string>();
+    const deduplicatedDeliveries = contextDeliveries.filter(d => {
+      if (seenIds.has(d.id)) {
+        console.log(`🗑️ orderNumberCountMap: Removendo duplicata ID=${d.id.substring(0, 12)}, orderNumber=${d.orderNumber}`);
+        return false;
+      }
+      seenIds.add(d.id);
+      return true;
+    });
+    
+    if (deduplicatedDeliveries.length < contextDeliveries.length) {
+      console.log(`✅ orderNumberCountMap: Deduplicação removeu ${contextDeliveries.length - deduplicatedDeliveries.length} duplicatas`);
+    }
+    
+    // Conta as ocorrências por número de pedido usando dados DEDUPLICADOS
+    deduplicatedDeliveries.forEach(d => {
       const num = (d.orderNumber || '').trim().replace('#', '');
       if (num) {
         const opDate = getDeliveryOperationalDate(d.date, d.time);
@@ -1341,14 +1397,29 @@ export default function AdminDashboard() {
         map.set(key, (map.get(key) || 0) + 1);
       }
     });
+    
+    // Log apenas números que aparecem mais de uma vez
+    const duplicates = Array.from(map.entries()).filter(([_, count]) => count > 1);
+    if (duplicates.length > 0) {
+      console.log('🔍 orderNumberCountMap: Números repetidos =', duplicates);
+    }
+    
     return map;
-  }, [deliveries]);
+  }, [deliveries, delFilterMode, delSmartDate, delDateFrom, delDateTo]);
 
   const getOrderRepeatCount = (d: Delivery): number => {
     const num = (d.orderNumber || '').trim().replace('#', '');
     if (!num) return 0;
     const opDate = getDeliveryOperationalDate(d.date, d.time);
-    return orderNumberCountMap.get(`${opDate}_${num}`) || 0;
+    const key = `${opDate}_${num}`;
+    const count = orderNumberCountMap.get(key) || 0;
+    
+    // Log apenas para número 4227
+    if (num === '4227') {
+      console.log(`🎯 getOrderRepeatCount #4227: opDate=${opDate}, key=${key}, count=${count}`);
+    }
+    
+    return count;
   };
 
   const getFinanceDateBounds = (): { start: string; end: string; label: string } => {
@@ -1450,31 +1521,63 @@ export default function AdminDashboard() {
   });
 
   const financeFilteredDeliveries = deliveries.filter(d => {
-    if (d.status !== 'active') return false;
+    // 🔍 DEBUG: Rastrear corridas sumidas
+    const missingOrders = ['1339', '1226', '4765', '9042'];
+    const isMissing = missingOrders.includes(d.orderNumber || '');
+    
+    if (d.status !== 'active') {
+      if (isMissing) console.log(`❌ Corrida #${d.orderNumber} REMOVIDA: status !== 'active' (status: ${d.status})`);
+      return false;
+    }
 
-    if (d.date < financeBounds.start || d.date > financeBounds.end) return false;
+    if (d.date < financeBounds.start || d.date > financeBounds.end) {
+      if (isMissing) console.log(`❌ Corrida #${d.orderNumber} REMOVIDA: fora do período (${d.date} vs ${financeBounds.start}-${financeBounds.end})`);
+      return false;
+    }
 
     if (financePaidFilter === 'unpaid' && d.paid) return false;
     if (financePaidFilter === 'paid' && !d.paid) return false;
 
     if (financeFeatureFilter === 'same_order_number') {
       const repeats = getOrderRepeatCount(d);
-      if (repeats <= 1) return false;
+      if (repeats <= 1) {
+        if (isMissing) console.log(`❌ Corrida #${d.orderNumber} REMOVIDA: featureFilter='same_order_number' mas repeats=${repeats}`);
+        return false;
+      }
     } else if (financeFeatureFilter === 'with_additional' && (!d.additionalValue || Number(d.additionalValue) <= 0)) {
+      if (isMissing) console.log(`❌ Corrida #${d.orderNumber} REMOVIDA: featureFilter='with_additional' mas additionalValue=${d.additionalValue}`);
       return false;
     } else if (financeFeatureFilter === 'linked' && (d.deliveryType !== 'same_address' && !d.linkedOrderNumber && Number(d.value) !== 4)) {
+      if (isMissing) console.log(`❌ Corrida #${d.orderNumber} REMOVIDA: featureFilter='linked' mas não é same_address`);
       return false;
     } else if (financeFeatureFilter === 'standard' && (d.deliveryType === 'same_address' || Boolean(d.linkedOrderNumber) || Number(d.value) === 4 || (d.additionalValue && Number(d.additionalValue) > 0))) {
+      if (isMissing) console.log(`❌ Corrida #${d.orderNumber} REMOVIDA: featureFilter='standard' mas é same_address ou com adicional`);
       return false;
     }
 
     // Filtro de cobrança no fechamento
-    if (financePaymentFilter === 'to_collect' && d.paymentMethod === 'already_paid') return false;
-    if (financePaymentFilter === 'money' && d.paymentMethod !== 'money') return false;
-    if (financePaymentFilter === 'card' && d.paymentMethod !== 'card_debit' && d.paymentMethod !== 'card_credit') return false;
-    if (financePaymentFilter === 'pix' && d.paymentMethod !== 'pix_delivery') return false;
-    if (financePaymentFilter === 'already_paid' && d.paymentMethod && d.paymentMethod !== 'already_paid') return false;
+    if (financePaymentFilter === 'to_collect' && d.paymentMethod === 'already_paid') {
+      if (isMissing) console.log(`❌ Corrida #${d.orderNumber} REMOVIDA: paymentFilter='to_collect' mas paymentMethod='already_paid'`);
+      return false;
+    }
+    if (financePaymentFilter === 'money' && d.paymentMethod !== 'money') {
+      if (isMissing) console.log(`❌ Corrida #${d.orderNumber} REMOVIDA: paymentFilter='money' mas paymentMethod=${d.paymentMethod}`);
+      return false;
+    }
+    if (financePaymentFilter === 'card' && d.paymentMethod !== 'card_debit' && d.paymentMethod !== 'card_credit') {
+      if (isMissing) console.log(`❌ Corrida #${d.orderNumber} REMOVIDA: paymentFilter='card' mas paymentMethod=${d.paymentMethod}`);
+      return false;
+    }
+    if (financePaymentFilter === 'pix' && d.paymentMethod !== 'pix_delivery') {
+      if (isMissing) console.log(`❌ Corrida #${d.orderNumber} REMOVIDA: paymentFilter='pix' mas paymentMethod=${d.paymentMethod}`);
+      return false;
+    }
+    if (financePaymentFilter === 'already_paid' && d.paymentMethod && d.paymentMethod !== 'already_paid') {
+      if (isMissing) console.log(`❌ Corrida #${d.orderNumber} REMOVIDA: paymentFilter='already_paid' mas paymentMethod=${d.paymentMethod}`);
+      return false;
+    }
 
+    if (isMissing) console.log(`✅ Corrida #${d.orderNumber} PASSOU em todos os filtros!`);
     return true;
   });
 
@@ -1580,7 +1683,7 @@ export default function AdminDashboard() {
           const isSame = d.deliveryType === 'same_address' || val <= 4.00;
           const fee = getAdminFeeForDelivery(d);
 
-          summary[d.riderId].total += val;
+          summary[d.riderId].total += (val + add); // ✅ CORRIGIDO: Inclui adicional no total
           summary[d.riderId].count += 1;
           summary[d.riderId].additionalsTotal += add;
           summary[d.riderId].adminCut += fee;
@@ -1596,9 +1699,9 @@ export default function AdminDashboard() {
       });
 
       Object.values(summary).forEach((item: any) => {
-        // ✅ CORREÇÃO: Incluir adicional no cálculo do líquido
-        // Fórmula: (Total corridas - Taxa) + Adicionais
-        item.net = Math.max(0, item.total - item.adminCut) + item.additionalsTotal;
+        // ✅ CORREÇÃO: Total já inclui adicional, então apenas descontar taxa admin
+        // Fórmula: Total corridas (já com adicional) - Taxa admin
+        item.net = Math.max(0, item.total - item.adminCut);
       });
 
       return Object.values(summary);
@@ -1780,61 +1883,11 @@ export default function AdminDashboard() {
       const rider = users.find(u => u.id === d.riderId);
       const est = establishments.find(e => e.id === d.establishmentId);
 
-      // 🔍 DEBUG: Log da corrida #4300 antes de qualquer filtro
-      if (d.orderNumber === '4300') {
-        console.log('🔍 DEBUG CORRIDA #4300 ANTES DOS FILTROS:', {
-          id: d.id,
-          orderNumber: d.orderNumber,
-          date: d.date,
-          time: d.time,
-          riderId: d.riderId,
-          riderName: rider?.name,
-          establishmentId: d.establishmentId,
-          establishmentName: est?.name,
-          status: d.status,
-          value: d.value,
-          delSmartDate,
-          delRiderFilter,
-          delEstFilter,
-          delStatusFilter,
-          delFilterMode,
-          delSmartPeriod
-        });
-      }
-
-      // 🔍 DEBUG: Log da entrega #6
-      if (d.id === 'd_1791414849315_ii12') {
-        console.log('🔍 DEBUG ENTREGA #6:', {
-          id: d.id,
-          date: d.date,
-          time: d.time,
-          riderId: d.riderId,
-          riderName: rider?.name,
-          delRiderFilter,
-          riderMatch: delRiderFilter === 'all' || d.riderId === delRiderFilter,
-          dateMatch: d.date === delSmartDate,
-          smartDate: delSmartDate,
-          filterMode: delFilterMode,
-          delSmartPeriod,
-          allFilters: {
-            delNotesFilter,
-            delFeatureFilter,
-            delPaymentFilter,
-            delOrderNumberFilter,
-            delSearchQuery,
-            delEstFilter,
-            delStatusFilter
-          }
-        });
-      }
-
       const hasNotes = Boolean(d.notes && d.notes.trim().length > 0);
       if (delNotesFilter === 'with_notes' && !hasNotes) {
-        if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delNotesFilter with_notes');
         return false;
       }
       if (delNotesFilter === 'without_notes' && hasNotes) {
-        if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delNotesFilter without_notes');
         return false;
       }
 
@@ -1843,53 +1896,42 @@ export default function AdminDashboard() {
       if (delFeatureFilter === 'same_order_number') {
         const repeats = getOrderRepeatCount(d);
         if (repeats <= 1) {
-          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delFeatureFilter same_order_number, repeats:', repeats);
           return false;
         }
       } else if (delFeatureFilter === 'with_additional') {
         const hasAdd = Number(d.additionalValue || 0) > 0;
         if (!hasAdd) {
-          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delFeatureFilter with_additional, additionalValue:', d.additionalValue);
           return false;
         }
       } else if (delFeatureFilter === 'linked') {
         if (!isSame) {
-          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delFeatureFilter linked, isSame:', isSame);
           return false;
         }
       } else if (delFeatureFilter === 'standard') {
         if (isSame || (d.additionalValue && Number(d.additionalValue) > 0)) {
-          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delFeatureFilter standard, isSame:', isSame, 'additionalValue:', d.additionalValue);
           return false;
         }
       }
 
       if (delPaymentFilter === 'to_collect') {
-        // Mostra todas as entregas EXCETO as já pagas online
-        // Inclui: sem paymentMethod (legado), money, card, pix
         const isAlreadyPaid = d.paymentMethod === 'already_paid';
         if (isAlreadyPaid) {
-          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delPaymentFilter to_collect, paymentMethod:', d.paymentMethod);
           return false;
         }
       } else if (delPaymentFilter === 'money') {
         if (d.paymentMethod !== 'money') {
-          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delPaymentFilter money, paymentMethod:', d.paymentMethod);
           return false;
         }
       } else if (delPaymentFilter === 'card') {
         if (d.paymentMethod !== 'card_debit' && d.paymentMethod !== 'card_credit') {
-          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delPaymentFilter card, paymentMethod:', d.paymentMethod);
           return false;
         }
       } else if (delPaymentFilter === 'pix') {
         if (d.paymentMethod !== 'pix_delivery') {
-          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delPaymentFilter pix, paymentMethod:', d.paymentMethod);
           return false;
         }
       } else if (delPaymentFilter === 'already_paid') {
         if (d.paymentMethod && d.paymentMethod !== 'already_paid') {
-          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delPaymentFilter already_paid, paymentMethod:', d.paymentMethod);
           return false;
         }
       }
@@ -1899,7 +1941,6 @@ export default function AdminDashboard() {
         const orderNum = (d.orderNumber || '').toLowerCase().replace('#', '');
         const delId = d.id.toLowerCase();
         if (!orderNum.includes(cleanTarget) && !delId.includes(cleanTarget)) {
-          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delOrderNumberFilter, target:', cleanTarget, 'orderNum:', orderNum);
           return false;
         }
       }
@@ -1911,24 +1952,17 @@ export default function AdminDashboard() {
         const eName = (est?.name || '').toLowerCase();
         const matchNum = orderNum.includes(q.replace('#', ''));
         if (!matchNum && !rName.includes(q) && !eName.includes(q)) {
-          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delSearchQuery, query:', q);
           return false;
         }
       }
 
       if (delRiderFilter !== 'all' && d.riderId !== delRiderFilter) {
-        if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delRiderFilter', { delRiderFilter, riderId: d.riderId });
-        if (d.orderNumber === '4300') console.log('❌ Corrida #4300 Rejeitada: delRiderFilter', { delRiderFilter, riderId: d.riderId, riderName: rider?.name });
         return false;
       }
       if (delEstFilter !== 'all' && d.establishmentId !== delEstFilter) {
-        if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delEstFilter');
-        if (d.orderNumber === '4300') console.log('❌ Corrida #4300 Rejeitada: delEstFilter', { delEstFilter, establishmentId: d.establishmentId });
         return false;
       }
       if (delStatusFilter !== 'all' && d.status !== delStatusFilter) {
-        if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: delStatusFilter');
-        if (d.orderNumber === '4300') console.log('❌ Corrida #4300 Rejeitada: delStatusFilter', { delStatusFilter, status: d.status });
         return false;
       }
 
@@ -1936,58 +1970,42 @@ export default function AdminDashboard() {
         if (!delSmartDate) return true;
         const opDate = getDeliveryOperationalDate(d.date, d.time);
         const isDateMatch = isSameDayString(opDate, delSmartDate);
-        if (d.id === 'd_1791414849315_ii12') {
-          console.log('🔍 SMART_SHIFT check:', { opDate, delSmartDate, isDateMatch });
-        }
-        if (d.orderNumber === '4300') {
-          console.log('🔍 Corrida #4300 SMART_SHIFT check:', { opDate, delSmartDate, isDateMatch, deliveryDate: d.date, deliveryTime: d.time });
-        }
-        if (!isDateMatch) {
-          if (d.id === 'd_1791414849315_ii12') console.log('❌ Rejeitada: smart_shift date mismatch');
-          if (d.orderNumber === '4300') console.log('❌ Corrida #4300 Rejeitada: smart_shift date mismatch');
-          return false;
-        }
+        if (!isDateMatch) return false;
 
         const [h] = (d.time || '12:00').split(':').map(Number);
         if (delSmartPeriod === 'night_shift') {
-          const pass = h >= 18 || h < 3;
-          if (d.id === 'd_1791414849315_ii12') console.log('🔍 night_shift check:', { h, pass });
-          return pass;
+          return h >= 18 || h < 3;
         } else if (delSmartPeriod === 'morning_shift') {
-          const pass = h >= 6 && h < 12;
-          if (d.id === 'd_1791414849315_ii12') console.log('🔍 morning_shift check:', { h, pass });
-          return pass;
+          return h >= 6 && h < 12;
         } else if (delSmartPeriod === 'afternoon_shift') {
-          const pass = h >= 12 && h < 18;
-          if (d.id === 'd_1791414849315_ii12') console.log('🔍 afternoon_shift check:', { h, pass });
-          return pass;
+          return h >= 12 && h < 18;
         }
-        if (d.id === 'd_1791414849315_ii12') console.log('✅ Passou smart_shift (all_shifts)');
         return true;
       } else if (delFilterMode === 'date_range') {
-        if (delDateFrom && d.date < delDateFrom) return false;
-        if (delDateTo && d.date > delDateTo) return false;
+        if (delDateFrom && d.date < delDateFrom) {
+          return false;
+        }
+        if (delDateTo && d.date > delDateTo) {
+          return false;
+        }
       }
 
-      if (d.id === 'd_1791414849315_ii12') console.log('✅ Entrega #6 PASSOU por todos os filtros!');
-      if (d.orderNumber === '4300') console.log('✅ Corrida #4300 PASSOU por todos os filtros!');
       return true;
     });
 
-  // 🔍 DEBUG: Verificar resultado da filtragem
-  console.log(`📊 Após filtragem: ${filteredAndSortedDeliveries.length} corridas`);
-  const has4300 = filteredAndSortedDeliveries.find(d => d.orderNumber === '4300');
-  if (has4300) {
-    console.log('✅ Corrida #4300 PRESENTE após filtragem');
-  } else {
-    console.log('❌ Corrida #4300 AUSENTE após filtragem');
-    const in4300Source = deliveries.find(d => d.orderNumber === '4300');
-    if (in4300Source) {
-      console.log('🔍 Corrida #4300 existe no array source (deliveries):', in4300Source);
-    }
+  // ✅ Deduplicar usando APENAS o ID (único real)
+  // A chave composta estava criando falsos positivos
+  const beforeDedup = filteredAndSortedDeliveries.length;
+  
+  const uniqueDeliveries = Array.from(
+    new Map(filteredAndSortedDeliveries.map(d => [d.id, d])).values()
+  );
+  
+  if (beforeDedup !== uniqueDeliveries.length) {
+    console.log(`🔧 Deduplicação: ${beforeDedup} corridas -> ${uniqueDeliveries.length} únicas (${beforeDedup - uniqueDeliveries.length} duplicatas removidas)`);
   }
 
-  const sortedDeliveries = filteredAndSortedDeliveries.sort((a, b) => {
+  const sortedDeliveries = uniqueDeliveries.sort((a, b) => {
       if (delSortOrder === 'order_number_grouped') {
         const numA = parseInt((a.orderNumber || '0').replace(/\D/g, '') || '0', 10);
         const numB = parseInt((b.orderNumber || '0').replace(/\D/g, '') || '0', 10);
@@ -2983,7 +3001,7 @@ export default function AdminDashboard() {
                 <div>
                   <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                     <Bike className="h-6 w-6 text-indigo-600" />
-                    <span>Registro e Controle de Corridas ({filteredAndSortedDeliveries.length})</span>
+                    <span>Registro e Controle de Corridas ({sortedDeliveries.length})</span>
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">Visualize, filtre e gerencie todas as entregas do sistema</p>
                 </div>
@@ -3271,14 +3289,14 @@ export default function AdminDashboard() {
               </div>
 
               {/* LISTA DE CORRIDAS */}
-              {filteredAndSortedDeliveries.length === 0 ? (
+              {sortedDeliveries.length === 0 ? (
                 <div className="text-center py-12 text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200 space-y-2">
                   <Bike className="h-10 w-10 mx-auto text-slate-300" />
                   <p className="text-sm font-medium">Nenhuma corrida encontrada com os filtros selecionados.</p>
                 </div>
               ) : (
                 <div className="divide-y divide-slate-100">
-                  {filteredAndSortedDeliveries.map(del => {
+                  {sortedDeliveries.map(del => {
                     const rider = users.find(u => u.id === del.riderId);
                     const est = establishments.find(e => e.id === del.establishmentId);
                     const isPending = del.status === 'pending';

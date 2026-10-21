@@ -1,10 +1,10 @@
 "use client";
 
-import { supabase, supabaseWrite } from './supabase';
+import { supabase } from './supabase';
 import { realtimeGps } from './realtimeGps';
 import { edgeInsert, edgeUpdate, edgeUpsert, edgeDelete } from './edgeFunction';
 
-export { supabase, supabaseWrite };
+export { supabase };
 
 export type PaymentMethodType = 'already_paid' | 'money' | 'card_debit' | 'card_credit' | 'pix_delivery';
 
@@ -218,7 +218,11 @@ function parseDeliveryRow(d: any): Delivery {
   let paymentMethod: PaymentMethodType = 'already_paid';
   let orderCollectionAmount: number | undefined = undefined;
   let changeFor: number | undefined = undefined;
-  let paid = Boolean(d.paid);
+  let paid = false; // Valor padrão - campo não existe na tabela
+
+  // 🔧 CORREÇÃO: Tratar campos que podem vir separados ou dentro de order_number JSON
+  if (d.notes) notes = d.notes;
+  if (d.customer_chat) customerChat = d.customer_chat;
 
   if (d.order_number && String(d.order_number).startsWith('{')) {
     try {
@@ -260,7 +264,7 @@ function parseDeliveryRow(d: any): Delivery {
     paymentMethod,
     orderCollectionAmount,
     changeFor,
-    updatedAt: d.updated_at,
+    updatedAt: d.updated_at || new Date().toISOString(), // Valor padrão se não existir
     paid
   };
 }
@@ -370,7 +374,11 @@ const isMobile = typeof window !== 'undefined' && (
 
 // Throttle para pullFromSupabase — evita chamadas paralelas excessivas
 let pullThrottleTs = 0;
-const PULL_THROTTLE_MS = isMobile ? 30000 : 20000; // Mobile: 30s, Desktop: 20s
+const PULL_THROTTLE_MS = isMobile ? 45000 : 30000; // Mobile: 45s, Desktop: 30s (AUMENTADO)
+
+// 🔥 OTIMIZAÇÃO: Cache de fingerprint para evitar pulls desnecessários
+let lastDataFingerprint = '';
+let lastSuccessfulPull = 0;
 
 // Flag para indicar se os dados foram carregados pelo menos uma vez
 let dataReady = false;
@@ -509,7 +517,7 @@ export const db = {
     }));
 
     if (payload.length > 0) {
-      await supabaseWrite.from('users').upsert(payload, { onConflict: 'id' });
+      await supabase.from('users').upsert(payload, { onConflict: 'id' });
     }
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
@@ -561,7 +569,7 @@ export const db = {
         passwordHash: 'D24180417c*'
       };
 
-      await supabaseWrite.from('users').upsert({
+      await supabase.from('users').upsert({
         id: adminDefault.id,
         name: adminDefault.name,
         email: adminDefault.email,
@@ -580,7 +588,7 @@ export const db = {
 
   async deleteUser(id: string) {
     memoryUsers = memoryUsers.filter(u => u.id !== id);
-    await supabaseWrite.from('users').delete().eq('id', id);
+    await supabase.from('users').delete().eq('id', id);
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
@@ -602,18 +610,27 @@ export const db = {
       neighborhood: e.address?.neighborhood || '',
       city: e.address?.city || '',
       state: e.address?.state || '',
-      zip_code: e.address?.zipCode || ''
+      zip_code: e.address?.zipCode || '',
+      // 🔧 CORREÇÃO: Adicionar timestamps obrigatórios
+      created_at: e.createdAt || new Date().toISOString(),
+      updated_at: e.updatedAt || new Date().toISOString()
     }));
 
     if (payload.length > 0) {
-      await supabaseWrite.from('establishments').upsert(payload, { onConflict: 'id' });
+      try {
+        await supabase.from('establishments').upsert(payload, { onConflict: 'id' });
+        console.log('✅ Estabelecimentos salvos com sucesso');
+      } catch (error) {
+        console.error('❌ Erro ao salvar estabelecimentos:', error);
+        throw error;
+      }
     }
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
   async deleteEstablishment(id: string) {
     memoryEstablishments = memoryEstablishments.filter(e => e.id !== id);
-    await supabaseWrite.from('establishments').delete().eq('id', id);
+    await supabase.from('establishments').delete().eq('id', id);
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
@@ -650,7 +667,7 @@ export const db = {
     });
 
     if (payload.length > 0) {
-      await supabaseWrite.from('schedules').upsert(payload, { onConflict: 'id' });
+      await supabase.from('schedules').upsert(payload, { onConflict: 'id' });
     }
     
     // Enviar notificações para escalas novas ou modificadas
@@ -736,7 +753,7 @@ export const db = {
 
   async deleteSchedule(id: string) {
     memorySchedules = memorySchedules.filter(s => s.id !== id);
-    await supabaseWrite.from('schedules').delete().eq('id', id);
+    await supabase.from('schedules').delete().eq('id', id);
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
@@ -768,7 +785,7 @@ export const db = {
         const chunkSize = 100;
         for (let i = 0; i < payload.length; i += chunkSize) {
           const chunk = payload.slice(i, i + chunkSize);
-          await supabaseWrite.from('deliveries').upsert(chunk, { onConflict: 'id' });
+          await supabase.from('deliveries').upsert(chunk, { onConflict: 'id' });
         }
       } catch (err) {
         console.warn('Aviso no envio de entregas ao Supabase:', err);
@@ -836,7 +853,7 @@ export const db = {
     // Atualiza apenas 1 registro no Supabase
     const payload = formatDeliveryPayload(normalized);
     try {
-      await supabaseWrite.from('deliveries').update(payload).eq('id', deliveryId);
+      await supabase.from('deliveries').update(payload).eq('id', deliveryId);
     } catch (err) {
       console.warn('Erro ao atualizar corrida no Supabase:', err);
       // Reverte a memória se falhou no banco
@@ -880,7 +897,7 @@ export const db = {
     // Batch update no Supabase
     try {
       const payloads = updatedDeliveries.map(formatDeliveryPayload);
-      await supabaseWrite.from('deliveries').upsert(payloads, { onConflict: 'id' });
+      await supabase.from('deliveries').upsert(payloads, { onConflict: 'id' });
     } catch (err) {
       console.warn('Erro no batch update:', err);
       // Reverte todas as mudanças na memória
@@ -915,7 +932,7 @@ export const db = {
     // Batch insert no Supabase
     try {
       const payloads = normalized.map(formatDeliveryPayload);
-      await supabaseWrite.from('deliveries').insert(payloads);
+      await supabase.from('deliveries').insert(payloads);
     } catch (err) {
       console.warn('Erro no batch insert:', err);
       // Remove da memória se falhou no banco
@@ -932,7 +949,7 @@ export const db = {
     memoryDeliveries = memoryDeliveries.filter(d => d.id !== id);
 
     try {
-      const { error } = await supabaseWrite.from('deliveries').delete().eq('id', id);
+      const { error } = await supabase.from('deliveries').delete().eq('id', id);
       if (error) {
         console.error('Erro ao deletar entrega no Supabase:', error);
         throw error;
@@ -970,7 +987,7 @@ export const db = {
     if (idsToDelete.length > 0) {
       memoryDeliveries = memoryDeliveries.filter(d => !idsToDelete.includes(d.id));
       for (const id of idsToDelete) {
-        await supabaseWrite.from('deliveries').delete().eq('id', id);
+        await supabase.from('deliveries').delete().eq('id', id);
       }
       window.dispatchEvent(new Event('db-sync-complete'));
     }
@@ -981,7 +998,7 @@ export const db = {
   async clearAllDeliveries() {
     memoryDeliveries = [];
     try {
-      await supabaseWrite.from('deliveries').delete().neq('id', '');
+      await supabase.from('deliveries').delete().neq('id', '');
     } catch (e) {}
 
     window.dispatchEvent(new Event('db-sync-complete'));
@@ -1003,7 +1020,7 @@ export const db = {
     }));
 
     if (payload.length > 0) {
-      await supabaseWrite.from('notifications').upsert(payload, { onConflict: 'id' });
+      await supabase.from('notifications').upsert(payload, { onConflict: 'id' });
     }
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
@@ -1025,14 +1042,14 @@ export const db = {
     }));
 
     if (payload.length > 0) {
-      await supabaseWrite.from('partner_requests').upsert(payload, { onConflict: 'id' });
+      await supabase.from('partner_requests').upsert(payload, { onConflict: 'id' });
     }
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
   async deletePartnerRequest(id: string) {
     memoryRequests = memoryRequests.filter(r => r.id !== id);
-    await supabaseWrite.from('partner_requests').delete().eq('id', id);
+    await supabase.from('partner_requests').delete().eq('id', id);
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
 
@@ -1057,7 +1074,7 @@ export const db = {
     }
 
     try {
-      await supabaseWrite.from('products').upsert({
+      await supabase.from('products').upsert({
         id: updatedProd.id,
         establishment_id: updatedProd.establishmentId,
         name: updatedProd.name,
@@ -1081,8 +1098,8 @@ export const db = {
   async deleteProduct(id: string): Promise<void> {
     memoryProducts = memoryProducts.filter(p => p.id !== id);
     try {
-      await supabaseWrite.from('products').delete().eq('id', id);
-      await supabaseWrite.from('stock_movements').delete().eq('product_id', id);
+      await supabase.from('products').delete().eq('id', id);
+      await supabase.from('stock_movements').delete().eq('product_id', id);
     } catch (err) {
       console.warn('Erro ao excluir produto no Supabase:', err);
     }
@@ -1136,7 +1153,7 @@ export const db = {
         product.costPrice = movement.costPrice;
       }
       try {
-        await supabaseWrite.from('products').update({
+        await supabase.from('products').update({
           current_stock: newStock,
           cost_price: product.costPrice,
           updated_at: nowStr
@@ -1147,7 +1164,7 @@ export const db = {
     }
 
     try {
-      await supabaseWrite.from('stock_movements').insert({
+      await supabase.from('stock_movements').insert({
         id: newMov.id,
         establishment_id: newMov.establishmentId,
         product_id: newMov.productId,
@@ -1202,7 +1219,7 @@ export const db = {
     memoryLocations[canonicalId] = { riderId: canonicalId, riderName, lat, lng, updatedAt };
 
     try {
-      await supabaseWrite.from('rider_locations').upsert({
+      await supabase.from('rider_locations').upsert({
         rider_id: canonicalId,
         rider_name: riderName,
         lat: lat,
@@ -1219,7 +1236,7 @@ export const db = {
     realtimeGps.sendOffline(canonicalId);
     delete memoryLocations[canonicalId];
     try {
-      await supabaseWrite.from('rider_locations').delete().eq('rider_id', canonicalId);
+      await supabase.from('rider_locations').delete().eq('rider_id', canonicalId);
     } catch (e) {}
   },
 
@@ -1342,16 +1359,39 @@ export const db = {
       console.log('⏭️ pullFromSupabase: Throttled (aguardando intervalo mínimo)');
       return;
     }
+
+    // 🔥 OTIMIZAÇÃO: Verificação rápida de mudanças antes de pull completo
+    try {
+      const { count: userCount } = await supabase.from('users').select('*', { count: 'exact', head: true });
+      const { count: estCount } = await supabase.from('establishments').select('*', { count: 'exact', head: true });
+      const { count: delCount } = await supabase.from('deliveries').select('*', { count: 'exact', head: true });
+      
+      const currentFingerprint = `${userCount}-${estCount}-${delCount}`;
+      
+      // Se contadores não mudaram E último pull foi bem-sucedido há menos de 2 minutos
+      if (currentFingerprint === lastDataFingerprint && (now - lastSuccessfulPull) < 120000) {
+        console.log('⚡ pullFromSupabase: Dados inalterados, skipping pull (economia DB)');
+        pullThrottleTs = now;
+        return;
+      }
+    } catch (fingerprintError) {
+      // Se verificação falhar, prosseguir com pull normal
+      console.warn('⚠️ Verificação de fingerprint falhou, fazendo pull completo');
+    }
+
     pullThrottleTs = now;
 
     console.log('🔄 Iniciando pull do Supabase...');
 
     try {
-      // Otimização: usar SELECT * temporariamente até identificar campos problemáticos
+      // 🔥 OTIMIZAÇÃO: SELECT específico para users (sem password_hash por segurança)
       console.log('📥 Puxando users...');
       const { data: usersData, error: usersError } = await supabase
         .from('users')
-        .select('*'); // Voltar ao SELECT * que funcionava
+        .select(`
+          id, name, email, role, active, phone, cpf,
+          must_reset_password, establishment_id
+        `);
       
       if (usersError) {
         console.error('❌ Erro ao puxar users:', usersError);
@@ -1367,11 +1407,11 @@ export const db = {
           active: u.active ?? true,
           phone: u.phone || '',
           cpf: u.cpf || '',
-          passwordHash: u.password_hash || '',
+          passwordHash: '', // Não carregamos password por segurança
           mustResetPassword: u.must_reset_password || false,
           establishmentId: u.establishment_id || undefined,
-          createdAt: u.created_at,
-          updatedAt: u.updated_at
+          createdAt: new Date().toISOString(), // Valor padrão
+          updatedAt: new Date().toISOString()  // Valor padrão
         }));
         console.log(`✅ Users carregados: ${memoryUsers.length}`);
       }
@@ -1379,7 +1419,10 @@ export const db = {
       console.log('📥 Puxando establishments...');
       const { data: estsData, error: estsError } = await supabase
         .from('establishments')
-        .select('*'); // Voltar ao SELECT * que funcionava
+        .select(`
+          id, name, active, phone, street, number, complement,
+          neighborhood, city, state, zip_code
+        `);
       
       if (estsError) {
         console.error('❌ Erro ao puxar establishments:', estsError);
@@ -1390,7 +1433,7 @@ export const db = {
         memoryEstablishments = estsData.map(e => ({
           id: e.id,
           name: e.name,
-          email: e.email || undefined,
+          email: undefined, // Campo não existe na tabela
           active: e.active ?? true,
           phone: e.phone || '',
           address: {
@@ -1402,8 +1445,8 @@ export const db = {
             state: e.state || '',
             zipCode: e.zip_code || ''
           },
-          createdAt: e.created_at,
-          updatedAt: e.updated_at
+          createdAt: new Date().toISOString(), // Valor padrão
+          updatedAt: new Date().toISOString()  // Valor padrão
         }));
         console.log(`✅ Establishments carregados: ${memoryEstablishments.length}`);
       }
@@ -1411,8 +1454,10 @@ export const db = {
       console.log('📥 Puxando schedules...');
       const { data: schData, error: schError } = await supabase
         .from('schedules')
-        .select('*')
-        .order('date', { ascending: false }); // SELECT * + ordenação
+        .select(`
+          id, rider_id, establishment_id, date, shift, start_time, end_time
+        `)
+        .order('date', { ascending: false });
       
       if (schError) {
         console.error('❌ Erro ao puxar schedules:', schError);
@@ -1421,29 +1466,6 @@ export const db = {
       
       if (schData) {
         memorySchedules = schData.map(s => {
-          let chat: string | undefined = undefined;
-          let createdBy: string | undefined = undefined;
-          
-          // 🔧 CORREÇÃO: Tratamento robusto de created_by malformado
-          if (s.created_by) {
-            if (typeof s.created_by === 'string' && s.created_by.startsWith('{')) {
-              try {
-                const parsed = JSON.parse(s.created_by);
-                createdBy = parsed.createdBy || undefined;
-                chat = parsed.chat || undefined;
-              } catch (e) {
-                console.warn('⚠️ JSON inválido em created_by:', s.created_by.substring(0, 50));
-                createdBy = undefined;
-              }
-            } else if (typeof s.created_by === 'object') {
-              // Já é objeto, não precisa parse
-              createdBy = s.created_by.createdBy || undefined;
-              chat = s.created_by.chat || undefined;
-            } else {
-              createdBy = String(s.created_by);
-            }
-          }
-
           const cRider = this.resolveUser(s.rider_id);
           const cEst = this.resolveEstablishment(s.establishment_id);
 
@@ -1455,31 +1477,39 @@ export const db = {
             shift: s.shift,
             startTime: s.start_time,
             endTime: s.end_time,
-            chat,
-            createdBy,
-            createdAt: s.created_at,
-            updatedAt: s.updated_at
+            chat: '', // Campo não existe na tabela
+            createdBy: undefined, // Campo não existe na tabela
+            createdAt: new Date().toISOString(), // Valor padrão
+            updatedAt: new Date().toISOString()  // Valor padrão
           };
         });
         console.log(`✅ Schedules carregados: ${memorySchedules.length}`);
       }
 
-      // Puxar entregas com paginação otimizada
-      console.log('📥 Puxando deliveries (paginado)...');
+      // 🔥 OTIMIZADO: Buscar entregas dos últimos 90 dias (configurable)
+      const daysToFetch = 90; // Ajustável: busca corridas dos últimos X dias
+      const dateLimit = new Date();
+      dateLimit.setDate(dateLimit.getDate() - daysToFetch);
+      const dateLimitStr = dateLimit.toISOString().split('T')[0]; // Formato YYYY-MM-DD
+      
+      console.log(`📥 Buscando deliveries dos últimos ${daysToFetch} dias (desde ${dateLimitStr})...`);
       const allDelData: any[] = [];
       let delFrom = 0;
-      const delBatchSize = 500; // Otimizado: 500 registros por página (maioria não tem 500+ corridas)
+      const delBatchSize = 1000; // Busca 1000 registros por vez
       let hasMore = true;
-      const maxIterations = 100; // Proteção: máximo 100 páginas (100.000 corridas)
       let iterations = 0;
 
-      while (hasMore && iterations < maxIterations) {
+      while (hasMore) {
         iterations++;
         const { data, error } = await supabase
           .from('deliveries')
-          .select('*')
+          .select(`
+            id, rider_id, establishment_id, date, time, value, status,
+            order_number, schedule_id
+          `)
+          .gte('date', dateLimitStr) // 🔥 FILTRO: apenas corridas >= data limite
           .range(delFrom, delFrom + delBatchSize - 1)
-          .order('date', { ascending: false }); // SELECT * + ordenação por data
+          .order('date', { ascending: false });
 
         if (error) {
           console.error(`❌ Erro ao puxar deliveries (offset ${delFrom}):`, error);
@@ -1488,40 +1518,63 @@ export const db = {
 
         if (!data || data.length === 0) {
           hasMore = false;
+          console.log(`  ✅ Finalizado: nenhum registro retornado na iteração ${iterations}`);
           break;
         }
 
         allDelData.push(...data);
-        console.log(`  ↳ Batch ${iterations}: offset ${delFrom}, recebeu ${data.length} entregas, total acumulado: ${allDelData.length}`);
+        console.log(`  ↳ Batch ${iterations}: +${data.length} entregas (total: ${allDelData.length})`);
         
         if (data.length < delBatchSize) {
           hasMore = false;
-          console.log(`  ✅ Última página (recebeu ${data.length} < ${delBatchSize})`);
+          console.log(`  ✅ Última página alcançada`);
         } else {
           delFrom += delBatchSize;
         }
       }
       
-      if (iterations >= maxIterations) {
-        console.warn(`⚠️ ATENÇÃO: Atingiu limite de ${maxIterations} páginas! Pode haver mais corridas não carregadas.`);
+      console.log(`✅ Total carregado: ${allDelData.length} entregas (${iterations} páginas, últimos ${daysToFetch} dias)`);
+      
+      // 🔍 Estatísticas
+      if (allDelData.length > 0) {
+        const uniqueDates = new Set(allDelData.map(d => d.date)).size;
+        const uniqueRiders = new Set(allDelData.map(d => d.rider_id)).size;
+        const oldestDate = allDelData[allDelData.length - 1]?.date;
+        const newestDate = allDelData[0]?.date;
+        console.log(`📊 Período: ${oldestDate} até ${newestDate} (${uniqueDates} dias, ${uniqueRiders} motoboys)`);
       }
       
-      console.log(`📦 Total de entregas brutas recebidas do Supabase: ${allDelData.length}`);
 
       if (allDelData.length > 0) {
-        memoryDeliveries = allDelData.map(parseDeliveryRow);
-        console.log(`✅ Deliveries carregadas: ${memoryDeliveries.length} (total de ${allDelData.length} registros brutos)`);
+        // 🔧 Deduplicar por (order_number + date) antes de processar
+        // Mantém apenas a corrida mais recente quando há duplicatas com mesmo número e data
+        console.log(`🔍 Deduplicando ${allDelData.length} registros...`);
+        const deduplicatedData: any[] = [];
+        const seenKeys = new Set<string>();
         
-        // 🔍 DEBUG: Verificar se há perda de dados
-        if (memoryDeliveries.length !== allDelData.length) {
-          console.warn(`⚠️ ATENÇÃO: Perda de dados detectada! ${allDelData.length} registros brutos -> ${memoryDeliveries.length} deliveries`);
+        // Ordenar por DATE DESC, TIME DESC para pegar a mais recente primeiro
+        const sortedData = [...allDelData].sort((a, b) => {
+          const dateCompare = (b.date || '').localeCompare(a.date || '');
+          if (dateCompare !== 0) return dateCompare;
+          return (b.time || '').localeCompare(a.time || '');
+        });
+        
+        for (const row of sortedData) {
+          const orderNum = extractOrderNumberSafe(row.order_number);
+          if (!orderNum || !row.date) continue;
+          
+          const key = `${orderNum}|${row.date}`;
+          
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            deduplicatedData.push(row);
+          }
         }
         
-        // 🔍 DEBUG: Verificar IDs duplicados
-        const uniqueIds = new Set(memoryDeliveries.map(d => d.id));
-        if (uniqueIds.size !== memoryDeliveries.length) {
-          console.warn(`⚠️ ATENÇÃO: IDs duplicados detectados! ${memoryDeliveries.length} deliveries -> ${uniqueIds.size} IDs únicos`);
-        }
+        console.log(`✅ Deduplicação concluída: ${allDelData.length} → ${deduplicatedData.length} registros únicos (${allDelData.length - deduplicatedData.length} duplicatas removidas)`);
+        
+        memoryDeliveries = deduplicatedData.map(parseDeliveryRow);
+        console.log(`✅ Deliveries carregadas e processadas: ${memoryDeliveries.length}`);
       } else {
         memoryDeliveries = [];
         console.log('✅ Nenhuma delivery encontrada');
@@ -1617,6 +1670,15 @@ export const db = {
       dataReady = true;
       dataReadyCallbacks.forEach(cb => cb());
       dataReadyCallbacks = [];
+      
+      // 🔥 OTIMIZAÇÃO: Atualizar fingerprint após pull bem-sucedido
+      try {
+        const newFingerprint = `${memoryUsers.length}-${memoryEstablishments.length}-${memoryDeliveries.length}`;
+        lastDataFingerprint = newFingerprint;
+        lastSuccessfulPull = Date.now();
+      } catch (e) {
+        // Ignorar erro de fingerprint
+      }
       
       console.log('✅ DADOS CARREGADOS COM SUCESSO:', {
         usuarios: memoryUsers.length,
