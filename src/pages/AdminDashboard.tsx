@@ -533,50 +533,11 @@ export default function AdminDashboard() {
       const riderName = loc.riderName || 'Entregador';
       const existingMarker = markersRef.current[loc.riderId];
 
-      // 🆕 CALCULAR PEDIDOS ATIVOS DO MOTOBOY
-      const now = Date.now();
-      const TEN_MINUTES = 10 * 60 * 1000; // 10 minutos em ms
-      const FIFTY_MINUTES = 50 * 60 * 1000; // 50 minutos em ms
-      
-      // Buscar corridas ativas deste motoboy
-      const activeOrders = deliveries
-        .filter(d => {
-          // Deve ser do motoboy atual
-          if (d.riderId !== loc.riderId) return false;
-          
-          // Deve estar ativa (não concluída)
-          if (d.status !== 'active') return false;
-          
-          // Calcular tempo desde que foi criada/atualizada
-          const deliveryTime = d.updatedAt ? new Date(d.updatedAt).getTime() : 0;
-          const timeSinceDelivery = now - deliveryTime;
-          
-          // Deve ter sido lançada nos últimos 10 minutos OU ainda estar dentro dos 50 minutos
-          // Lógica: Mostra se foi criada/atualizada recentemente (10 min) E ainda não passou 50 min
-          return timeSinceDelivery <= FIFTY_MINUTES;
-        })
-        .map(d => d.orderNumber)
-        .filter(num => num && num.trim() !== '') // Remove vazios
-        .slice(0, 5); // Limita a 5 pedidos para não poluir o mapa
-      
-      // Criar texto dos pedidos
-      const ordersText = activeOrders.length > 0 
-        ? `🏍️ ${activeOrders.map(n => '#' + n).join(', ')}` 
-        : '';
-      
-      // 🔍 DEBUG: Log de pedidos ativos
-      if (activeOrders.length > 0) {
-        console.log(`📦 ${riderName} tem ${activeOrders.length} pedidos ativos: ${activeOrders.join(', ')}`);
-      }
-      
       const htmlIcon = `
         <div style="display: flex; flex-direction: column; align-items: center; justify-content: center;">
           <div style="background: #0f172a; color: white; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px; white-space: nowrap; margin-bottom: 2px; border: 1px solid #10b981; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
             ${riderName} 🟢
           </div>
-          ${ordersText ? `<div style="background: #7c3aed; color: white; font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 5px; white-space: nowrap; margin-bottom: 2px; border: 1px solid #a78bfa; box-shadow: 0 2px 4px rgba(124,58,237,0.3); max-width: 150px; overflow: hidden; text-overflow: ellipsis;">
-            ${ordersText}
-          </div>` : ''}
           <div style="position: relative; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;">
             <div style="font-size: 42px; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.3)); animation: bounce 2s infinite;">
               🏍️
@@ -599,8 +560,8 @@ export default function AdminDashboard() {
       const riderIcon = L.divIcon({
         html: htmlIcon,
         className: 'custom-admin-rider-icon',
-        iconSize: [160, 80], // Aumentado para acomodar badge de pedidos
-        iconAnchor: [80, 70] // Ajustado para centralizar
+        iconSize: [120, 70],
+        iconAnchor: [60, 65]
       });
 
       if (existingMarker) {
