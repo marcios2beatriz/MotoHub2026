@@ -57,16 +57,47 @@ additionalValue: addVal  // 8 separado no JSON
 
 ## 🔧 Solução para Dados Antigos
 
-### Opção 1: Script de Correção (RECOMENDADO)
+### ✅ DECISÃO TOMADA: Opção B - NÃO corrigir dados antigos
 
-Execute este SQL no Supabase para corrigir os registros antigos:
+**Data da decisão:** 2026-10-15  
+**Motivo:** Evitar conflitos com pagamentos já realizados
+
+### O que isso significa:
+
+✅ **Corridas cadastradas ANTES de 15/10/2026:**
+- Mantêm valores como estão (inflados)
+- Cálculos usam `value` que inclui adicional
+- **NÃO MEXER** nessas corridas
+
+✅ **Corridas cadastradas DEPOIS de 15/10/2026:**
+- Valores corretos (sem contagem dupla)
+- `value` = apenas base, adicional separado
+- Cálculos funcionam perfeitamente
+
+### ⚠️ Consequências aceitas:
+
+1. **Relatórios históricos** terão valores levemente inflados
+2. **Haverá uma "quebra"** nos valores a partir de hoje
+3. **Motoboys podem perguntar** por que valores mudaram
+4. **É normal e esperado** - sistema foi corrigido
+
+---
+
+## 📊 Como explicar para os motoboys (se perguntarem):
+
+> "Fizemos uma atualização no sistema para calcular os adicionais de forma mais clara e transparente. Os valores antigos foram mantidos como estavam, mas a partir de hoje os cálculos estão ainda mais precisos."
+
+---
+
+## 🔒 NÃO EXECUTAR (Script de correção - arquivado)
+
+~~Execute este SQL no Supabase para corrigir os registros antigos:~~ **NÃO USAR**
 
 ```sql
--- ⚠️ BACKUP PRIMEIRO!
--- Crie uma cópia da tabela antes de executar:
-CREATE TABLE deliveries_backup AS SELECT * FROM deliveries;
+-- ⚠️ NÃO EXECUTAR - Decisão foi manter dados antigos como estão
+-- Este script está arquivado apenas para referência
 
--- Corrigir valores onde há adicional no JSON
+/*
 UPDATE deliveries
 SET value = value - CAST(
     CASE 
@@ -77,22 +108,8 @@ SET value = value - CAST(
 )
 WHERE order_number LIKE '%"a":%'
   AND status = 'active';
-
--- Verificar correção
-SELECT 
-    COUNT(*) as total_corrigidos,
-    SUM(value) as soma_valores_corrigidos
-FROM deliveries
-WHERE order_number LIKE '%"a":%'
-  AND status = 'active';
+*/
 ```
-
-### Opção 2: Aceitar e Documentar (NÃO RECOMENDADO)
-
-Se decidir NÃO corrigir os dados antigos:
-- Documente que valores até data X estão com adicional incluído
-- Novos cálculos a partir de hoje estarão corretos
-- Pode gerar confusão e reclamações dos motoboys
 
 ---
 
