@@ -516,17 +516,23 @@ export const db = {
         establishment_id: u.establishmentId || null
       };
       
-      // 🔥 CRÍTICO: Só incluir password_hash se não estiver vazio
-      // Isso evita apagar senhas quando pullFromSupabase() carrega com passwordHash vazio
+      // 🔥 CRÍTICO: Só incluir password_hash se tiver valor válido
+      // Se vazio, deixa undefined para Supabase não sobrescrever
       if (u.passwordHash && u.passwordHash.trim() !== '') {
         userData.password_hash = u.passwordHash;
       }
+      // Se password_hash for vazio/null, NÃO incluir no objeto
+      // Isso faz o Supabase manter o valor existente no banco
       
       return userData;
     });
 
     if (payload.length > 0) {
-      await supabase.from('users').upsert(payload, { onConflict: 'id' });
+      // 🔥 Usar ignoreDuplicates: false para permitir updates
+      await supabase.from('users').upsert(payload, { 
+        onConflict: 'id',
+        ignoreDuplicates: false 
+      });
     }
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
