@@ -503,8 +503,37 @@ export const db = {
 
   async setUsers(users: User[]) {
     memoryUsers = users;
-    const payload = users.map(u => {
-      const userData: any = {
+    // 🔥 CRÍTICO: Separar users em 2 grupos para evitar erro 400
+    // Grupo 1: Users COM senha (incluir password_hash)
+    // Grupo 2: Users SEM senha (NÃO incluir password_hash)
+    
+    const usersWithPassword = users.filter(u => u.passwordHash && u.passwordHash.trim() !== '');
+    const usersWithoutPassword = users.filter(u => !u.passwordHash || u.passwordHash.trim() === '');
+
+    // Upsert grupo COM senha
+    if (usersWithPassword.length > 0) {
+      const payload1 = usersWithPassword.map(u => ({
+        id: u.id,
+        name: u.name,
+        email: u.email.toLowerCase().trim(),
+        role: u.role,
+        active: u.active,
+        phone: u.phone,
+        cpf: u.cpf,
+        password_hash: u.passwordHash,
+        must_reset_password: u.mustResetPassword || false,
+        establishment_id: u.establishmentId || null
+      }));
+      
+      await supabase.from('users').upsert(payload1, { 
+        onConflict: 'id',
+        ignoreDuplicates: false 
+      });
+    }
+
+    // Upsert grupo SEM senha (não inclui password_hash no payload)
+    if (usersWithoutPassword.length > 0) {
+      const payload2 = usersWithoutPassword.map(u => ({
         id: u.id,
         name: u.name,
         email: u.email.toLowerCase().trim(),
@@ -514,22 +543,10 @@ export const db = {
         cpf: u.cpf,
         must_reset_password: u.mustResetPassword || false,
         establishment_id: u.establishmentId || null
-      };
+        // 🔒 password_hash NÃO incluído - mantém valor existente no banco
+      }));
       
-      // 🔥 CRÍTICO: Só incluir password_hash se tiver valor válido
-      // Se vazio, deixa undefined para Supabase não sobrescrever
-      if (u.passwordHash && u.passwordHash.trim() !== '') {
-        userData.password_hash = u.passwordHash;
-      }
-      // Se password_hash for vazio/null, NÃO incluir no objeto
-      // Isso faz o Supabase manter o valor existente no banco
-      
-      return userData;
-    });
-
-    if (payload.length > 0) {
-      // 🔥 Usar ignoreDuplicates: false para permitir updates
-      await supabase.from('users').upsert(payload, { 
+      await supabase.from('users').upsert(payload2, { 
         onConflict: 'id',
         ignoreDuplicates: false 
       });
