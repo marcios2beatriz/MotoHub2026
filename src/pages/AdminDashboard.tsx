@@ -346,8 +346,13 @@ export default function AdminDashboard() {
       console.log('📱 AdminDashboard: App voltou ao foreground, sincronizando...');
       db.pullFromSupabase().then(() => loadData());
     };
+    const handleBackgroundCatchup = () => {
+      console.log('🔄 [DEV] AdminDashboard: Catch-up de background concluído - atualizando mapa');
+      loadData(); // Recarregar dados para refletir todas as atualizações perdidas
+    };
     window.addEventListener('gps-polling-update', handlePollingUpdate);
     window.addEventListener('gps-foreground-update', handleForegroundUpdate);
+    window.addEventListener('gps-background-catchup', handleBackgroundCatchup);
 
     const unsubscribeLocation = realtimeGps.subscribeToLocations((payload) => {
       console.log('📡 AdminDashboard: Atualização GPS recebida:', payload.riderName, payload.lat, payload.lng);
@@ -447,6 +452,7 @@ export default function AdminDashboard() {
       window.removeEventListener('db-sync-complete', handleSyncComplete);
       window.removeEventListener('gps-polling-update', handlePollingUpdate);
       window.removeEventListener('gps-foreground-update', handleForegroundUpdate);
+      window.removeEventListener('gps-background-catchup', handleBackgroundCatchup);
       unsubscribeLocation();
       unsubscribeOffline();
       unsubscribeChat();
@@ -572,7 +578,6 @@ export default function AdminDashboard() {
           <div style="font-family: sans-serif;">
             <b>${riderName}</b><br/>
             🟢 Sinal GPS Ativo em tempo real
-            ${activeOrders.length > 0 ? `<br/><br/><b>📦 Pedidos Ativos:</b><br/>${activeOrders.map(n => '#' + n).join(', ')}` : ''}
           </div>
         `;
         const marker = L.marker([loc.lat, loc.lng], { icon: riderIcon }).addTo(currentMap).bindPopup(popupContent);

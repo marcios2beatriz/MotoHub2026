@@ -368,6 +368,41 @@ class RealtimeGpsManager {
       // 🔥 Detectar se setInterval foi pausado (gap > 25 segundos indica background)
       if (timeSinceLastPoll > 25000) {
         console.warn(`⚠️ Polling pausado por ${Math.round(timeSinceLastPoll / 1000)}s (app em background)`);
+        console.log('🔄 App voltou - fazendo catch-up de atualizações perdidas');
+        
+        // 🆕 CATCH-UP: Buscar últimos 2 minutos para recuperar o que perdeu
+        const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+        const { data: catchupData } = await supabase
+          .from('rider_locations')
+          .select('rider_id, rider_name, lat, lng, updated_at')
+          .gte('updated_at', twoMinutesAgo)
+          .order('updated_at', { ascending: false });
+        
+        if (catchupData && catchupData.length > 0) {
+          console.log(`✅ Catch-up: Recuperadas ${catchupData.length} posições durante pausa`);
+          catchupData.forEach((loc: any) => {
+            if (loc.rider_id && loc.lat && loc.lng) {
+              db.updateRiderLocation(
+                loc.rider_id,
+                loc.rider_name || '',
+                parseFloat(loc.lat),
+                parseFloat(loc.lng)
+              );
+              this.listeners.forEach(listener => {
+                listener({
+                  riderId: loc.rider_id,
+                  riderName: loc.rider_name || '',
+                  lat: parseFloat(loc.lat),
+                  lng: parseFloat(loc.lng),
+                  timestamp: new Date(loc.updated_at).getTime()
+                });
+              });
+            }
+          });
+          window.dispatchEvent(new CustomEvent('gps-background-catchup', {
+            detail: { count: catchupData.length, timestamp: Date.now() }
+          }));
+        }
       }
       
       lastPollTime = now;

@@ -503,18 +503,27 @@ export const db = {
 
   async setUsers(users: User[]) {
     memoryUsers = users;
-    const payload = users.map(u => ({
-      id: u.id,
-      name: u.name,
-      email: u.email.toLowerCase().trim(),
-      role: u.role,
-      active: u.active,
-      phone: u.phone,
-      cpf: u.cpf,
-      password_hash: u.passwordHash,
-      must_reset_password: u.mustResetPassword || false,
-      establishment_id: u.establishmentId || null
-    }));
+    const payload = users.map(u => {
+      const userData: any = {
+        id: u.id,
+        name: u.name,
+        email: u.email.toLowerCase().trim(),
+        role: u.role,
+        active: u.active,
+        phone: u.phone,
+        cpf: u.cpf,
+        must_reset_password: u.mustResetPassword || false,
+        establishment_id: u.establishmentId || null
+      };
+      
+      // 🔥 CRÍTICO: Só incluir password_hash se não estiver vazio
+      // Isso evita apagar senhas quando pullFromSupabase() carrega com passwordHash vazio
+      if (u.passwordHash && u.passwordHash.trim() !== '') {
+        userData.password_hash = u.passwordHash;
+      }
+      
+      return userData;
+    });
 
     if (payload.length > 0) {
       await supabase.from('users').upsert(payload, { onConflict: 'id' });
