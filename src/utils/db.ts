@@ -1785,6 +1785,15 @@ try {
         }
       } else if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
         if (payload.new && payload.new.id) {
+          // 🔒 PROTEÇÃO: Preservar senha existente se vier null/vazio do Supabase
+          const existingUser = memoryUsers.find(u => u.id === payload.new.id);
+          const incomingPassword = payload.new.password_hash;
+          
+          // Usar senha do payload OU manter a existente OU vazio como fallback
+          const finalPassword = (incomingPassword && incomingPassword.trim() !== '')
+            ? incomingPassword
+            : (existingUser?.passwordHash || '');
+          
           const newUser: User = {
             id: payload.new.id,
             name: payload.new.name,
@@ -1793,7 +1802,7 @@ try {
             active: payload.new.active ?? true,
             phone: payload.new.phone || '',
             cpf: payload.new.cpf || '',
-            passwordHash: payload.new.password_hash || '',
+            passwordHash: finalPassword,
             mustResetPassword: payload.new.must_reset_password || false,
             establishmentId: payload.new.establishment_id || undefined,
             createdAt: payload.new.created_at,
