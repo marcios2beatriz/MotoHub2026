@@ -1404,13 +1404,13 @@ export const db = {
     console.log('🔄 Iniciando pull do Supabase...');
 
     try {
-      // 🔥 OTIMIZAÇÃO: SELECT específico para users (sem password_hash por segurança)
+      // 🔒 CORREÇÃO CRÍTICA: Incluir password_hash no SELECT
       console.log('📥 Puxando users...');
       const { data: usersData, error: usersError } = await supabase
         .from('users')
         .select(`
           id, name, email, role, active, phone, cpf,
-          must_reset_password, establishment_id
+          password_hash, must_reset_password, establishment_id
         `);
       
       if (usersError) {
@@ -1427,7 +1427,7 @@ export const db = {
           active: u.active ?? true,
           phone: u.phone || '',
           cpf: u.cpf || '',
-          passwordHash: '', // Não carregamos password por segurança
+          passwordHash: u.password_hash || '', // Agora busca do banco
           mustResetPassword: u.must_reset_password || false,
           establishmentId: u.establishment_id || undefined,
           createdAt: new Date().toISOString(), // Valor padrão
