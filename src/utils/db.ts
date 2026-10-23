@@ -532,24 +532,12 @@ export const db = {
     }
 
     // Upsert grupo SEM senha (não inclui password_hash no payload)
+    // 🚨 PROBLEMA: Supabase dá erro 400 se tentar upsert sem password_hash
+    // 🔒 SOLUÇÃO: NÃO fazer upsert de users sem senha!
+    // Users sem senha mantêm senha existente no banco via Realtime
+    
     if (usersWithoutPassword.length > 0) {
-      const payload2 = usersWithoutPassword.map(u => ({
-        id: u.id,
-        name: u.name,
-        email: u.email.toLowerCase().trim(),
-        role: u.role,
-        active: u.active,
-        phone: u.phone,
-        cpf: u.cpf,
-        must_reset_password: u.mustResetPassword || false,
-        establishment_id: u.establishmentId || null
-        // 🔒 password_hash NÃO incluído - mantém valor existente no banco
-      }));
-      
-      await supabase.from('users').upsert(payload2, { 
-        onConflict: 'id',
-        ignoreDuplicates: false 
-      });
+      console.warn(`⚠️ setUsers: ${usersWithoutPassword.length} user(s) sem senha - pulando sync para preservar senha no banco`);
     }
     // ✅ OTIMIZAÇÃO: Removido pullFromSupabase() - Realtime já sincroniza automaticamente
   },
